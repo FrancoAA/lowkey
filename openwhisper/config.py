@@ -28,6 +28,7 @@ MODELS: dict[str, ModelSpec] = {
     ]
 }
 
+# Benchmark winner on CPU (docs/benchmark.md): WER 4.2% at 4x real time, 1.7 GB RAM.
 DEFAULT_MODEL = "large-v3-turbo"
 
 # Files faster-whisper needs; README/.gitattributes are skipped.

@@ -1,0 +1,102 @@
+# Speech-to-text benchmark on this machine
+
+Goal: choose the default model for open-whisper on the machine it runs on, with no GPU.
+
+**Result: `large-v3-turbo` on faster-whisper, CPU int8.** It has the best accuracy for
+its speed. It runs at 4× real time, needs 1.7 GB of RAM and a 1.5 GB download.
+Its WER is 4.2% overall and 8.2% on noisy English. `large-v3` is more accurate
+(2.3%), but it is 1.8× slower and needs 2× the RAM and 2× the download, so it is
+an option in the UI and not the default.
+
+## Machine
+
+- CPU: AMD Ryzen 7 H 255 (8 cores / 16 threads, Zen 5), 30 GB RAM
+- GPU: Radeon 780M iGPU only; no CUDA, so every candidate runs on the CPU
+- faster-whisper 1.2.1, CTranslate2 4.8.4 (int8); whisper.cpp 482279b (2026-10-30),
+  CPU build with `GGML_NATIVE=ON`, no BLAS/Vulkan
+- Settings for all: 8 compute threads, beam size 5, **language auto-detect** (the app
+  default), no VAD, one fresh process per candidate, one warm-up run before timing
+
+## Samples (with known reference text)
+
+| id | length | source |
+|---|---|---|
+| en_tts | 23 s | English paragraph, Piper TTS voice `en_US-ljspeech-high` |
+| es_tts | 22 s | Spanish paragraph, Piper TTS voice `es_ES-davefx-medium` |
+| en_tts_noisy / es_tts_noisy | same | the TTS clips + seeded pink noise at **0 dB SNR**, cut to telephone band (300–3400 Hz, 8 kHz) |
+| en_jfk | 11 s | real 1961 recording (JFK inaugural, US public domain; `samples/jfk.wav` from whisper.cpp) |
+
+WER uses jiwer after lower-casing and removing punctuation. "WER all" pools the
+word errors of all five clips (about 300 reference words).
+
+## Results
+
+| Candidate | Load s | RTF (lower=faster) | x real-time | Peak RAM MB | WER EN clean | WER EN real (JFK) | WER ES clean | WER EN noisy | WER ES noisy | WER all | Lang-ID ok |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| fw:small | 0.9 | 0.112 | 8.9x | 672 | 2.7% | 0.0% | 7.1% | 31.5% | 17.1% | 13.6% | 5/5 |
+| fw:medium | 1.9 | 0.303 | 3.3x | 1604 | 0.0% | 0.0% | 1.4% | 11.0% | 5.7% | 4.2% | 5/5 |
+| fw:large-v3-turbo | 1.8 | 0.253 | 4.0x | 1673 | 1.4% | 0.0% | 2.9% | 8.2% | 5.7% | 4.2% | 5/5 |
+| fw:distil-large-v3 | 1.7 | 0.232 | 4.3x | 1566 | 4.1% | 0.0% | 104.3% | 19.2% | 98.6% | 51.6% | 3/5 |
+| fw:large-v3 | 2.8 | 0.454 | 2.2x | 3067 | 0.0% | 0.0% | 4.3% | 2.7% | 2.9% | 2.3% | 5/5 |
+| wcpp:small | 0.1 | 0.178 | 5.6x | 758 | 2.7% | 0.0% | 7.1% | 27.4% | 14.3% | 12.0% | 5/5 |
+| wcpp:medium | 0.4 | 0.583 | 1.7x | 2081 | 0.0% | 0.0% | 1.4% | 11.0% | 5.7% | 4.2% | 5/5 |
+| wcpp:large-v3-turbo | 0.2 | 0.780 | 1.3x | 1813 | 1.4% | 0.0% | 0.0% | 6.8% | 5.7% | 3.2% | 5/5 |
+| wcpp:large-v3-turbo-q5_0 | 0.1 | 0.724 | 1.4x | 803 | 0.0% | 0.0% | 2.9% | 6.8% | 5.7% | 3.6% | 5/5 |
+
+RTF = compute seconds / audio seconds (summed over the clips). Peak RAM = peak RSS of the
+worker process. Load = model load time.
+
+### Short-clip latency (dictation case)
+
+Whisper always encodes a full 30 s window, so short clips cost almost the same as 30 s.
+The 11 s JFK clip with `large-v3-turbo`:
+
+| setting | time |
+|---|---|
+| auto-detect language (default) | 4.5 s |
+| language set in Options | 2.4 s |
+| `small`, auto-detect | 1.5 s |
+
+With auto-detect, faster-whisper runs the encoder twice: once to detect the language
+and once to transcribe. More threads (16 instead of 8) and greedy decoding (beam 1)
+did not change the time.
+
+## Why large-v3-turbo
+
+- **Accuracy:** it ties with `medium` for overall WER (4.2%) and is better on the
+  hardest clip (noisy English: 8.2% vs 11.0%). It is much better than `small` (13.6%)
+  and `small` fails on noisy audio (31.5% noisy English).
+- **Speed:** it is faster than `medium` (4.0× vs 3.3× real time) with the same RAM
+  (1.7 vs 1.6 GB). `large-v3` is more accurate (2.3%) but runs at 2.2× real time with
+  3.1 GB of RAM and a 3 GB first download. That is too much for a zero-config default
+  on a CPU-only machine.
+- **Multilingual:** it has the large-v3 encoder, which helps languages beyond the two we
+  measured. `distil-large-v3` is English-only in practice: Spanish became an English
+  translation (98–104% WER) and its language ID failed on 2 of 5 clips.
+- **Engine:** on this CPU, faster-whisper (CTranslate2 int8) is 3× faster than
+  whisper.cpp for the same model (turbo: 4.0× vs 1.3× real time) with the same accuracy.
+  So the app keeps faster-whisper. whisper.cpp q5_0 uses much less RAM (0.8 GB), which can
+  help small machines.
+
+## Limits of this benchmark
+
+- The samples are small: about 300 words, mostly TTS. Differences of 1–2 WER points
+  (a few words) are within noise. The large gaps (small, distil on Spanish, noisy audio)
+  are real.
+- Piper adds some randomness, so a new run of `make_samples.py` can move clean-clip WER
+  by about one word.
+- We measured no GPU paths. A Vulkan build of whisper.cpp could use the 780M iGPU; that
+  is not measured.
+
+## Reproduce
+
+```sh
+cd bench/.work && git clone --depth 1 https://github.com/ggml-org/whisper.cpp.git \
+  && cmake -S whisper.cpp -B whisper.cpp/build -DCMAKE_BUILD_TYPE=Release -DGGML_NATIVE=ON \
+  && cmake --build whisper.cpp/build -j --target whisper-cli    # optional
+# ggml models (optional): ggml-{small,medium,large-v3-turbo,large-v3-turbo-q5_0}.bin
+#   from huggingface.co/ggerganov/whisper.cpp into bench/.work/ggml/
+cd ../.. && make bench    # samples + all candidates; writes bench/.work/results.md
+```
+
+The whisper.cpp candidates are skipped when the binary or models are missing.
