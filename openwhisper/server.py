@@ -13,16 +13,17 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from . import config
 from .engine import UnsupportedMedia, probe_audio
-from .jobs import JobManager
+from .jobs import JobManager, QueueFull
 
 log = logging.getLogger("openwhisper")
 
-DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
+DIST = (Path(__file__).resolve().parent.parent / "frontend" / "dist").resolve()
 CHUNK = 1024 * 1024
 
 
@@ -58,6 +59,28 @@ def create_app(engine: Any = None, preload: bool = True) -> FastAPI:
         yield
 
     app = FastAPI(title="open-whisper", lifespan=lifespan)
+    # Local-only app: refuse DNS-rebinding hosts and cross-site form posts from other web pages.
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost", "testserver"])
+
+    @app.middleware("http")
+    async def guard(request: Request, call_next):
+        if request.url.path.startswith("/api/") and request.method not in ("GET", "HEAD"):
+            origin = request.headers.get("origin")
+            host = request.headers.get("host", "")
+            if origin and origin.split("://", 1)[-1] != host:
+                return JSONResponse({"detail": "Cross-origin requests are not allowed."}, status_code=403)
+            if request.url.path == "/api/transcribe":
+                # Reject oversized uploads before the multipart parser spools them to disk.
+                length = request.headers.get("content-length")
+                if length is None:
+                    return JSONResponse({"detail": "Upload needs a Content-Length."}, status_code=411)
+                if not length.isdigit():
+                    return JSONResponse({"detail": "Bad Content-Length."}, status_code=400)
+                if int(length) > config.MAX_UPLOAD_BYTES + CHUNK:
+                    limit = config.MAX_UPLOAD_BYTES // 1024**3
+                    return JSONResponse({"detail": f"File is larger than {limit} GB."}, status_code=413)
+        return await call_next(request)
+
     app.state.jobs = jobs
     app.state.engine = engine
 
@@ -103,7 +126,11 @@ def create_app(engine: Any = None, preload: bool = True) -> FastAPI:
         except BaseException:
             os.unlink(tmp)
             raise
-        job = jobs.submit(name, tmp, None if language == "auto" else language, model)
+        try:
+            job = jobs.submit(name, tmp, None if language == "auto" else language, model)
+        except QueueFull as exc:
+            os.unlink(tmp)
+            raise HTTPException(429, str(exc)) from exc
         return {"job_id": job.id, "duration": duration}
 
     @app.get("/api/jobs/{job_id}")
@@ -151,6 +178,8 @@ def create_app(engine: Any = None, preload: bool = True) -> FastAPI:
 
         @app.get("/{path:path}", include_in_schema=False)
         def spa(path: str) -> FileResponse:
+            if path.startswith("api/"):
+                raise HTTPException(404, "Not found.")
             candidate = (DIST / path).resolve()
             if path and candidate.is_file() and DIST in candidate.parents:
                 return FileResponse(candidate)

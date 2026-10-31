@@ -16,6 +16,11 @@ from . import formats
 log = logging.getLogger("openwhisper")
 
 KEEP_FINISHED_SECONDS = 3600
+MAX_PENDING = 8
+
+
+class QueueFull(RuntimeError):
+    pass
 
 
 class Transcriber(Protocol):
@@ -72,6 +77,9 @@ class JobManager:
         job = Job(id=uuid.uuid4().hex, filename=filename, path=path, language=language, model=model)
         with self._lock:
             self._gc()
+            pending = sum(j.state in ("queued", "preparing", "transcribing") for j in self.jobs.values())
+            if pending >= MAX_PENDING:
+                raise QueueFull(f"{pending} transcriptions are already waiting. Try again when they finish.")
             self.jobs[job.id] = job
         self._queue.put(job.id)
         return job

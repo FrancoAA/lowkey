@@ -16,7 +16,7 @@
             <p class="tagline">Speech to text that runs on this computer. Nothing leaves it.</p>
           </div>
         </div>
-        <div id="model-status" class="model-status" role="status" aria-live="polite">
+        <div id="model-status" class="model-status" aria-live="off">
           <span class="dot"></span><span id="model-status-text">Starting…</span>
           <div class="model-bar" hidden><div id="model-bar-fill"></div></div>
         </div>
@@ -43,7 +43,7 @@
           <div class="dictation-body">
             <canvas id="waveform" class="waveform" height="56" aria-hidden="true"></canvas>
             <div class="dictation-text">
-              <span id="dictation-label" class="dictation-label">Dictate</span>
+              <span id="dictation-label" class="dictation-label" aria-live="polite">Dictate</span>
               <span id="dictation-hint" class="dictation-hint">Hold <kbd>Space</kbd> to talk, or tap it to start and stop</span>
             </div>
             <span id="dictation-timer" class="timer" hidden>0:00</span>

@@ -78,3 +78,70 @@ def test_rejects_unknown_language_and_model(client):
 def test_unknown_job_is_404(client):
     assert client.get("/api/jobs/nope").status_code == 404
     assert client.get("/api/jobs/nope/events").status_code == 404
+
+
+def test_upload_size_limit(client, monkeypatch):
+    monkeypatch.setattr(config, "MAX_UPLOAD_BYTES", 1000)
+    # Small enough for the Content-Length precheck, too big for the streaming copy.
+    res = upload(client, tone_wav(1.0))
+    assert res.status_code == 413
+    # Clearly too big: rejected from Content-Length before the body is parsed.
+    res = upload(client, b"\0" * (3 * 1024 * 1024))
+    assert res.status_code == 413
+
+
+def test_cross_origin_post_and_foreign_host_are_refused(client):
+    res = client.post(
+        "/api/transcribe",
+        files={"file": ("t.wav", tone_wav(), "audio/wav")},
+        headers={"Origin": "https://evil.example"},
+    )
+    assert res.status_code == 403
+    assert client.get("/api/status", headers={"Host": "evil.example"}).status_code == 400
+
+
+def test_unknown_api_path_is_json_404(client):
+    res = client.get("/api/nope")
+    assert res.status_code == 404
+
+
+class DownloadingEngine(FakeEngine):
+    """Reports a model download in progress for a short while, like a first run."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.ticks = 0
+        self.downloading = True
+
+    def model_state(self, name: str) -> dict:
+        if not self.downloading:
+            return super().model_state(name)
+        self.ticks += 1
+        return {"name": name, "state": "downloading", "downloaded": self.ticks, "total": 100,
+                "progress": self.ticks / 100, "error": None}
+
+    def transcribe(self, path, language, model, on_update):
+        import time
+
+        on_update({"state": "preparing", "message": "Preparing model"})
+        time.sleep(1.0)
+        self.downloading = False
+        return super().transcribe(path, language, model, on_update)
+
+
+def test_progress_stream_reports_model_download():
+    from fastapi.testclient import TestClient
+
+    from openwhisper.server import create_app
+
+    with TestClient(create_app(engine=DownloadingEngine(), preload=False)) as c:
+        job_id = upload(c, tone_wav()).json()["job_id"]
+        events = []
+        with c.stream("GET", f"/api/jobs/{job_id}/events") as stream:
+            for line in stream.iter_lines():
+                if line.startswith("data: "):
+                    events.append(json.loads(line[6:]))
+    downloads = [e for e in events if e.get("model_state", {}).get("state") == "downloading"]
+    assert len(downloads) >= 2, events
+    assert downloads[-1]["model_state"]["progress"] > downloads[0]["model_state"]["progress"]
+    assert events[-1]["state"] == "done"

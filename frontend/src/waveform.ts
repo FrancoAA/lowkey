@@ -9,6 +9,7 @@ export class Waveform {
   private analyser: AnalyserNode | null = null;
   private buf: Float32Array<ArrayBuffer> = new Float32Array(0);
   private lastPush = 0;
+  private color = "#c026d3";
 
   constructor(private canvas: HTMLCanvasElement) {
     this.ctx = canvas.getContext("2d")!;
@@ -22,6 +23,7 @@ export class Waveform {
     this.buf = new Float32Array(new ArrayBuffer(analyser.fftSize * 4));
     this.levels = [];
     this.lastPush = 0;
+    this.color = getComputedStyle(this.canvas).color || this.color;
     const tick = (t: number) => {
       this.sample(t);
       this.draw();
@@ -69,11 +71,11 @@ export class Waveform {
       canvas.height = h;
     }
     ctx.clearRect(0, 0, w, h);
+    if (w < 8 || h < 8) return; // hidden or not laid out yet
     const n = this.barCount();
     const gap = 2 * dpr;
-    const bw = w / n - gap;
-    const color = getComputedStyle(canvas).color || "#c026d3";
-    ctx.fillStyle = color;
+    const bw = Math.max(1, w / n - gap);
+    ctx.fillStyle = this.color;
     const offset = n - this.levels.length;
     for (let i = 0; i < n; i++) {
       const lv = i < offset ? 0 : this.levels[i - offset];
@@ -81,7 +83,7 @@ export class Waveform {
       const x = i * (bw + gap) + gap / 2;
       const y = (h - bh) / 2;
       ctx.globalAlpha = i < offset ? 0.25 : 0.35 + 0.65 * (i / n);
-      roundRect(ctx, x, y, bw, bh, Math.min(bw, bh) / 2);
+      roundRect(ctx, x, y, bw, bh, Math.max(0, Math.min(bw, bh) / 2));
     }
     ctx.globalAlpha = 1;
   }

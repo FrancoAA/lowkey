@@ -82,24 +82,52 @@ export async function startJob(file: Blob, filename: string, language: string, m
   return (await res.json()).job_id;
 }
 
-/** Follow a job over SSE. Returns a function that stops listening. */
+export async function getJob(jobId: string): Promise<JobEvent> {
+  const res = await fetch(`/api/jobs/${jobId}`);
+  if (!res.ok) throw new Error(await errorText(res));
+  const job = await res.json();
+  return { ...job, new_segments: job.new_segments ?? [] };
+}
+
+/**
+ * Follow a job over SSE. If the stream breaks, fall back to polling; give up (onLost) only
+ * when the server stops answering. Returns a function that stops listening.
+ */
 export function followJob(jobId: string, onEvent: (e: JobEvent) => void, onLost: () => void): () => void {
+  let stopped = false;
+  let pollTimer = 0;
+  const finish = (ev: JobEvent) => ev.state === "done" || ev.state === "error";
   const es = new EventSource(`/api/jobs/${jobId}/events`);
-  let finished = false;
+
+  const poll = async (failures: number) => {
+    if (stopped) return;
+    try {
+      const ev = await getJob(jobId);
+      onEvent(ev);
+      if (finish(ev)) return;
+      failures = 0;
+    } catch {
+      if (++failures >= 5) return onLost();
+    }
+    pollTimer = window.setTimeout(() => poll(failures), 1000);
+  };
+
   es.onmessage = (msg) => {
     const ev = JSON.parse(msg.data) as JobEvent;
-    if (ev.state === "done" || ev.state === "error") {
-      finished = true;
+    if (finish(ev)) {
+      stopped = true;
       es.close();
     }
     onEvent(ev);
   };
   es.onerror = () => {
-    // EventSource retries on its own; give up only if the server is really gone.
-    if (!finished && es.readyState === EventSource.CLOSED) onLost();
+    if (stopped) return;
+    es.close();
+    void poll(0);
   };
   return () => {
-    finished = true;
+    stopped = true;
     es.close();
+    clearTimeout(pollTimer);
   };
 }

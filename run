@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# open-whisper: one command to start. First run installs Python deps, builds the UI and
+# downloads the speech model (progress shows here and in the browser). Then it just works.
+set -euo pipefail
+cd "$(dirname "$0")"
+
+need() {
+  command -v "$1" >/dev/null 2>&1 || { echo "open-whisper needs '$1' on this machine. $2" >&2; exit 1; }
+}
+need uv "Install it from https://docs.astral.sh/uv/getting-started/installation/"
+
+if [ ! -f frontend/dist/index.html ] ||
+   [ -n "$(find frontend/src frontend/index.html frontend/public -newer frontend/dist/index.html -print -quit)" ]; then
+  need npm "Install Node.js 20 or newer from https://nodejs.org"
+  echo "Building the web UI…"
+  (
+    cd frontend
+    [ -d node_modules ] || npm ci --no-fund --no-audit --loglevel=error
+    npm run --silent build >/dev/null
+  )
+fi
+
+exec uv run --frozen --no-dev python -m openwhisper "$@"

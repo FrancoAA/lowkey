@@ -3,7 +3,8 @@ import { Waveform } from "./waveform";
 export type DictationState = "idle" | "starting" | "listening";
 
 export interface DictationCallbacks {
-  onState(state: DictationState, elapsedMs: number): void;
+  onState(state: DictationState): void;
+  onTick(elapsedMs: number): void;
   onAudio(blob: Blob, filename: string): void;
   onError(message: string): void;
 }
@@ -65,22 +66,36 @@ export class Dictation {
       this.setState("idle");
       return;
     }
-    this.audioCtx = new AudioContext();
-    const src = this.audioCtx.createMediaStreamSource(this.stream);
-    const analyser = this.audioCtx.createAnalyser();
-    analyser.fftSize = 1024;
-    src.connect(analyser);
-    this.waveform.start(analyser);
+    try {
+      this.audioCtx = new AudioContext();
+      // Created after an await, so it may start suspended under autoplay rules.
+      await this.audioCtx.resume();
+      const src = this.audioCtx.createMediaStreamSource(this.stream);
+      const analyser = this.audioCtx.createAnalyser();
+      analyser.fftSize = 1024;
+      src.connect(analyser);
 
-    const mime = pickMime();
-    this.recorder = new MediaRecorder(this.stream, mime ? { mimeType: mime } : undefined);
-    this.chunks = [];
-    this.recorder.ondataavailable = (e) => e.data.size && this.chunks.push(e.data);
-    this.recorder.onstop = () => this.finish();
-    this.recorder.start(250);
+      const mime = pickMime();
+      this.recorder = new MediaRecorder(this.stream, mime ? { mimeType: mime } : undefined);
+      this.chunks = [];
+      this.recorder.ondataavailable = (e) => e.data.size && this.chunks.push(e.data);
+      this.recorder.onstop = () => this.finish();
+      this.recorder.start(250);
+      this.waveform.start(analyser);
+    } catch (err) {
+      this.release();
+      this.setState("idle");
+      this.cb.onError(`Could not record from the microphone${err instanceof Error ? `: ${err.message}` : "."}`);
+      return;
+    }
     this.startedAt = performance.now();
     this.setState("listening");
-    this.timer = window.setInterval(() => this.cb.onState(this.state, this.elapsed()), 200);
+    if (this.stopRequested) {
+      // Push-to-talk released while the recorder was starting.
+      this.stop();
+      return;
+    }
+    this.timer = window.setInterval(() => this.cb.onTick(this.elapsed()), 200);
   }
 
   /** Stop and transcribe. */
@@ -125,6 +140,6 @@ export class Dictation {
 
   private setState(s: DictationState): void {
     this.state = s;
-    this.cb.onState(s, this.elapsed());
+    this.cb.onState(s);
   }
 }

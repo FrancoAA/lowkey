@@ -109,7 +109,8 @@ async function refreshStatus(): Promise<void> {
     modelStatusText.textContent = "Server not reachable";
   }
   const m = selectedModel();
-  const settling = !m || ["missing", "downloading", "downloaded", "loading"].includes(m.state);
+  // Poll fast only while something is changing; a model that is merely not downloaded yet is idle.
+  const settling = !m || ["downloading", "loading"].includes(m.state) || (m.name === status?.default_model && m.state !== "ready" && m.state !== "error");
   clearTimeout(statusTimer);
   statusTimer = window.setTimeout(refreshStatus, settling ? 1000 : 10000);
 }
@@ -294,12 +295,12 @@ modelSelect.addEventListener("change", () => {
 // ------------------------------------------------------------------ dictation
 const waveform = new Waveform($<HTMLCanvasElement>("waveform"));
 const dictation = new Dictation(waveform, {
-  onState(state: DictationState, elapsed: number) {
+  onState(state: DictationState) {
     dictationBox.dataset.state = state;
     micButton.setAttribute("aria-label", state === "idle" ? "Start dictation" : "Stop dictation");
     micButton.setAttribute("aria-pressed", String(state !== "idle"));
     dictationTimer.hidden = state !== "listening";
-    dictationTimer.textContent = fmtClock(elapsed);
+    dictationTimer.textContent = fmtClock(0);
     if (state === "idle") {
       dictationLabel.textContent = "Dictate";
       dictationHint.innerHTML = "Hold <kbd>Space</kbd> to talk, or tap it to start and stop";
@@ -310,6 +311,9 @@ const dictation = new Dictation(waveform, {
       dictationLabel.textContent = "Listening…";
       dictationHint.innerHTML = held ? "Release <kbd>Space</kbd> to transcribe · <kbd>Esc</kbd> cancels" : "Press <kbd>Space</kbd> or the mic to transcribe · <kbd>Esc</kbd> cancels";
     }
+  },
+  onTick(elapsed: number) {
+    dictationTimer.textContent = fmtClock(elapsed);
   },
   onAudio(blob, filename) {
     void transcribe(blob, filename, "Dictation");
@@ -329,6 +333,13 @@ function isTyping(target: EventTarget | null): boolean {
   return !!el && (el.isContentEditable || ["INPUT", "SELECT", "TEXTAREA"].includes(el.tagName));
 }
 
+/** Space should keep its normal meaning on a control that a keyboard user focused (Tab). */
+function keyboardFocusedControl(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null;
+  if (!el || el === micButton || !el.matches?.("button, summary, a[href], [role=button], label[tabindex]")) return false;
+  return el.matches(":focus-visible");
+}
+
 function toggleDictation(): void {
   if (dictation.state === "idle") {
     if (busy) return showError("A transcription is already running. Wait for it to finish.");
@@ -345,8 +356,8 @@ document.addEventListener(
       dictation.cancel();
       return;
     }
-    if (e.code !== "Space" || e.ctrlKey || e.metaKey || e.altKey || isTyping(e.target)) return;
-    e.preventDefault(); // no page scroll, no accidental button "click"
+    if (e.code !== "Space" || e.ctrlKey || e.metaKey || e.altKey || isTyping(e.target) || keyboardFocusedControl(e.target)) return;
+    e.preventDefault(); // no page scroll, no accidental "click" on a mouse-focused button
     if (e.repeat) return;
     spaceDownAt = performance.now();
     if (dictation.state === "idle") {
@@ -366,12 +377,13 @@ document.addEventListener(
 document.addEventListener(
   "keyup",
   (e) => {
-    if (e.code !== "Space" || isTyping(e.target)) return;
+    if (e.code !== "Space" || isTyping(e.target) || (keyboardFocusedControl(e.target) && !spaceDownAt)) return;
     e.preventDefault();
     clearTimeout(holdTimer);
     const heldFor = performance.now() - spaceDownAt;
-    if (held || heldFor >= HOLD_MS) dictation.stop(); // push-to-talk release
+    if (spaceDownAt && (held || heldFor >= HOLD_MS)) dictation.stop(); // push-to-talk release
     held = false;
+    spaceDownAt = 0;
   },
   true,
 );
