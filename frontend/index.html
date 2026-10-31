@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+    <title>open-whisper · local speech to text</title>
+  </head>
+  <body>
+    <main class="shell">
+      <header class="top">
+        <div class="brand">
+          <img src="/icon.svg" alt="" width="36" height="36" />
+          <div>
+            <h1>open-whisper</h1>
+            <p class="tagline">Speech to text that runs on this computer. Nothing leaves it.</p>
+          </div>
+        </div>
+        <div id="model-status" class="model-status" role="status" aria-live="polite">
+          <span class="dot"></span><span id="model-status-text">Starting…</span>
+          <div class="model-bar" hidden><div id="model-bar-fill"></div></div>
+        </div>
+      </header>
+
+      <section class="card">
+        <label id="dropzone" class="dropzone" tabindex="0">
+          <input id="file-input" type="file" accept="audio/*,video/*" hidden />
+          <svg class="drop-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 16V4m0 0-4 4m4-4 4 4M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
+          </svg>
+          <span class="drop-title">Drop an audio or video file</span>
+          <span class="drop-sub">or <u>choose a file</u> · MP3, WAV, M4A, OGG, FLAC, WEBM, MP4…</span>
+        </label>
+
+        <div class="divider"><span>or</span></div>
+
+        <div id="dictation" class="dictation" data-state="idle">
+          <button id="mic-button" class="mic" type="button" aria-label="Start dictation">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3Zm0 0v4m-4 0h8M6 11a6 6 0 0 0 12 0" />
+            </svg>
+          </button>
+          <div class="dictation-body">
+            <canvas id="waveform" class="waveform" height="56" aria-hidden="true"></canvas>
+            <div class="dictation-text">
+              <span id="dictation-label" class="dictation-label">Dictate</span>
+              <span id="dictation-hint" class="dictation-hint">Hold <kbd>Space</kbd> to talk, or tap it to start and stop</span>
+            </div>
+            <span id="dictation-timer" class="timer" hidden>0:00</span>
+          </div>
+        </div>
+
+        <details id="options" class="options">
+          <summary>Options</summary>
+          <div class="options-grid">
+            <label>
+              <span>Language</span>
+              <select id="language-select">
+                <option value="auto" selected>Auto-detect</option>
+              </select>
+            </label>
+            <label>
+              <span>Model</span>
+              <select id="model-select"></select>
+            </label>
+          </div>
+        </details>
+      </section>
+
+      <div id="error" class="error" role="alert" hidden></div>
+
+      <section id="result" class="card result" hidden>
+        <div class="result-head">
+          <div>
+            <h2 id="result-title">Transcript</h2>
+            <p id="result-meta" class="meta"></p>
+          </div>
+          <div class="actions">
+            <button id="copy-button" type="button" class="btn primary" disabled>Copy</button>
+            <button data-format="txt" type="button" class="btn download" disabled>.txt</button>
+            <button data-format="srt" type="button" class="btn download" disabled>.srt</button>
+            <button data-format="vtt" type="button" class="btn download" disabled>.vtt</button>
+          </div>
+        </div>
+        <div id="progress" class="progress" hidden>
+          <div class="progress-track"><div id="progress-fill" class="progress-fill"></div></div>
+          <span id="progress-text" class="progress-text"></span>
+        </div>
+        <div id="transcript" class="transcript" aria-live="polite"></div>
+      </section>
+
+      <footer class="foot">
+        Powered by open-source <a href="https://github.com/SYSTRAN/faster-whisper">faster-whisper</a> and
+        OpenAI Whisper model weights (MIT).
+      </footer>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
