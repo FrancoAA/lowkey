@@ -185,9 +185,12 @@ def main() -> None:
             expect(page.locator("#copy-button")).to_be_enabled(timeout=120_000)
             check(len(page.locator("#transcript").inner_text()) > 3, "tap-mode dictation transcribed")
 
-            print("dictation flow (mic button + Esc cancels)")
+            print("dictation flow (mic button; a dropped file does not cut it off; Esc cancels)")
             page.locator("#mic-button").click()
             expect(page.locator("#dictation")).to_have_attribute("data-state", "listening", timeout=10_000)
+            page.locator("#file-input").set_input_files(str(SPEECH))
+            expect(page.locator("#error")).to_contain_text("Finish the dictation first")
+            check(page.locator("#dictation").get_attribute("data-state") == "listening", "file drop during dictation keeps the recording")
             page.keyboard.press("Escape")
             expect(page.locator("#dictation")).to_have_attribute("data-state", "idle", timeout=5_000)
 

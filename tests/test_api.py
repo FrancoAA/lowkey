@@ -115,6 +115,17 @@ def test_unknown_api_path_is_json_404(client):
     assert res.status_code == 404
 
 
+def test_missing_static_file_is_404_not_html(client):
+    from openwhisper.server import DIST
+
+    if not DIST.is_dir():
+        import pytest
+
+        pytest.skip("frontend not built")
+    assert client.get("/favicon.ico").status_code == 404
+    assert client.get("/").headers["content-type"].startswith("text/html")
+
+
 class DownloadingEngine(FakeEngine):
     """Reports a model download in progress for a short while, like a first run."""
 
