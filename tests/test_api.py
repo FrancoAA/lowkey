@@ -4,7 +4,7 @@ import json
 
 from openwhisper import config
 
-from .conftest import FakeEngine, tone_wav, wait_done
+from .conftest import TEST_HOSTS, FakeEngine, tone_wav, wait_done
 
 
 def upload(client, data: bytes, name: str = "tone.wav", **form):
@@ -100,6 +100,16 @@ def test_cross_origin_post_and_foreign_host_are_refused(client):
     assert client.get("/api/status", headers={"Host": "evil.example"}).status_code == 400
 
 
+def test_vite_dev_proxy_post_is_allowed(client):
+    # Vite's proxy sets Host to the backend while Origin stays the dev server.
+    res = client.post(
+        "/api/transcribe",
+        files={"file": ("t.wav", tone_wav(), "audio/wav")},
+        headers={"Origin": "http://127.0.0.1:5173", "Host": "127.0.0.1:8000"},
+    )
+    assert res.status_code == 202, res.text
+
+
 def test_unknown_api_path_is_json_404(client):
     res = client.get("/api/nope")
     assert res.status_code == 404
@@ -134,7 +144,7 @@ def test_progress_stream_reports_model_download():
 
     from openwhisper.server import create_app
 
-    with TestClient(create_app(engine=DownloadingEngine(), preload=False)) as c:
+    with TestClient(create_app(engine=DownloadingEngine(), preload=False, allowed_hosts=TEST_HOSTS)) as c:
         job_id = upload(c, tone_wav()).json()["job_id"]
         events = []
         with c.stream("GET", f"/api/jobs/{job_id}/events") as stream:

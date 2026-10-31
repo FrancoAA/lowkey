@@ -9,13 +9,22 @@ need() {
 }
 need uv "Install it from https://docs.astral.sh/uv/getting-started/installation/"
 
+UI_SOURCES="frontend/src frontend/index.html frontend/public frontend/package.json frontend/package-lock.json frontend/vite.config.ts frontend/tsconfig.json"
+# shellcheck disable=SC2086
 if [ ! -f frontend/dist/index.html ] ||
-   [ -n "$(find frontend/src frontend/index.html frontend/public -newer frontend/dist/index.html -print -quit)" ]; then
+   [ -n "$(find $UI_SOURCES -newer frontend/dist/index.html -print -quit)" ]; then
+  need node "Install Node.js 20 or newer from https://nodejs.org"
   need npm "Install Node.js 20 or newer from https://nodejs.org"
+  if [ "$(node -p 'process.versions.node.split(".")[0]')" -lt 20 ]; then
+    echo "open-whisper needs Node.js 20 or newer to build its UI (found $(node -v))." >&2
+    exit 1
+  fi
   echo "Building the web UI…"
   (
     cd frontend
-    [ -d node_modules ] || npm ci --no-fund --no-audit --loglevel=error
+    if [ ! -d node_modules ] || [ package-lock.json -nt node_modules ]; then
+      npm ci --no-fund --no-audit --loglevel=error
+    fi
     npm run --silent build >/dev/null
   )
 fi

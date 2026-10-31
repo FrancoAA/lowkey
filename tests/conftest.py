@@ -14,6 +14,7 @@ from openwhisper import config
 from openwhisper.server import create_app
 
 FIXTURES = Path(__file__).parent / "fixtures"
+TEST_HOSTS = ["127.0.0.1", "localhost", "testserver"]  # TestClient sends Host: testserver
 
 
 def tone_wav(seconds: float = 1.0, rate: int = 16000) -> bytes:
@@ -68,7 +69,7 @@ def fake_engine() -> FakeEngine:
 
 @pytest.fixture
 def client(fake_engine: FakeEngine):
-    with TestClient(create_app(engine=fake_engine, preload=False)) as c:
+    with TestClient(create_app(engine=fake_engine, preload=False, allowed_hosts=TEST_HOSTS)) as c:
         yield c
 
 

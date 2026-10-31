@@ -77,12 +77,15 @@ class JobManager:
         job = Job(id=uuid.uuid4().hex, filename=filename, path=path, language=language, model=model)
         with self._lock:
             self._gc()
-            pending = sum(j.state in ("queued", "preparing", "transcribing") for j in self.jobs.values())
+            pending = self.pending()
             if pending >= MAX_PENDING:
                 raise QueueFull(f"{pending} transcriptions are already waiting. Try again when they finish.")
             self.jobs[job.id] = job
         self._queue.put(job.id)
         return job
+
+    def pending(self) -> int:
+        return sum(j.state in ("queued", "preparing", "transcribing") for j in list(self.jobs.values()))
 
     def get(self, job_id: str) -> Job | None:
         return self.jobs.get(job_id)

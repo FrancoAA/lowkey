@@ -8,6 +8,7 @@ import logging
 import os
 import tempfile
 import threading
+from urllib.parse import urlsplit
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -19,12 +20,13 @@ from fastapi.staticfiles import StaticFiles
 
 from . import config
 from .engine import UnsupportedMedia, probe_audio
-from .jobs import JobManager, QueueFull
+from .jobs import MAX_PENDING, JobManager, QueueFull
 
 log = logging.getLogger("openwhisper")
 
 DIST = (Path(__file__).resolve().parent.parent / "frontend" / "dist").resolve()
 CHUNK = 1024 * 1024
+LOCAL_HOSTS = ["127.0.0.1", "localhost"]
 
 
 def _languages() -> dict[str, str]:
@@ -37,7 +39,7 @@ def _languages() -> dict[str, str]:
     return {code: LANGUAGES.get(code, code) for code in _LANGUAGE_CODES}
 
 
-def create_app(engine: Any = None, preload: bool = True) -> FastAPI:
+def create_app(engine: Any = None, preload: bool = True, allowed_hosts: list[str] | None = None) -> FastAPI:
     if engine is None:
         from .engine import Engine
 
@@ -60,23 +62,25 @@ def create_app(engine: Any = None, preload: bool = True) -> FastAPI:
 
     app = FastAPI(title="open-whisper", lifespan=lifespan)
     # Local-only app: refuse DNS-rebinding hosts and cross-site form posts from other web pages.
-    app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost", "testserver"])
+    hosts = allowed_hosts or LOCAL_HOSTS
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=hosts)
 
     @app.middleware("http")
     async def guard(request: Request, call_next):
         if request.url.path.startswith("/api/") and request.method not in ("GET", "HEAD"):
+            # Compare host names only: the Vite dev proxy rewrites Host to the backend port.
             origin = request.headers.get("origin")
-            host = request.headers.get("host", "")
-            if origin and origin.split("://", 1)[-1] != host:
+            if origin and urlsplit(origin).hostname not in hosts:
                 return JSONResponse({"detail": "Cross-origin requests are not allowed."}, status_code=403)
             if request.url.path == "/api/transcribe":
+                if jobs.pending() >= MAX_PENDING:
+                    return JSONResponse({"detail": "Too many transcriptions are waiting. Try again soon."}, status_code=429)
                 # Reject oversized uploads before the multipart parser spools them to disk.
+                # Without Content-Length (chunked), the streaming cap in the handler applies.
                 length = request.headers.get("content-length")
-                if length is None:
-                    return JSONResponse({"detail": "Upload needs a Content-Length."}, status_code=411)
-                if not length.isdigit():
+                if length is not None and not length.isdigit():
                     return JSONResponse({"detail": "Bad Content-Length."}, status_code=400)
-                if int(length) > config.MAX_UPLOAD_BYTES + CHUNK:
+                if length and int(length) > config.MAX_UPLOAD_BYTES + CHUNK:
                     limit = config.MAX_UPLOAD_BYTES // 1024**3
                     return JSONResponse({"detail": f"File is larger than {limit} GB."}, status_code=413)
         return await call_next(request)
@@ -86,7 +90,7 @@ def create_app(engine: Any = None, preload: bool = True) -> FastAPI:
 
     @app.get("/api/status")
     def status() -> dict[str, Any]:
-        return engine.status()
+        return {**engine.status(), "max_upload_bytes": config.MAX_UPLOAD_BYTES}
 
     @app.get("/api/languages")
     def get_languages() -> dict[str, str]:
@@ -138,7 +142,10 @@ def create_app(engine: Any = None, preload: bool = True) -> FastAPI:
         job = jobs.get(job_id)
         if not job:
             raise HTTPException(404, "Job not found.")
-        return job.snapshot()
+        snap = job.snapshot()
+        if snap["state"] in ("queued", "preparing"):
+            snap["model_state"] = engine.model_state(job.model)
+        return snap
 
     @app.get("/api/jobs/{job_id}/events")
     async def job_events(job_id: str, request: Request) -> StreamingResponse:

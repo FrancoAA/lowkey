@@ -71,6 +71,7 @@ function modelPhrase(m: ModelInfo): string {
     case "loading":
       return "Loading model…";
     case "ready":
+    case "downloaded": // on disk, loads on first use
       return `Ready · ${m.label.split(" · ")[0]} on ${status?.device === "cuda" ? "GPU" : "CPU"}`;
     case "error":
       return m.error ?? "Model error";
@@ -83,7 +84,7 @@ function modelPhrase(m: ModelInfo): string {
 function renderStatus(): void {
   const m = selectedModel();
   if (!m) return;
-  modelStatus.dataset.state = m.state;
+  modelStatus.dataset.state = m.state === "downloaded" ? "ready" : m.state;
   modelStatusText.textContent = modelPhrase(m);
   modelBar.hidden = m.state !== "downloading";
   modelBarFill.style.width = `${Math.floor(m.progress * 100)}%`;
@@ -110,7 +111,7 @@ async function refreshStatus(): Promise<void> {
   }
   const m = selectedModel();
   // Poll fast only while something is changing; a model that is merely not downloaded yet is idle.
-  const settling = !m || ["downloading", "loading"].includes(m.state) || (m.name === status?.default_model && m.state !== "ready" && m.state !== "error");
+  const settling = !m || ["downloading", "loading"].includes(m.state) || (m.name === status?.default_model && m.state === "missing");
   clearTimeout(statusTimer);
   statusTimer = window.setTimeout(refreshStatus, settling ? 1000 : 10000);
 }
@@ -225,6 +226,10 @@ async function transcribe(blob: Blob, filename: string, title: string): Promise<
 function handleFile(file: File | undefined): void {
   if (!file) return;
   const looksLikeMedia = file.type.startsWith("audio/") || file.type.startsWith("video/") || MEDIA_EXT.test(file.name);
+  if (status && file.size > status.max_upload_bytes) {
+    showError(`“${file.name}” is ${fmtMB(file.size)}. The limit is ${fmtMB(status.max_upload_bytes)}.`);
+    return;
+  }
   if (!looksLikeMedia) {
     showError(`“${file.name}” is not an audio or video file. Try MP3, WAV, M4A, OGG, FLAC, WEBM or a video with sound.`);
     return;
@@ -238,7 +243,11 @@ fileInput.addEventListener("change", () => {
   fileInput.value = "";
 });
 dropzone.addEventListener("keydown", (e) => {
-  if (e.key === "Enter") fileInput.click();
+  // Space reaches here only when the dropzone has keyboard focus (see the global Space handler).
+  if (e.key === "Enter" || e.code === "Space") {
+    e.preventDefault();
+    fileInput.click();
+  }
 });
 for (const type of ["dragenter", "dragover"]) {
   document.addEventListener(type, (e) => {

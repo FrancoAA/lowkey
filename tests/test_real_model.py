@@ -5,12 +5,12 @@ from fastapi.testclient import TestClient
 
 from openwhisper.server import create_app
 
-from .conftest import FIXTURES, wait_done
+from .conftest import FIXTURES, TEST_HOSTS, wait_done
 
 
 @pytest.mark.slow
 def test_default_model_transcribes_speech():
-    with TestClient(create_app(preload=False)) as client:
+    with TestClient(create_app(preload=False, allowed_hosts=TEST_HOSTS)) as client:
         data = (FIXTURES / "hello.ogg").read_bytes()
         res = client.post("/api/transcribe", files={"file": ("hello.ogg", data, "audio/ogg")})
         assert res.status_code == 202, res.text

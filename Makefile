@@ -4,9 +4,9 @@ run:            ## start the app (same as ./run)
 	./run
 
 dev:            ## hot-reload backend (:8000) + Vite dev server (:5173)
-	@trap 'kill 0' INT TERM EXIT; \
-	uv run uvicorn --factory openwhisper.server:create_app --reload --host 127.0.0.1 --port 8000 & \
-	(cd frontend && ([ -d node_modules ] || npm ci) && npm run dev)
+	@uv run uvicorn --factory openwhisper.server:create_app --reload --host 127.0.0.1 --port 8000 & api=$$!; \
+	trap 'kill $$api 2>/dev/null' EXIT; \
+	cd frontend && ([ -d node_modules ] || npm ci) && npm run dev
 
 test:           ## fast backend tests + frontend typecheck/build
 	uv run pytest -q -m "not slow"

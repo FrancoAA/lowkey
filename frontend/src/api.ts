@@ -14,6 +14,7 @@ export interface Status {
   compute_type: string;
   default_model: string;
   models: ModelInfo[];
+  max_upload_bytes: number;
 }
 
 export interface Segment {
@@ -76,7 +77,7 @@ export async function startJob(file: Blob, filename: string, language: string, m
   try {
     res = await fetch("/api/transcribe", { method: "POST", body: form });
   } catch {
-    throw new Error("Cannot reach the open-whisper server. Is it still running?");
+    throw new Error("The upload did not reach the server. Check that open-whisper is still running in the terminal.");
   }
   if (!res.ok) throw new Error(await errorText(res));
   return (await res.json()).job_id;
