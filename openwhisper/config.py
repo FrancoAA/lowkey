@@ -7,6 +7,8 @@ The default model was chosen by benchmarking on the development machine
 from __future__ import annotations
 
 import os
+import platform
+from pathlib import Path
 from dataclasses import dataclass
 
 
@@ -48,7 +50,8 @@ def compute_threads() -> int:
     except AttributeError:  # not Linux
         cpus = os.cpu_count() or 2
     try:
-        smt = open("/sys/devices/system/cpu/smt/active").read().strip() == "1"
+        smt = Path("/sys/devices/system/cpu/smt/active").read_text().strip() == "1"
     except OSError:
-        smt = cpus >= 4
+        # No Linux SMT info: x86 desktop CPUs usually have SMT, ARM chips do not.
+        smt = platform.machine().lower() in ("x86_64", "amd64", "i686", "x86") and cpus >= 4
     return max(1, cpus // 2 if smt else cpus)

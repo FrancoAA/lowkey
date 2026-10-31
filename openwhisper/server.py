@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import tempfile
 import threading
 import time
@@ -40,15 +41,22 @@ def _languages() -> dict[str, str]:
     return {code: LANGUAGES.get(code, code) for code in _LANGUAGE_CODES}
 
 
-def sweep_stale_uploads(max_age_s: float = 6 * 3600) -> None:
-    """Remove temp uploads left behind by a killed process."""
-    now = time.time()
-    for f in Path(tempfile.gettempdir()).glob("openwhisper-*"):
+UPLOAD_PREFIX = "openwhisper-"
+_UPLOAD_NAME = re.compile(r"^openwhisper-[a-z0-9_]{8}(\.[^/]{0,16})?$")  # tempfile.mkstemp shape
+
+
+def sweep_stale_uploads(directory: str | None = None, max_age_s: float = 6 * 3600) -> int:
+    """Remove our own temp uploads left behind by a killed process. Returns how many were removed."""
+    now, removed, uid = time.time(), 0, os.getuid()
+    for f in Path(directory or tempfile.gettempdir()).glob(f"{UPLOAD_PREFIX}*"):
         try:
-            if now - f.stat().st_mtime > max_age_s:
+            st = f.stat()
+            if _UPLOAD_NAME.match(f.name) and f.is_file() and st.st_uid == uid and now - st.st_mtime > max_age_s:
                 f.unlink()
+                removed += 1
         except OSError:
             pass
+    return removed
 
 
 def create_app(engine: Any = None, preload: bool = True, allowed_hosts: list[str] | None = None) -> FastAPI:
@@ -123,7 +131,7 @@ def create_app(engine: Any = None, preload: bool = True, allowed_hosts: list[str
             raise HTTPException(400, f"Unknown model {model!r}.")
 
         name = Path(file.filename or "audio").name
-        fd, tmp = tempfile.mkstemp(prefix="openwhisper-", suffix=Path(name).suffix[:16])
+        fd, tmp = tempfile.mkstemp(prefix=UPLOAD_PREFIX, suffix=Path(name).suffix[:16])
         size = 0
         try:
             with os.fdopen(fd, "wb") as out:

@@ -43,6 +43,7 @@ function announce(message: string): void {
 }
 
 function showError(message: string | null): void {
+  modelErrorShown = false;
   errorBox.hidden = !message;
   errorBox.textContent = message ?? "";
 }
@@ -96,7 +97,12 @@ function renderStatus(): void {
   if (m.state !== lastModelState) {
     if (m.state === "downloading") announce("Downloading the speech model. This happens once.");
     if (m.state === "ready" && lastModelState) announce("Model ready.");
-    if (m.state === "error") showError(m.error ?? "The model could not be prepared.");
+    if (m.state === "error") {
+      showError(m.error ?? "The model could not be prepared.");
+      modelErrorShown = true;
+    } else if (modelErrorShown) {
+      showError(null); // the selected model is fine now; drop the old model error
+    }
     lastModelState = m.state;
   }
   for (const opt of modelSelect.options) {
@@ -107,6 +113,7 @@ function renderStatus(): void {
 }
 
 let lastModelState = "";
+let modelErrorShown = false;
 let statusTimer = 0;
 async function refreshStatus(): Promise<void> {
   try {

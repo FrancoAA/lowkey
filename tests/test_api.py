@@ -166,3 +166,21 @@ def test_progress_stream_reports_model_download():
     assert len(downloads) >= 2, events
     assert downloads[-1]["model_state"]["progress"] > downloads[0]["model_state"]["progress"]
     assert events[-1]["state"] == "done"
+
+
+def test_sweep_removes_only_our_stale_uploads(tmp_path):
+    import os
+    import time
+
+    from openwhisper.server import sweep_stale_uploads
+
+    old = time.time() - 7 * 3600
+    ours_old = tmp_path / "openwhisper-ab12cd34.wav"
+    ours_new = tmp_path / "openwhisper-ef56gh78.mp3"
+    foreign = tmp_path / "openwhisper-notes.txt"
+    for f in (ours_old, ours_new, foreign):
+        f.write_bytes(b"x")
+    os.utime(ours_old, (old, old))
+    os.utime(foreign, (old, old))
+    assert sweep_stale_uploads(str(tmp_path)) == 1
+    assert not ours_old.exists() and ours_new.exists() and foreign.exists()

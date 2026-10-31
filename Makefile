@@ -8,9 +8,9 @@ dev:            ## hot-reload backend (:8000) + Vite dev server (:5173)
 	trap 'kill $$api 2>/dev/null' EXIT; \
 	cd frontend && ([ -d node_modules ] || npm ci) && npm run dev
 
-test:           ## fast backend tests + frontend typecheck/build
-	uv run pytest -q -m "not slow"
+test:           ## frontend typecheck/build + fast backend tests (build first: one test checks static serving)
 	cd frontend && ([ -d node_modules ] || npm ci) && npm run build
+	uv run pytest -q -m "not slow"
 
 test-all: test  ## + real-model test (downloads the default model once)
 	uv run pytest -q -m slow

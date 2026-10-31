@@ -129,11 +129,14 @@ class Engine:
         st.total = sum(size for _, size in files) or spec.approx_mb * 1024**2
         done_before = 0
         engine_state = st
+        file_size = [0]
         written = [0]  # bytes written to disk for the current file
         received = [0]  # bytes received from the network (xet only; arrives smoothly)
 
         def publish() -> None:
-            engine_state.downloaded = min(engine_state.total, done_before + max(written[0], received[0]))
+            this_file = min(file_size[0], max(written[0], received[0]))
+            # Never step backwards (retries, file switches); never pass the total.
+            engine_state.downloaded = max(engine_state.downloaded, min(engine_state.total, done_before + this_file))
             engine_state.updated = time.time()
 
         class Progress(tqdm):
@@ -162,9 +165,10 @@ class Engine:
         path = None
         for fname, size in files:
             written[0] = received[0] = 0
+            file_size[0] = size
             path = hf_hub_download(spec.repo, fname, tqdm_class=Progress)
             done_before += size
-            st.downloaded = done_before
+            st.downloaded = max(st.downloaded, done_before)
         if path is None:
             raise RuntimeError(f"{spec.repo} has none of the expected model files {config.MODEL_FILES}")
         return str(Path(path).parent)
@@ -183,6 +187,7 @@ class Engine:
             st = self._states[name]
             try:
                 path = self._local_path(name, offline=True) or self._download(name)
+                st.state = "loading"  # also while waiting for another model's load to finish
                 with self._load_lock:
                     with self._lock:
                         if self._loaded_name == name:
