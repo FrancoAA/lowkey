@@ -125,6 +125,7 @@ def main() -> None:
                     page.wait_for_function(
                         "parseFloat(document.getElementById('model-bar-fill').style.width) >= 30", timeout=10 * 60_000
                     )
+                    page.wait_for_timeout(500)  # let the bar's width transition finish
                     shot(page, "00-first-run-downloading.png")
                 except AssertionError:
                     print("  (model already present; no download state to capture)")

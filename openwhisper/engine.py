@@ -129,33 +129,39 @@ class Engine:
         st.total = sum(size for _, size in files) or spec.approx_mb * 1024**2
         done_before = 0
         engine_state = st
-        file_bytes = [0]
+        written = [0]  # bytes written to disk for the current file
+        received = [0]  # bytes received from the network (xet only; arrives smoothly)
+
+        def publish() -> None:
+            engine_state.downloaded = min(engine_state.total, done_before + max(written[0], received[0]))
+            engine_state.updated = time.time()
 
         class Progress(tqdm):
-            """Counts bytes for the UI. Our own counter: the hub may hand us a disabled bar,
+            """Counts bytes for the UI. Our own counters: the hub may hand us a disabled bar,
             and a disabled tqdm does not advance `self.n`. The launcher prints the terminal line."""
 
             def __init__(self, *args: Any, **kwargs: Any) -> None:
                 kwargs["disable"] = True
                 super().__init__(*args, **kwargs)
 
-            # With hf_xet the hub would open a second "transfer" bar of this class and count
-            # every byte twice. Having update_transfer makes it use this single bar instead.
+            # With hf_xet the hub would otherwise open a second "transfer" bar of this class and
+            # count every byte twice. With update_transfer it reports both on this one bar.
+            # Disk writes come in large flushes, so progress shows the larger of the two counts.
             def update_transfer(self, n: float | None = 1) -> None:
-                pass
+                received[0] += int(n or 0)
+                publish()
 
             def set_transfer_postfix_str(self, *args: Any, **kwargs: Any) -> None:
                 pass
 
             def update(self, n: float | None = 1) -> bool | None:
-                file_bytes[0] += int(n or 0)
-                engine_state.downloaded = min(engine_state.total, done_before + file_bytes[0])
-                engine_state.updated = time.time()
+                written[0] += int(n or 0)
+                publish()
                 return super().update(n)
 
         path = None
         for fname, size in files:
-            file_bytes[0] = 0
+            written[0] = received[0] = 0
             path = hf_hub_download(spec.repo, fname, tqdm_class=Progress)
             done_before += size
             st.downloaded = done_before
