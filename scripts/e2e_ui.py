@@ -121,7 +121,10 @@ def main() -> None:
             if args.first_run_shot:
                 try:
                     expect(status).to_have_attribute("data-state", "downloading", timeout=15_000)
-                    page.wait_for_timeout(2500)
+                    # Capture mid-download so the screenshot shows real progress.
+                    page.wait_for_function(
+                        "parseFloat(document.getElementById('model-bar-fill').style.width) >= 30", timeout=10 * 60_000
+                    )
                     shot(page, "00-first-run-downloading.png")
                 except AssertionError:
                     print("  (model already present; no download state to capture)")
