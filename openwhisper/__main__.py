@@ -18,6 +18,9 @@ from . import config
 def free_port(host: str, start: int) -> int:
     for port in range(start, start + 50):
         with socket.socket() as s:
+            # Same option uvicorn uses, so a just-restarted app gets its old port back
+            # (TIME_WAIT); a port with a live listener is still refused.
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             try:
                 s.bind((host, port))
                 return port
