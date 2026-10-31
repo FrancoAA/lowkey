@@ -127,17 +127,26 @@ class Engine:
         files = [(s.rfilename, s.size or 0) for s in info.siblings if s.rfilename in config.MODEL_FILES]
         st.total = sum(size for _, size in files) or spec.approx_mb * 1024**2
         done_before = 0
-
         engine_state = st
+        file_bytes = [0]
 
-        class Progress(tqdm):  # terminal bar + UI progress in one place
+        class Progress(tqdm):
+            """Counts bytes for the UI. Our own counter: the hub may hand us a disabled bar,
+            and a disabled tqdm does not advance `self.n`. The launcher prints the terminal line."""
+
+            def __init__(self, *args: Any, **kwargs: Any) -> None:
+                kwargs["disable"] = True
+                super().__init__(*args, **kwargs)
+
             def update(self, n: float | None = 1) -> bool | None:
-                engine_state.downloaded = done_before + int(self.n + (n or 0))
+                file_bytes[0] += int(n or 0)
+                engine_state.downloaded = min(engine_state.total, done_before + file_bytes[0])
                 engine_state.updated = time.time()
                 return super().update(n)
 
         path = None
         for fname, size in files:
+            file_bytes[0] = 0
             path = hf_hub_download(spec.repo, fname, tqdm_class=Progress)
             done_before += size
             st.downloaded = done_before
