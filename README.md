@@ -26,7 +26,7 @@ Later runs start in a few seconds. Stop with <kbd>Ctrl</kbd>+<kbd>C</kbd>.
 `make run` does the same.
 
 **You need:** [uv](https://docs.astral.sh/uv/getting-started/installation/),
-Node.js 20+ (only to build the UI on the first run), and an internet connection for the
+Node.js 20+ (only when the UI needs building: the first run, or after its sources change), and an internet connection for the
 first model download. You do not need ffmpeg: audio is decoded with PyAV, which bundles
 the ffmpeg libraries.
 
@@ -81,7 +81,7 @@ browser (Vite + TypeScript)          Python (FastAPI, 127.0.0.1 only)
 ```
 
 - `openwhisper/engine.py` downloads models with byte progress, loads one model at a time,
-  runs faster-whisper with VAD (beam size 5).
+  runs faster-whisper with VAD (threshold 0.3, tuned in the benchmark) and beam size 5.
 - `openwhisper/jobs.py` is an in-memory queue with one worker, so jobs do not fight
   for the CPU. Uploads are temporary files, deleted after the job.
 - `openwhisper/server.py` has the API and serves `frontend/dist`.
@@ -95,7 +95,7 @@ browser (Vite + TypeScript)          Python (FastAPI, 127.0.0.1 only)
 | GET | `/api/status` | device, default model, per-model download state and progress |
 | GET | `/api/languages` | language codes |
 | POST | `/api/transcribe` | multipart `file`, optional `language` (`auto`), optional `model`. Returns `job_id` |
-| GET | `/api/jobs/{id}` | job state, segments, result (`text`, `srt`, `vtt`) |
+| GET | `/api/jobs/{id}` | job state, progress, `new_segments` (all so far) + `segment_count`, `result` (`text`, `segments`, `srt`, `vtt`) when done |
 | GET | `/api/jobs/{id}/events` | the same as Server-Sent Events |
 
 ## Develop
@@ -105,7 +105,8 @@ make dev       # backend with reload on :8000 + Vite dev server on :5173
 make test      # backend tests (fake engine, generated audio) + frontend typecheck/build
 make test-all  # + a real-model test on a 3-second TTS clip
 make e2e       # headless Chromium with a fake microphone: file, error and dictation flows,
-               # writes docs/screenshots/
+               # writes docs/screenshots/. Uses the system chromium; without one, run
+               # `uv run playwright install chromium` once
 make bench     # model benchmark on this machine -> bench/.work/results.md
 ```
 

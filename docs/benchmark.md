@@ -15,7 +15,14 @@ an option in the UI and not the default.
 - faster-whisper 1.2.1, CTranslate2 4.8.4 (int8); whisper.cpp 482279b (2026-10-30),
   CPU build with `GGML_NATIVE=ON`, no BLAS/Vulkan
 - Settings for all: 8 compute threads, beam size 5, **language auto-detect** (the app
-  default), no VAD, one fresh process per candidate, one warm-up run before timing
+  default), no VAD, default `condition_on_previous_text`. These are the same for both
+  engines, so the engines compare on equal terms. The app's own decode settings were then
+  tuned separately (see "App decode settings" below).
+- faster-whisper: one fresh process per candidate, one untimed warm-up, then all clips.
+  whisper.cpp: one `whisper-cli` process per clip; its own timings give load and compute.
+- Peak RAM: `ru_maxrss` from `wait4()` on the worker process. On Linux this includes
+  children that the worker waited for, so the whisper.cpp numbers are `whisper-cli`'s
+  (the Python wrapper alone is about 20 MB).
 
 ## Samples (with known reference text)
 
@@ -61,6 +68,21 @@ With auto-detect, faster-whisper runs the encoder twice: once to detect the lang
 and once to transcribe. More threads (16 instead of 8) and greedy decoding (beam 1)
 did not change the time.
 
+### App decode settings (large-v3-turbo)
+
+The app runs Silero VAD before Whisper and sets `condition_on_previous_text=False`.
+Measured on the same five clips, plus 3 s of pure silence:
+
+| setting | WER all | noisy EN | noisy ES | output for 3 s of silence |
+|---|---|---|---|---|
+| no VAD | 4.2% | 8.2% | 5.7% | "Thank you." (hallucination) |
+| VAD, default threshold 0.5 | 5.5% | 12.3% | 7.1% | "" |
+| **VAD, threshold 0.3 (shipped)** | **3.9%** | **6.8%** | **5.7%** | "" |
+
+The default VAD threshold cut real speech in the 0 dB clips. A threshold of 0.3 keeps that speech
+and still removes silence. `condition_on_previous_text` made no difference on these clips;
+it is off to avoid repetition loops on long recordings. Speed was the same in all rows.
+
 ## Why large-v3-turbo
 
 - **Accuracy:** it ties with `medium` for overall WER (4.2%) and is better on the
@@ -91,7 +113,7 @@ did not change the time.
 ## Reproduce
 
 ```sh
-cd bench/.work && git clone --depth 1 https://github.com/ggml-org/whisper.cpp.git \
+mkdir -p bench/.work && cd bench/.work && git clone --depth 1 https://github.com/ggml-org/whisper.cpp.git \
   && cmake -S whisper.cpp -B whisper.cpp/build -DCMAKE_BUILD_TYPE=Release -DGGML_NATIVE=ON \
   && cmake --build whisper.cpp/build -j --target whisper-cli    # optional
 # ggml models (optional): ggml-{small,medium,large-v3-turbo,large-v3-turbo-q5_0}.bin

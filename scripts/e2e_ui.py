@@ -101,7 +101,7 @@ def main() -> None:
 
         with sync_playwright() as p:
             browser = p.chromium.launch(
-                executable_path=args.browser,
+                executable_path=args.browser or None,  # None: Playwright's own Chromium
                 headless=True,
                 args=[
                     "--use-fake-ui-for-media-stream",

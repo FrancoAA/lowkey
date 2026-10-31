@@ -43,4 +43,12 @@ PORT = 8000
 
 def compute_threads() -> int:
     """Physical-core estimate; CTranslate2 scales poorly onto SMT siblings."""
-    return max(1, (os.cpu_count() or 2) // 2)
+    try:
+        cpus = len(os.sched_getaffinity(0))
+    except AttributeError:  # not Linux
+        cpus = os.cpu_count() or 2
+    try:
+        smt = open("/sys/devices/system/cpu/smt/active").read().strip() == "1"
+    except OSError:
+        smt = cpus >= 4
+    return max(1, cpus // 2 if smt else cpus)

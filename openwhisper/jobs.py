@@ -47,6 +47,10 @@ class Job:
     cond: threading.Condition = field(default_factory=threading.Condition, repr=False)
 
     def snapshot(self, since_segment: int = 0) -> dict[str, Any]:
+        with self.cond:  # consistent segments/count/version for the client-side merge
+            return self._snapshot(since_segment)
+
+    def _snapshot(self, since_segment: int) -> dict[str, Any]:
         return {
             "id": self.id,
             "filename": self.filename,
@@ -56,7 +60,7 @@ class Job:
             "language": self.detected_language,
             "language_probability": self.language_probability,
             "model": self.model,
-            "new_segments": self.segments[since_segment:],
+            "new_segments": list(self.segments[since_segment:]),
             "segment_count": len(self.segments),
             "result": self.result,
             "error": self.error,

@@ -37,6 +37,11 @@ let busy = false;
 let current: { result: JobResult | null; segments: Segment[]; baseName: string } = { result: null, segments: [], baseName: "transcript" };
 
 // ------------------------------------------------------------------ helpers
+const announcer = $<HTMLDivElement>("announcer");
+function announce(message: string): void {
+  announcer.textContent = message;
+}
+
 function showError(message: string | null): void {
   errorBox.hidden = !message;
   errorBox.textContent = message ?? "";
@@ -88,6 +93,12 @@ function renderStatus(): void {
   modelStatusText.textContent = modelPhrase(m);
   modelBar.hidden = m.state !== "downloading";
   modelBarFill.style.width = `${Math.floor(m.progress * 100)}%`;
+  if (m.state !== lastModelState) {
+    if (m.state === "downloading") announce("Downloading the speech model. This happens once.");
+    if (m.state === "ready" && lastModelState) announce("Model ready.");
+    if (m.state === "error") showError(m.error ?? "The model could not be prepared.");
+    lastModelState = m.state;
+  }
   for (const opt of modelSelect.options) {
     const info = status!.models.find((x) => x.name === opt.value)!;
     const here = info.state === "missing" ? ` (download ~${info.approx_mb} MB)` : "";
@@ -95,6 +106,7 @@ function renderStatus(): void {
   }
 }
 
+let lastModelState = "";
 let statusTimer = 0;
 async function refreshStatus(): Promise<void> {
   try {
@@ -183,6 +195,7 @@ function onJobEvent(ev: JobEvent): void {
       renderTranscript();
       if (!current.result?.text) transcriptEl.textContent = "No speech was found in this audio.";
       setResultReady(Boolean(current.result?.text));
+      announce(current.result?.text ? "Transcript ready." : "No speech found.");
       void refreshStatus();
       break;
     case "error":
@@ -225,6 +238,11 @@ async function transcribe(blob: Blob, filename: string, title: string): Promise<
 
 function handleFile(file: File | undefined): void {
   if (!file) return;
+  if (dictation.state !== "idle") {
+    // Do not throw away what the user is saying; they can finish or cancel first.
+    showError("Finish the dictation first (Space or the mic button), or press Esc to cancel it.");
+    return;
+  }
   const looksLikeMedia = file.type.startsWith("audio/") || file.type.startsWith("video/") || MEDIA_EXT.test(file.name);
   if (status && file.size > status.max_upload_bytes) {
     showError(`“${file.name}” is ${fmtMB(file.size)}. The limit is ${fmtMB(status.max_upload_bytes)}.`);
@@ -318,7 +336,7 @@ const dictation = new Dictation(waveform, {
       dictationHint.textContent = "Allow microphone access if the browser asks";
     } else {
       dictationLabel.textContent = "Listening…";
-      dictationHint.innerHTML = held ? "Release <kbd>Space</kbd> to transcribe · <kbd>Esc</kbd> cancels" : "Press <kbd>Space</kbd> or the mic to transcribe · <kbd>Esc</kbd> cancels";
+      dictationHint.innerHTML = held || spaceDownAt ? HINT_HOLD : HINT_TOGGLE;
     }
   },
   onTick(elapsed: number) {
@@ -333,6 +351,8 @@ const dictation = new Dictation(waveform, {
 });
 
 const HOLD_MS = 350;
+const HINT_HOLD = "Release <kbd>Space</kbd> to transcribe · <kbd>Esc</kbd> cancels";
+const HINT_TOGGLE = "Press <kbd>Space</kbd> or the mic to transcribe · <kbd>Esc</kbd> cancels";
 let spaceDownAt = 0;
 let held = false; // true while Space is physically held for push-to-talk
 let holdTimer = 0;
@@ -374,7 +394,7 @@ document.addEventListener(
       clearTimeout(holdTimer);
       holdTimer = window.setTimeout(() => {
         held = true;
-        if (dictation.state !== "idle") dictationHint.innerHTML = "Release <kbd>Space</kbd> to transcribe · <kbd>Esc</kbd> cancels";
+        if (dictation.state !== "idle") dictationHint.innerHTML = HINT_HOLD;
       }, HOLD_MS);
     } else {
       dictation.stop(); // second tap in toggle mode
@@ -391,6 +411,7 @@ document.addEventListener(
     clearTimeout(holdTimer);
     const heldFor = performance.now() - spaceDownAt;
     if (spaceDownAt && (held || heldFor >= HOLD_MS)) dictation.stop(); // push-to-talk release
+    else if (spaceDownAt && dictation.state === "listening") dictationHint.innerHTML = HINT_TOGGLE; // tap mode
     held = false;
     spaceDownAt = 0;
   },
@@ -399,8 +420,10 @@ document.addEventListener(
 
 // Leaving the tab while holding Space would otherwise keep recording.
 window.addEventListener("blur", () => {
-  if (held) dictation.stop();
+  if (held || spaceDownAt) dictation.stop(); // Space was down: the keyup will never arrive
+  clearTimeout(holdTimer);
   held = false;
+  spaceDownAt = 0;
 });
 
 // Space is handled globally (and its default "click" is suppressed), so only real clicks/Enter land here.

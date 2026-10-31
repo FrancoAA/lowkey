@@ -104,7 +104,7 @@ export class Dictation {
       this.stopRequested = true;
       return;
     }
-    if (this.state !== "listening" || !this.recorder) return;
+    if (this.state !== "listening" || this.recorder?.state !== "recording") return;
     this.recorder.stop();
   }
 

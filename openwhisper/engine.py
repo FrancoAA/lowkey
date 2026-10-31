@@ -81,6 +81,7 @@ class Engine:
         self.device, self.compute_type = detect_device()
         self._lock = threading.RLock()
         self._prepare_locks: dict[str, threading.Lock] = {}
+        self._load_lock = threading.Lock()  # one load at a time: two large models at once can exhaust RAM
         self._states: dict[str, ModelState] = {n: ModelState(n) for n in config.MODELS}
         self._loaded_name: str | None = None
         self._loaded: Any = None
@@ -138,6 +139,14 @@ class Engine:
                 kwargs["disable"] = True
                 super().__init__(*args, **kwargs)
 
+            # With hf_xet the hub would open a second "transfer" bar of this class and count
+            # every byte twice. Having update_transfer makes it use this single bar instead.
+            def update_transfer(self, n: float | None = 1) -> None:
+                pass
+
+            def set_transfer_postfix_str(self, *args: Any, **kwargs: Any) -> None:
+                pass
+
             def update(self, n: float | None = 1) -> bool | None:
                 file_bytes[0] += int(n or 0)
                 engine_state.downloaded = min(engine_state.total, done_before + file_bytes[0])
@@ -150,7 +159,8 @@ class Engine:
             path = hf_hub_download(spec.repo, fname, tqdm_class=Progress)
             done_before += size
             st.downloaded = done_before
-        assert path is not None
+        if path is None:
+            raise RuntimeError(f"{spec.repo} has none of the expected model files {config.MODEL_FILES}")
         return str(Path(path).parent)
 
     # ------------------------------------------------------------ load
@@ -167,27 +177,38 @@ class Engine:
             st = self._states[name]
             try:
                 path = self._local_path(name, offline=True) or self._download(name)
-                st.state, st.downloaded = "loading", st.total
-                from faster_whisper import WhisperModel
+                with self._load_lock:
+                    with self._lock:
+                        if self._loaded_name == name:
+                            st.state = "ready"
+                            return self._loaded
+                    st.state, st.downloaded = "loading", st.total
+                    from faster_whisper import WhisperModel
 
-                with self._lock:
-                    # Free the previous model before loading the next one.
-                    if self._loaded_name and self._loaded_name != name:
-                        self._states[self._loaded_name].state = "downloaded"
-                    self._loaded, self._loaded_name = None, None
-                model = WhisperModel(
-                    path, device=self.device, compute_type=self.compute_type, cpu_threads=config.compute_threads()
-                )
-                with self._lock:
-                    self._loaded, self._loaded_name = model, name
-                st.state = "ready"
-                return model
+                    with self._lock:
+                        # Free the previous model before loading the next one.
+                        if self._loaded_name and self._loaded_name != name:
+                            self._states[self._loaded_name].state = "downloaded"
+                        self._loaded, self._loaded_name = None, None
+                    model = WhisperModel(
+                        path, device=self.device, compute_type=self.compute_type, cpu_threads=config.compute_threads()
+                    )
+                    with self._lock:
+                        self._loaded, self._loaded_name = model, name
+                    st.state = "ready"
+                    return model
             except Exception as exc:
                 log.exception("preparing model %s failed", name)
                 st.state = "error"
+                text = f"{type(exc).__name__} {exc}".lower()
+                offline = any(
+                    k in text
+                    for k in ("connect", "resolv", "resolution", "offline", "temporary failure", "timeout",
+                              "network", "localentrynotfound")
+                )
                 st.error = (
-                    "Could not download the model. Check your internet connection for the first run."
-                    if "connect" in str(exc).lower() or "resolve" in str(exc).lower()
+                    "No internet connection: the model must be downloaded once. Connect and restart open-whisper."
+                    if offline
                     else f"Model failed to load: {exc}"
                 )
                 raise
@@ -201,7 +222,10 @@ class Engine:
             path,
             language=language or None,
             beam_size=5,
+            # VAD drops silence (Whisper invents "Thank you." on silent audio). The default 0.5
+            # threshold also cut speech in noisy audio; 0.3 measured best (docs/benchmark.md).
             vad_filter=True,
+            vad_parameters={"threshold": 0.3},
             condition_on_previous_text=False,  # avoids repetition loops on long audio
         )
         on_update({"language": info.language, "language_probability": round(info.language_probability, 3)})

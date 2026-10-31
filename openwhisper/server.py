@@ -8,6 +8,7 @@ import logging
 import os
 import tempfile
 import threading
+import time
 from urllib.parse import urlsplit
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -39,11 +40,23 @@ def _languages() -> dict[str, str]:
     return {code: LANGUAGES.get(code, code) for code in _LANGUAGE_CODES}
 
 
+def sweep_stale_uploads(max_age_s: float = 6 * 3600) -> None:
+    """Remove temp uploads left behind by a killed process."""
+    now = time.time()
+    for f in Path(tempfile.gettempdir()).glob("openwhisper-*"):
+        try:
+            if now - f.stat().st_mtime > max_age_s:
+                f.unlink()
+        except OSError:
+            pass
+
+
 def create_app(engine: Any = None, preload: bool = True, allowed_hosts: list[str] | None = None) -> FastAPI:
     if engine is None:
         from .engine import Engine
 
         engine = Engine()
+    sweep_stale_uploads()
     jobs = JobManager(engine)
     languages = _languages()
 
@@ -180,6 +193,10 @@ def create_app(engine: Any = None, preload: bool = True, allowed_hosts: list[str
             stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
         )
 
+    def candidate_is_file(path: str) -> bool:
+        c = (DIST / path).resolve()
+        return c.is_file() and DIST in c.parents
+
     if DIST.is_dir():
         app.mount("/assets", StaticFiles(directory=DIST / "assets"), name="assets")
 
@@ -187,6 +204,8 @@ def create_app(engine: Any = None, preload: bool = True, allowed_hosts: list[str
         def spa(path: str) -> FileResponse:
             if path.startswith("api/"):
                 raise HTTPException(404, "Not found.")
+            if Path(path).suffix and not candidate_is_file(path):
+                raise HTTPException(404, "Not found.")  # e.g. /favicon.ico: no HTML for missing files
             candidate = (DIST / path).resolve()
             if path and candidate.is_file() and DIST in candidate.parents:
                 return FileResponse(candidate)
