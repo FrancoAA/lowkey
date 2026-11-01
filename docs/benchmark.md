@@ -56,17 +56,23 @@ worker process. Load = model load time.
 ### Short-clip latency (dictation case)
 
 Whisper always encodes a full 30 s window, so short clips cost almost the same as 30 s.
-The 11 s JFK clip with `large-v3-turbo`:
+With auto-detect, stock faster-whisper also runs the encoder twice: once to detect the
+language and once to transcribe. open-whisper detects the language from the exact window it
+transcribes first and keeps that encoder output (`openwhisper/fastlang.py`), so the encoder
+runs once. Same run, same machine, app settings, `large-v3-turbo`:
 
-| setting | time |
-|---|---|
-| auto-detect language (default) | 4.5 s |
-| language set in Options | 2.4 s |
-| `small`, auto-detect | 1.5 s |
+| clip | stock faster-whisper | open-whisper (encoder once) | same text and language |
+|---|---|---|---|
+| en_jfk (11 s) | 5.79 s | 3.42 s | yes |
+| es_tts (22 s) | 5.68 s | 3.64 s | yes |
+| en_tts (23 s) | 5.41 s | 3.50 s | yes |
+| en_tts_noisy | 5.43 s | 3.66 s | yes |
+| es_tts_noisy | 6.01 s | 3.72 s | yes |
 
-With auto-detect, faster-whisper runs the encoder twice: once to detect the language
-and once to transcribe. More threads (16 instead of 8) and greedy decoding (beam 1)
-did not change the time.
+Absolute times vary with machine load (an earlier run measured stock at 4.5 s for JFK);
+the saving is the cost of one encoder pass, about 2 s on this CPU. With the language set in
+Options it was 2.4 s; `small` with auto-detect, 1.5 s. More threads (16 instead of 8) and
+greedy decoding (beam 1) did not change the time.
 
 ### App decode settings (large-v3-turbo)
 

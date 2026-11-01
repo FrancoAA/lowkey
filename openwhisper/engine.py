@@ -194,7 +194,7 @@ class Engine:
                             st.state = "ready"
                             return self._loaded
                     st.state, st.downloaded = "loading", st.total
-                    from faster_whisper import WhisperModel
+                    from .fastlang import FastLangWhisperModel as WhisperModel
 
                     with self._lock:
                         # Free the previous model before loading the next one.
