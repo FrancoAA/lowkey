@@ -132,6 +132,66 @@ starts, the next stops), or `ow-dictate press` / `ow-dictate release` if your de
 release binds. Text output works on any Wayland desktop with `wl-copy` and `wtype`; the
 overlay window placement is Hyprland-only.
 
+## Desktop app (Tauri, Linux first) — beta
+
+`desktop/` is the same app as a native desktop program (Rust + Tauri v2), with the same page
+as its window. It does everything the web app does, plus:
+
+- **GPU on every OS that has one.** The engine is whisper.cpp inside the app: Vulkan on
+  Linux/Windows (AMD, Intel, NVIDIA), Metal on macOS, the CPU otherwise. On the Radeon 780M
+  of the test machine: large-v3-turbo-q5_0 at 10.9× real time, WER 3.2%, a 0.55 GB download
+  (see [docs/tauri-desktop-options.md](docs/tauri-desktop-options.md)).
+- **faster-whisper is still there.** Pick a "· faster-whisper" model in Options, or run on a
+  machine without a GPU: the app then uses the Python engine of this repo through `uv`.
+- **No server and no token.** The global key runs the app itself (`open-whisper --dictate
+  press|release`); a second launch hands its command or file to the running app.
+- **Closing the window keeps it running** in the tray, so the key stays instant. Quit from
+  the tray or with `open-whisper --dictate quit`.
+
+![Desktop app](docs/screenshots/10-desktop-transcript.png)
+![Desktop overlay](docs/screenshots/13-desktop-overlay-listening.png)
+
+**Build and run** (needs Rust: `rustup`, Node.js 20+, and on Linux the WebKitGTK 4.1, GTK 3,
+libappindicator, Vulkan loader and `glslc` packages; `make desktop` fetches the Vulkan and
+SPIR-V headers into `desktop/.deps` if your system does not have them):
+
+```sh
+make desktop                                      # builds desktop/src-tauri/target/release/open-whisper
+desktop/src-tauri/target/release/open-whisper     # start it
+make desktop-bundle                               # AppImage / .deb / .rpm
+make install-desktop                              # ~/.local/bin/open-whisper (see below)
+```
+
+**Settings (all optional).** Choose the model and the idle unload in Options; the app saves
+them to `~/.config/open-whisper/config.toml`:
+
+```toml
+model = "large-v3-turbo-q5_0"   # empty or missing: picked for this machine
+language = "auto"
+idle_unload_minutes = 15        # free the model's memory after 15 idle minutes; 0 = never
+hotkey = "SUPER + CTRL + X"
+```
+
+Command line: `--model <id>` (overrides the file), `--language <code>`, `--hotkey "…"`,
+`--no-hotkey`, `--background`, `--transcribe <file>` (prints JSON, no window),
+`--print-snippet [lua|conf]`, `--remove-hotkey`. Files given on the command line open in the
+app. Models: `large-v3-turbo-q5_0` (default on a GPU), `large-v3-turbo`, `medium`, `small`,
+`fw:large-v3-turbo` (default without a GPU), `fw:large-v3`, `fw:small`.
+
+**The global key** works as described above, with the desktop app:
+- Hyprland: the app adds Super+Ctrl+X at runtime (or uses your `bindings.lua` block). Your
+  existing block runs `scripts/ow-dictate`, which now hands the key to the desktop app when
+  it runs. With the app closed, the key starts the desktop app only after `make
+  install-desktop`; until then it starts the Python app as before.
+- X11, macOS, Windows: the app registers the key while it runs (default Ctrl+Alt+Space on
+  macOS/Windows). Typing uses xdotool (X11) or the system API (macOS asks once for
+  Accessibility permission).
+- GNOME, KDE, sway (Wayland): apps cannot add keys there. Bind `open-whisper --dictate
+  press` / `--dictate release` (or `--dictate toggle`) in the desktop's keyboard settings.
+
+Status: built and tested on Linux/Hyprland (`make e2e-desktop`, in a nested Hyprland). The
+macOS, Windows and X11 code paths are written but not tested on this machine.
+
 ## Models
 
 The default is **large-v3-turbo** (int8 on CPU). It was the best quality for its
@@ -199,6 +259,7 @@ make e2e-hotkey  # global key in a nested Hyprland (your session is not touched)
                  # Options: --first-run (empty model cache: shows the download),
                  # --config-bind (key from the bindings.lua snippet: no duplicate binds)
 make bench     # model benchmark on this machine -> bench/.work/results.md
+make test-desktop / make e2e-desktop   # desktop app: Rust tests / nested-Hyprland e2e
 ```
 
 Dependencies are pinned in `uv.lock` and `frontend/package-lock.json`.

@@ -9,8 +9,11 @@ OPENWHISPER_TEST_LOG (UI events appended to a file, because the webview has no W
 Hyprland ignores binds from virtual keyboards, so the key bind's command is run through
 Hyprland's own exec dispatcher, exactly as a key press/release would.
 
-Usage: uv run python scripts/e2e_desktop.py [--first-run]
-  --first-run  empty model folder: the key-started app downloads the model (~550 MB)
+Usage: uv run python scripts/e2e_desktop.py [--first-run] [--config-bind]
+  --first-run    empty model folder: the key-started app downloads the model (~550 MB)
+  --config-bind  the nested config has the bindings.lua block from the Python era (it runs
+                 scripts/ow-dictate): the shim must hand the key to the desktop app, and the
+                 app must not add a second bind
 """
 
 from __future__ import annotations
@@ -77,6 +80,7 @@ def test_pids(log: Path) -> list[int]:
 
 def main() -> None:
     first_run = "--first-run" in sys.argv
+    config_bind = "--config-bind" in sys.argv
     for tool in ("hyprctl", "Hyprland", "wtype", "wl-paste", "grim", "foot", "ffmpeg", "dbus-daemon"):
         if not shutil.which(tool):
             sys.exit(f"needs {tool}")
@@ -88,7 +92,11 @@ def main() -> None:
 
     tmp = Path(tempfile.mkdtemp(prefix="ow-desktop-e2e-"))
     runtime = Path(tempfile.mkdtemp(prefix="ow", dir="/tmp"))  # short: socket paths max 108 bytes
-    (tmp / "hyprland.lua").write_text(NESTED_CONFIG)
+    snippet = ""
+    if config_bind:  # exactly what Franco's bindings.lua block contains
+        snippet = subprocess.run([sys.executable, "-m", "openwhisper.hotkey"], cwd=ROOT, capture_output=True,
+                                 text=True, check=True).stdout
+    (tmp / "hyprland.lua").write_text(NESTED_CONFIG + snippet)
     models = tmp / "models"
     models.mkdir()
     if not first_run:
@@ -115,6 +123,8 @@ def main() -> None:
         "OPENWHISPER_TEST_LOG": str(log),
         "OPENWHISPER_MODELS_DIR": str(models),
     }
+    if config_bind:
+        nested_env["OPENWHISPER_DESKTOP_BIN"] = str(APP)  # "installed": the shim may start it
     nested_env.pop("HYPRLAND_INSTANCE_SIGNATURE", None)
 
     nested = app = None
@@ -165,8 +175,10 @@ def main() -> None:
             d = events("dictation")
             return d[-1] if d else {"state": "idle"}
 
+        key_cmd = f"{ROOT / 'scripts' / 'ow-dictate'}" if config_bind else f"{APP} --dictate"
+
         def key(action: str) -> None:
-            run(["hyprctl", "dispatch", f'hl.dsp.exec_cmd("{APP} --dictate {action}")'], env)
+            run(["hyprctl", "dispatch", f'hl.dsp.exec_cmd("{key_cmd} {action}")'], env)
 
         def shot(name: str) -> None:
             SHOTS.mkdir(parents=True, exist_ok=True)
@@ -195,7 +207,14 @@ def main() -> None:
               f"zero config: {status['device']}, default model {status['default_model']}")
         check(status["options"]["idle_unload_minutes"] == 5, "config.toml is read (idle_unload_minutes = 5)")
         b = wait(lambda: x_binds() or None, 10, "binds")
-        check(len(b) == 2 and any(x["description"] == RUNTIME_DESC for x in b), "SUPER+CTRL+X added at runtime")
+        if config_bind:
+            time.sleep(1.0)
+            b = x_binds()
+            check(len(b) == 2 and any(x["description"] == "Dictate (open-whisper)" for x in b),
+                  "the key comes from the config block; the app added no duplicate")
+            check("from your Hyprland config" in (tmp / "app.log").read_text(), "the app reports the config key")
+        else:
+            check(len(b) == 2 and any(x["description"] == RUNTIME_DESC for x in b), "SUPER+CTRL+X added at runtime")
         check(win("open-whisper-overlay") is None, "overlay hidden at start")
         time.sleep(1.0)
         shot("09-desktop-main.png")
@@ -269,6 +288,31 @@ def main() -> None:
         wait(lambda: typed.read_text().strip() == f"{d1['text']} {d2['text']}", 10, "joined text")
         print("  ok  second dictation within 15 s joined with a space")
 
+        # ---------------------------------------------------------------- Options (keyboard)
+        def press_key(k: str) -> None:
+            for st in ("down", "up"):
+                run(["hyprctl", "dispatch", f'hl.dsp.send_key_state({{ mods = "", key = "{k}", state = "{st}" }})'], env)
+                time.sleep(0.05)
+
+        cfg_file = tmp / "config" / "open-whisper" / "config.toml"
+        main_win = wait(lambda: win("open-whisper"), 10, "main window")
+        focus(main_win["address"])
+        for _ in range(3):
+            press_key("Tab")  # dropzone, mic button, Options
+        press_key("Return")
+        for _ in range(2):
+            press_key("Tab")  # language, model
+        press_key("End")  # last model in the list: faster-whisper Small
+        wait(lambda: cfg_file.exists() and 'model = "fw:small"' in cfg_file.read_text(), 15, "model saved to config.toml")
+        wait(lambda: any(s["default_model"] == "fw:small" for s in events("status")[-5:]), 15, "status follows the choice")
+        check(True, "Options: choosing a model saves it to config.toml and the app switches to it")
+        time.sleep(1.0)
+        shot("16-desktop-options.png")
+        press_key("Home")  # back to the recommended model
+        wait(lambda: 'model = "large-v3-turbo-q5_0"' in cfg_file.read_text(), 15, "model back")
+        print("  ok  back to large-v3-turbo-q5_0")
+        press_key("Escape")
+
         # ---------------------------------------------------------------- close, quit, key starts the app
         run(["hyprctl", "dispatch", f'hl.dsp.window.close({{ window = "address:{main_win["address"]}" }})'], env)
         time.sleep(1.0)
@@ -277,6 +321,7 @@ def main() -> None:
         app.wait(20)
         app = None
         check(len(x_binds()) == 2, "the key stays after quitting")
+        check(not (runtime / "open-whisper" / "desktop.json").exists(), "runtime file removed on quit")
 
         n_before = len(events("dictation"))
         key("press")

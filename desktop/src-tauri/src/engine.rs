@@ -157,7 +157,7 @@ impl Engines {
 
     fn unload_if_idle(&self) {
         let minutes = self.idle_minutes.load(Ordering::Relaxed);
-        if minutes == 0 || self.last_used.lock().elapsed() < Duration::from_secs(minutes * 60) {
+        if !idle_expired(minutes, self.last_used.lock().elapsed()) {
             return;
         }
         if let Some((id, _)) = self.loaded.lock().take() {
@@ -310,6 +310,11 @@ impl Engines {
             sc.stop();
         }
     }
+}
+
+/// 0 minutes = keep the model loaded.
+pub fn idle_expired(minutes: u64, idle: Duration) -> bool {
+    minutes > 0 && idle >= Duration::from_secs(minutes * 60)
 }
 
 fn friendly(e: &anyhow::Error) -> String {
@@ -508,5 +513,24 @@ fn wait_done(rx: &mpsc::Receiver<Value>, mut each: impl FnMut(&Value)) -> anyhow
             Some("error") => anyhow::bail!("{}", v["error"].as_str().unwrap_or("faster-whisper failed")),
             _ => each(&v),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn idle_unload_rule() {
+        assert!(!idle_expired(0, Duration::from_secs(99_999)), "0 = never unload");
+        assert!(!idle_expired(15, Duration::from_secs(14 * 60)));
+        assert!(idle_expired(15, Duration::from_secs(15 * 60)));
+    }
+
+    #[test]
+    fn offline_errors_are_explained() {
+        let e = anyhow::anyhow!("error sending request: dns error: failed to lookup address");
+        assert!(friendly(&e).starts_with("No internet connection"));
+        assert_eq!(friendly(&anyhow::anyhow!("Model failed to load: bad magic")), "Model failed to load: bad magic");
     }
 }

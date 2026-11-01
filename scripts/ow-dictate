@@ -19,7 +19,15 @@ if [ -e "$dir" ] && { [ ! -O "$dir" ] || [ -L "$dir" ]; }; then
   exit 1
 fi
 
-field() { sed -n "s/.*\"$1\": *\"\{0,1\}\([^\",}]*\).*/\1/p" "$dir/server.json" 2>/dev/null; }
+field() { sed -n "s/.*\"$1\": *\"\{0,1\}\([^\",}]*\).*/\1/p" "${2:-$dir/server.json}" 2>/dev/null; }
+
+# The desktop app (Tauri) is preferred: when it runs, hand the action to it (its single
+# instance forwards it privately; no token or HTTP needed).
+dexe=$(field exe "$dir/desktop.json")
+dpid=$(field pid "$dir/desktop.json")
+if [ -n "$dexe" ] && [ -x "$dexe" ] && [ -n "$dpid" ] && kill -0 "$dpid" 2>/dev/null; then
+  exec "$dexe" --dictate "$action"
+fi
 url=$(field url)
 token=$(field token)
 pid=$(field pid)
@@ -32,6 +40,13 @@ case "$action" in
   press | toggle) ;;
   *) exit 0 ;; # release/cancel/quit with no app answering: nothing to do
 esac
+
+# Nothing running: start the installed desktop app if there is one (it begins the dictation
+# when ready); otherwise the Python app below.
+desktop_bin="${OPENWHISPER_DESKTOP_BIN:-$HOME/.local/bin/open-whisper}"
+if [ -x "$desktop_bin" ] && ! { [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; }; then
+  exec setsid -f "$desktop_bin" --dictate "$action" </dev/null >/dev/null 2>&1
+fi
 
 if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
   note "open-whisper is running but not responding. Restart it with ./run."

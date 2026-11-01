@@ -126,9 +126,10 @@ function renderStatus(): void {
 function details(m: ModelInfo): string {
   if (m.ram_mb === undefined) return "";
   const gb = (mb: number) => `${(mb / 1024).toFixed(1)} GB`;
-  const speed = status?.gpu && m.speed_gpu ? `${m.speed_gpu}× real time on GPU` : `${m.speed_cpu}× real time on CPU`;
+  const one = (x: number | null | undefined) => Number((x ?? 0).toFixed(1)); // f32 from Rust: 8.8999996 → 8.9
+  const speed = status?.gpu && m.speed_gpu ? `${one(m.speed_gpu)}× real time on GPU` : `${one(m.speed_cpu)}× real time on CPU`;
   const engine = m.engine === "faster-whisper" ? "faster-whisper" : "whisper.cpp";
-  return `${engine} · ${gb(m.approx_mb)} download · ~${gb(m.ram_mb)} memory · ${speed} · WER ${m.wer}% (measured on the test machine)`;
+  return `${engine} · ${gb(m.approx_mb)} download · ~${gb(m.ram_mb)} memory · ${speed} · WER ${one(m.wer)}% (measured on the test machine)`;
 }
 
 let lastModelState = "";

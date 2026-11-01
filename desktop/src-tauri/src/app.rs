@@ -400,6 +400,31 @@ fn window_dictation_inner(app: &AppRef, action: &str) -> Result<Option<String>, 
     }
 }
 
+/// X11, macOS, Windows: the OS lets a running app own a key (press and release).
+fn register_global_shortcut(app: &AppRef, key: &str) -> String {
+    use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+    let Some(sc) = crate::config::to_plugin_shortcut(key) else {
+        return format!("not added: cannot read the key {key:?}");
+    };
+    let weak = Arc::downgrade(app);
+    let result = app.handle.global_shortcut().on_shortcut(sc.as_str(), move |_h, _s, ev| {
+        let Some(app) = weak.upgrade() else { return };
+        let Some(d) = app.dictation.lock().clone() else { return };
+        match ev.state {
+            ShortcutState::Pressed => {
+                d.press();
+            }
+            ShortcutState::Released => {
+                d.release();
+            }
+        }
+    });
+    match result {
+        Ok(()) => format!("{key} — hold to talk, tap to start/stop (while open-whisper runs)"),
+        Err(e) => format!("not added: {key} ({e}); it may be taken by another app. Use --hotkey."),
+    }
+}
+
 // ------------------------------------------------------------------ entry
 /// Headless commands that need no window. Returns true when handled.
 pub fn headless(cli: &Cli) -> bool {
@@ -467,6 +492,7 @@ pub fn run() {
             }
         }))
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             get_status,
             get_languages,
@@ -582,8 +608,14 @@ pub fn run() {
 
             // Global key (Hyprland).
             let key = cli.hotkey.clone().unwrap_or_else(|| config.hotkey.clone());
-            let text = if !hyprland::running() {
-                "not on Hyprland: bind `open-whisper --dictate toggle` in your desktop (see README)".to_string()
+            let wayland_other = cfg!(target_os = "linux") && std::env::var_os("WAYLAND_DISPLAY").is_some() && !hyprland::running();
+            let text = if !hyprland::running() && (cli.no_hotkey || key.trim().is_empty()) {
+                "not added (--no-hotkey)".to_string()
+            } else if wayland_other {
+                // GNOME/KDE/sway: apps cannot grab keys on Wayland; the desktop binds them.
+                "this Wayland desktop does not let apps add keys: bind `open-whisper --dictate press` (and `--dictate release` on key release, or `--dictate toggle`) in your desktop's keyboard settings".to_string()
+            } else if !hyprland::running() {
+                register_global_shortcut(&app, &key)
             } else if cli.no_hotkey || key.trim().is_empty() {
                 let removed = hyprland::remove_app_binds();
                 let mut t = "not added (--no-hotkey)".to_string();

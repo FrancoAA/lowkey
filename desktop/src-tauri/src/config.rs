@@ -6,7 +6,40 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+/// Linux: Super+Ctrl+X (Omarchy's dictation key). macOS/Windows: Ctrl+Alt+Space
+/// (Win+Ctrl+X is next to the system Win+X menu; Cmd shortcuts are taken by apps).
+#[cfg(target_os = "linux")]
 pub const DEFAULT_HOTKEY: &str = "SUPER + CTRL + X";
+#[cfg(not(target_os = "linux"))]
+pub const DEFAULT_HOTKEY: &str = "CTRL + ALT + SPACE";
+
+/// "SUPER + CTRL + X" → "super+control+KeyX" (the global-shortcut plugin's syntax).
+pub fn to_plugin_shortcut(key: &str) -> Option<String> {
+    let parts: Vec<String> = key.split('+').map(|p| p.trim().to_uppercase()).filter(|p| !p.is_empty()).collect();
+    let (last, mods) = parts.split_last()?;
+    let mut out: Vec<String> = Vec::new();
+    for m in mods {
+        out.push(
+            match m.as_str() {
+                "SUPER" | "WIN" | "LOGO" | "MOD4" | "CMD" | "COMMAND" => "super",
+                "CTRL" | "CONTROL" => "control",
+                "ALT" | "OPTION" => "alt",
+                "SHIFT" => "shift",
+                _ => return None,
+            }
+            .to_string(),
+        );
+    }
+    let code = match last.as_str() {
+        k if k.len() == 1 && k.chars().all(|c| c.is_ascii_alphabetic()) => format!("Key{k}"),
+        k if k.len() == 1 && k.chars().all(|c| c.is_ascii_digit()) => format!("Digit{k}"),
+        "SPACE" => "Space".into(),
+        k if k.starts_with('F') && k[1..].parse::<u8>().is_ok() => k.to_string(),
+        _ => return None,
+    };
+    out.push(code);
+    Some(out.join("+"))
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
@@ -156,6 +189,27 @@ mod tests {
         assert_eq!(c.hotkey, DEFAULT_HOTKEY);
         std::fs::write(&p, "model = [broken").unwrap();
         assert_eq!(Config::load_from(&p), Config::default());
+    }
+
+    #[test]
+    fn save_writes_the_file_the_app_reads() {
+        let dir = std::env::temp_dir().join(format!("ow-cfgsave-{}", std::process::id()));
+        std::env::set_var("XDG_CONFIG_HOME", &dir);
+        let c = Config { model: "fw:large-v3-turbo".into(), idle_unload_minutes: 60, ..Config::default() };
+        c.save().unwrap();
+        let path = config_path();
+        assert!(path.starts_with(&dir));
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.starts_with("# open-whisper settings"));
+        assert_eq!(Config::load_from(&path), c);
+    }
+
+    #[test]
+    fn plugin_shortcut_syntax() {
+        assert_eq!(to_plugin_shortcut("SUPER + CTRL + X").as_deref(), Some("super+control+KeyX"));
+        assert_eq!(to_plugin_shortcut("CTRL + ALT + SPACE").as_deref(), Some("control+alt+Space"));
+        assert_eq!(to_plugin_shortcut("ALT + F9").as_deref(), Some("alt+F9"));
+        assert_eq!(to_plugin_shortcut("HYPER + X"), None);
     }
 
     #[test]
