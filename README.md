@@ -46,6 +46,51 @@ the ffmpeg libraries.
 
 ![Dictation](docs/screenshots/03-dictation-listening.png)
 
+## Dictate into any app (Hyprland)
+
+On Hyprland, open-whisper also adds a **global key: <kbd>Super</kbd>+<kbd>Ctrl</kbd>+<kbd>X</kbd>**
+(Omarchy's dictation key). It works in every app, not only in the browser:
+
+- **Hold** the key while you talk, then release. Or **tap** it to start and tap again to stop.
+- A small window at the bottom of the screen shows a live waveform while it listens. It never
+  takes the keyboard focus.
+- The text is **typed into the app that has focus** and is also **copied to the clipboard**.
+
+![Global dictation overlay](docs/screenshots/06-hotkey-overlay-listening.png)
+![Text typed into the focused app](docs/screenshots/07-hotkey-text-pasted.png)
+
+**Setup: none.** `./run` adds the key and the overlay window rule to the running Hyprland
+with `hyprctl eval`, and removes the key when open-whisper stops. No config file is changed.
+The terminal shows the result, for example:
+
+```
+  Global dictation key: SUPER + CTRL + X — hold to talk, tap to start/stop (active while open-whisper runs)
+```
+
+- If the key is already in use, open-whisper does not take it and tells you. Choose another
+  key: `./run --hotkey "SUPER + ALT + D"`. Turn the key off with `./run --no-hotkey`.
+- It needs PipeWire (`pw-record`), `wl-copy`, `wtype` and Chromium (or Chrome/Brave) for the
+  overlay. Omarchy has all of them.
+- The overlay is a separate browser profile in `~/.local/state/open-whisper/overlay-browser`
+  that only opens this local page. The microphone is recorded by open-whisper itself, and
+  only while the overlay shows "Listening".
+
+**Optional: keep the key in your Hyprland config.** Then the key is there even before
+open-whisper starts (pressing it while open-whisper is not running shows a notification).
+Print the snippet for this folder and add it to `~/.config/hypr/bindings.lua` yourself:
+
+```sh
+uv run python -m openwhisper.hotkey      # prints the Lua lines to add
+```
+
+It is two binds (press and release) that run `scripts/ow-dictate`, plus the overlay window
+rule. When the key is in your config, open-whisper sees it and does not add it again.
+
+**Other desktops** (sway, GNOME, KDE…): bind `scripts/ow-dictate toggle` to a key (one press
+starts, the next stops), or `ow-dictate press` / `ow-dictate release` if your desktop has
+release binds. Text output works on any Wayland desktop with `wl-copy` and `wtype`; the
+overlay window placement is Hyprland-only.
+
 ## Models
 
 The default is **large-v3-turbo** (int8 on CPU). It was the best quality for its
@@ -59,8 +104,9 @@ speed in a benchmark on the development machine (Ryzen 7 H 255, no GPU); see
 | large-v3-turbo | ~1.5 GB | 4.0× | 4.2% | **default** |
 | large-v3 | ~3 GB | 2.2× | 2.3% | most accurate, needs ~3 GB RAM |
 
-On a CPU, a short dictation takes about 4–5 s to transcribe with auto-detect, and about
-2.5 s when you set the language in Options.
+On a CPU, a short dictation takes about 3.5 s to transcribe with auto-detect. open-whisper
+runs the Whisper encoder once for both language detection and transcription (stock
+faster-whisper runs it twice; see [docs/benchmark.md](docs/benchmark.md)).
 
 A model that is not on disk downloads the first time you use it.
 Models are stored in the normal Hugging Face cache (`~/.cache/huggingface/hub`).
@@ -107,6 +153,8 @@ make test-all  # + a real-model test on a 3-second TTS clip
 make e2e       # headless Chromium with a fake microphone: file, error and dictation flows,
                # writes docs/screenshots/. Uses the system chromium; without one, run
                # `uv run playwright install chromium` once
+make e2e-hotkey  # global key in a nested Hyprland (your session is not touched):
+                 # overlay, typing, clipboard, hold and tap; writes docs/screenshots/06-07
 make bench     # model benchmark on this machine -> bench/.work/results.md
 ```
 

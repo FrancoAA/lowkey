@@ -9,7 +9,7 @@ need() {
 }
 need uv "Install it from https://docs.astral.sh/uv/getting-started/installation/"
 
-UI_SOURCES="frontend/src frontend/index.html frontend/public frontend/package.json frontend/package-lock.json frontend/vite.config.ts frontend/tsconfig.json"
+UI_SOURCES="frontend/src frontend/index.html frontend/overlay.html frontend/public frontend/package.json frontend/package-lock.json frontend/vite.config.ts frontend/tsconfig.json"
 # shellcheck disable=SC2086
 if [ ! -f frontend/dist/index.html ] ||
    [ -n "$(find $UI_SOURCES -newer frontend/dist/index.html -print -quit)" ]; then

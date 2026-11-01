@@ -90,7 +90,9 @@ def main() -> None:
     if not url:
         port = free_port()
         url = f"http://127.0.0.1:{port}"
-        server = subprocess.Popen([sys.executable, "-m", "openwhisper", "--no-browser", "--port", str(port)], cwd=ROOT)
+        server = subprocess.Popen(
+            [sys.executable, "-m", "openwhisper", "--no-browser", "--no-hotkey", "--port", str(port)], cwd=ROOT
+        )
     try:
         wait_http(url + "/api/status")
         tmp = Path(tempfile.mkdtemp(prefix="ow-e2e-"))

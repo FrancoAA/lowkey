@@ -1,4 +1,4 @@
-import { Waveform } from "./waveform";
+import { analyserLevel, Waveform } from "./waveform";
 
 export type DictationState = "idle" | "starting" | "listening";
 
@@ -81,7 +81,7 @@ export class Dictation {
       this.recorder.ondataavailable = (e) => e.data.size && this.chunks.push(e.data);
       this.recorder.onstop = () => this.finish();
       this.recorder.start(250);
-      this.waveform.start(analyser);
+      this.waveform.start(analyserLevel(analyser));
     } catch (err) {
       this.release();
       this.setState("idle");

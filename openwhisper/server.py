@@ -80,6 +80,13 @@ def create_app(engine: Any = None, preload: bool = True, allowed_hosts: list[str
 
             threading.Thread(target=warm, name="preload", daemon=True).start()
         yield
+        # Runs on Ctrl+C and SIGTERM. uvicorn re-raises the signal after shutdown, so code
+        # after server.run() would never run; desktop cleanup must happen here.
+        for hook in getattr(app.state, "shutdown_hooks", []):
+            try:
+                hook()
+            except Exception:
+                log.exception("shutdown hook failed")
 
     app = FastAPI(title="open-whisper", lifespan=lifespan)
     # Local-only app: refuse DNS-rebinding hosts and cross-site form posts from other web pages.
@@ -108,6 +115,37 @@ def create_app(engine: Any = None, preload: bool = True, allowed_hosts: list[str
 
     app.state.jobs = jobs
     app.state.engine = engine
+    from .hotkey import OVERLAY_PATH, GlobalDictation
+
+    dictation = GlobalDictation(jobs, model=lambda: config.DEFAULT_MODEL)
+    app.state.dictation = dictation
+
+    @app.get("/api/dictation")
+    def dictation_state() -> dict[str, Any]:
+        return dictation.snapshot()
+
+    @app.post("/api/dictation/{action}")
+    def dictation_action(action: str) -> dict[str, Any]:
+        handlers = {"press": dictation.press, "release": dictation.release,
+                    "toggle": dictation.toggle, "cancel": dictation.cancel}
+        if action not in handlers:
+            raise HTTPException(404, "Unknown dictation action.")
+        return handlers[action]()
+
+    @app.get("/api/dictation/events")
+    async def dictation_events(request: Request) -> StreamingResponse:
+        async def stream():
+            seen = -1
+            while not await request.is_disconnected():
+                if dictation.version != seen:
+                    snap = dictation.snapshot()
+                    seen = snap["version"]
+                    yield f"data: {json.dumps(snap)}\n\n"
+                await asyncio.sleep(0.05)  # ~20 updates/s for the waveform
+
+        return StreamingResponse(
+            stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+        )
 
     @app.get("/api/status")
     def status() -> dict[str, Any]:
@@ -207,6 +245,10 @@ def create_app(engine: Any = None, preload: bool = True, allowed_hosts: list[str
 
     if DIST.is_dir():
         app.mount("/assets", StaticFiles(directory=DIST / "assets"), name="assets")
+
+        @app.get(OVERLAY_PATH, include_in_schema=False)
+        def overlay_page() -> FileResponse:
+            return FileResponse(DIST / "overlay.html")
 
         @app.get("/{path:path}", include_in_schema=False)
         def spa(path: str) -> FileResponse:

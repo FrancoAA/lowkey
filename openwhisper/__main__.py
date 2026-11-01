@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import shutil
 import socket
 import sys
 import threading
@@ -64,10 +65,62 @@ def report_model(engine, name: str) -> None:
         time.sleep(0.5)
 
 
+def setup_global_dictation(app, url: str, args) -> object | None:
+    """Publish our URL for scripts/ow-dictate and, on Hyprland, add the key bind + overlay rule
+    to the running session (no config file is edited; they go away with the app)."""
+    import json
+    import os
+
+    from . import hotkey as hk
+
+    rd = hk.runtime_dir()
+    rd.mkdir(parents=True, exist_ok=True)
+    (rd / "server.json").write_text(json.dumps({"url": url, "pid": os.getpid()}))
+    app.state.dictation.overlay = hk.Overlay(url)
+
+    if args.no_hotkey:
+        print("  Global dictation key: off (--no-hotkey). scripts/ow-dictate still works.")
+        return None
+    if not hk.hyprland_running():
+        print("  Global dictation key: not on Hyprland; bind scripts/ow-dictate in your desktop (see README).")
+        return None
+    missing = [t for t in ("wl-copy", "wtype") if not shutil.which(t)] + ([] if hk.MicRecorder.available() else ["pw-record"])
+    binding = hk.HyprlandHotkey(args.hotkey or hk.DEFAULT_KEY)
+    try:
+        print(f"  Global dictation key: {binding.install()}")
+    except Exception as exc:  # never block the web app on the desktop integration
+        print(f"  Global dictation key: could not add it ({exc}). See README for the config snippet.")
+        return None
+    if missing:
+        print(f"  Note: install {', '.join(missing)} for the global key to record/copy/type.")
+    return binding
+
+
+def teardown_global_dictation(app, binding) -> None:
+    import json
+    import os
+
+    from . import hotkey as hk
+
+    try:
+        if binding:
+            binding.uninstall()
+        overlay = app.state.dictation.overlay
+        if overlay:
+            overlay.close()
+        f = hk.runtime_dir() / "server.json"
+        if f.exists() and json.loads(f.read_text()).get("pid") == os.getpid():
+            f.unlink()
+    except Exception:
+        pass
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(prog="openwhisper", description="Local speech-to-text in your browser.")
     ap.add_argument("--port", type=int, default=None, help=f"default: first free port from {config.PORT}")
     ap.add_argument("--no-browser", action="store_true", help="do not open a browser tab")
+    ap.add_argument("--hotkey", default=None, help='global dictation key on Hyprland (default: "SUPER + CTRL + X")')
+    ap.add_argument("--no-hotkey", action="store_true", help="do not add the global dictation key")
     args = ap.parse_args()
 
     quiet_logs()
@@ -82,10 +135,15 @@ def main() -> None:
     print(f"  engine: faster-whisper on {engine.device} ({engine.compute_type}), model: {config.DEFAULT_MODEL}")
     if engine.model_state(config.DEFAULT_MODEL)["state"] == "missing":
         print(f"  First run: downloading the {config.DEFAULT_MODEL} model (~{config.MODELS[config.DEFAULT_MODEL].approx_mb} MB).")
+    hotkey = setup_global_dictation(app, url, args)
+    app.state.shutdown_hooks = [lambda: teardown_global_dictation(app, hotkey)]
     print("  Press Ctrl+C to stop.\n")
 
     threading.Thread(target=report_model, args=(engine, config.DEFAULT_MODEL), daemon=True).start()
-    server = uvicorn.Server(uvicorn.Config(app, host=config.HOST, port=port, log_level="warning"))
+    # Open SSE streams (the overlay keeps one) would otherwise hold shutdown forever.
+    server = uvicorn.Server(
+        uvicorn.Config(app, host=config.HOST, port=port, log_level="warning", timeout_graceful_shutdown=2)
+    )
 
     if not args.no_browser:
 

@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>open-whisper dictation</title>
+  </head>
+  <body>
+    <div id="overlay" class="overlay" data-state="idle" role="status" aria-live="polite">
+      <div class="dot" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3Zm0 0v4m-4 0h8M6 11a6 6 0 0 0 12 0" /></svg>
+      </div>
+      <div class="text">
+        <span id="label" class="label">Ready</span>
+        <span id="detail" class="detail"></span>
+      </div>
+      <canvas id="wave" aria-hidden="true"></canvas>
+      <span id="timer" class="timer">0:00</span>
+    </div>
+    <script type="module" src="/src/overlay.ts"></script>
+  </body>
+</html>

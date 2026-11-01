@@ -1,13 +1,30 @@
+/** A function that returns the current input level, 0..1. */
+export type LevelSource = () => number;
+
+/** Level from a Web Audio AnalyserNode (the in-page microphone). */
+export function analyserLevel(analyser: AnalyserNode): LevelSource {
+  const buf = new Float32Array(new ArrayBuffer(analyser.fftSize * 4));
+  return () => {
+    analyser.getFloatTimeDomainData(buf);
+    let sum = 0;
+    for (const v of buf) sum += v * v;
+    const rms = Math.sqrt(sum / buf.length);
+    // Speech RMS is roughly 0.01..0.3; map to 0..1 on a log-ish curve so quiet voices still move.
+    // The server uses the same curve for the global-hotkey overlay (openwhisper/hotkey.py).
+    return Math.min(1, Math.max(0, (20 * Math.log10(rms + 1e-6) + 55) / 45));
+  };
+}
+
 /**
- * Live "listening" waveform: rounded bars that scroll left, each bar the mic level at one
- * moment. Reads the level from a Web Audio AnalyserNode.
+ * Live "listening" waveform: rounded bars that scroll left, each bar the input level at one
+ * moment. Used by the page (mic via Web Audio) and by the global-hotkey overlay (levels
+ * streamed from the server).
  */
 export class Waveform {
   private ctx: CanvasRenderingContext2D;
   private levels: number[] = [];
   private raf = 0;
-  private analyser: AnalyserNode | null = null;
-  private buf: Float32Array<ArrayBuffer> = new Float32Array(0);
+  private source: LevelSource | null = null;
   private lastPush = 0;
   private color = "#c026d3";
 
@@ -18,9 +35,8 @@ export class Waveform {
   /** Most recent normalized level, 0..1 (for tests and the mic glow). */
   level = 0;
 
-  start(analyser: AnalyserNode): void {
-    this.analyser = analyser;
-    this.buf = new Float32Array(new ArrayBuffer(analyser.fftSize * 4));
+  start(source: LevelSource): void {
+    this.source = source;
     this.levels = [];
     this.lastPush = 0;
     this.color = getComputedStyle(this.canvas).color || this.color;
@@ -34,7 +50,7 @@ export class Waveform {
 
   stop(): void {
     cancelAnimationFrame(this.raf);
-    this.analyser = null;
+    this.source = null;
     this.level = 0;
     this.levels = [];
     this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
@@ -45,13 +61,8 @@ export class Waveform {
   }
 
   private sample(t: number): void {
-    if (!this.analyser) return;
-    this.analyser.getFloatTimeDomainData(this.buf);
-    let sum = 0;
-    for (const v of this.buf) sum += v * v;
-    const rms = Math.sqrt(sum / this.buf.length);
-    // Speech RMS is roughly 0.01..0.3; map to 0..1 on a log-ish curve so quiet voices still move.
-    const level = Math.min(1, Math.max(0, (20 * Math.log10(rms + 1e-6) + 55) / 45));
+    if (!this.source) return;
+    const level = this.source();
     this.level = this.level * 0.6 + level * 0.4;
     if (t - this.lastPush > 45) {
       this.lastPush = t;
