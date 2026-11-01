@@ -373,6 +373,9 @@ def test_transient_download_errors():
     (", and more", 5.0, True, ""),    # punctuation first: no space
     ("? Really", 5.0, True, ""),
     ("…well", 5.0, True, ""),
+    ('"Quoted" words', 5.0, True, " "),  # quotes and dashes can open a sentence: space
+    ("-5 degrees", 5.0, True, " "),
+    ("» y sigue", 5.0, True, ""),
     (" Hello", 5.0, True, ""),        # already has one
 ])
 def test_joining_space(text, gap, same, expected):
@@ -432,3 +435,57 @@ def test_config_bind_means_the_app_adds_nothing(monkeypatch):
     assert not h.added and not any("hl.bind(" in a[1] for a in calls if a[0] == "eval")
     h.uninstall(keep_bind=False)
     assert not any("hl.unbind" in a[1] for a in calls if a[0] == "eval")
+
+
+def make_with_window(windows, deliver_result=("copied", "typed")):
+    clock = Clock()
+    d, delivered, recs = make(clock=clock, deliver_result=deliver_result)
+    it = iter(windows)
+    d.window = lambda: next(it)
+    return d, delivered, clock
+
+
+def dictate(d, clock, record_s=2.0):
+    d.toggle()
+    clock.t += record_s
+    d.toggle()
+    wait_state(d, "done", "error")
+
+
+def test_no_space_into_another_window():
+    d, delivered, clock = make_with_window(["0xa", "0xb"])
+    dictate(d, clock)
+    clock.t += 3
+    dictate(d, clock)
+    assert delivered[1] == "Hello there. General test."
+
+
+def test_join_window_counts_from_the_end_of_recording_not_typing():
+    d, delivered, clock = make_with_window(["0xa", "0xa"])
+    dictate(d, clock)
+    clock.t += 3
+    dictate(d, clock, record_s=11.0)  # 3 s pause + 11 s talk: recording ends 14 s later
+    assert delivered[1].startswith(" ")
+
+
+def test_a_dictation_that_was_only_copied_does_not_anchor_the_join():
+    d, delivered, clock = make_with_window(["0xa", "0xa"], deliver_result=("copied",))
+    dictate(d, clock)
+    clock.t += 3
+    dictate(d, clock)
+    assert not delivered[1].startswith(" ")
+
+
+def test_remove_app_binds_keeps_keys_with_any_user_bind(monkeypatch):
+    binds = [{"modmask": 68, "key": "X", "description": "My own thing"},
+             {"modmask": 68, "key": "X", "description": hk.RUNTIME_DESC}]
+    calls = []
+
+    def fake_hyprctl(*args, check=False):
+        if args[:2] == ("binds", "-j"):
+            return json.dumps(binds)
+        calls.append(args)
+        return "ok"
+
+    monkeypatch.setattr(hk, "hyprctl", fake_hyprctl)
+    assert hk.remove_app_binds() == [] and calls == []

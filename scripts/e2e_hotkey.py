@@ -189,7 +189,9 @@ def main() -> None:
 
         run(["hyprctl", "reload"], env)
         time.sleep(0.5)
-        check(len(wait(lambda: x_binds() or None, 10, "binds after reload")) == 2, "binds back after `hyprctl reload`")
+        wait(lambda: x_binds() or None, 10, "binds after reload")
+        time.sleep(2.0)  # let the app's reload watcher act, then the count must still be 2
+        check(len(x_binds()) == 2, "exactly two binds after `hyprctl reload` (no duplicate from the app)")
 
         subprocess.Popen(
             ["foot", "--app-id=ow-e2e-target", "-o", "font=monospace:size=15", "sh", "-c",
@@ -236,7 +238,7 @@ def main() -> None:
         check(done2["state"] == "done", f"tap-mode transcript: {done2['text']!r}")
         # Within 15 s, same window: the second dictation is joined with one space.
         wait(lambda: typed.read_text().strip() == f"{done['text']} {done2['text']}", 10, "second typed text")
-        check(True, "second dictation within 15 s joined with a space")
+        print("  ok  second dictation within 15 s joined with a space")
 
         print("A3: stop the app; the key stays")
         server.send_signal(signal.SIGTERM)
@@ -251,7 +253,7 @@ def main() -> None:
         key("press")
         url_b = wait(server_url, 60, "app started by the key")
         wait(lambda: up(url_b), 30, "auto-started app answers")
-        check(True, f"the key started open-whisper in the background at {url_b}")
+        print(f"  ok  the key started open-whisper in the background at {url_b}")
         states = set()
         shot_taken = False
         end = time.time() + (900 if first_run else 120)
@@ -276,6 +278,8 @@ def main() -> None:
         done3 = wait(lambda: (s := get(url_b + "/api/dictation"))["state"] in ("done", "error") and s, 60, "transcript B")
         check(done3["state"] == "done" and "typed" in done3["delivered"], f"typed after a cold start: {done3['text']!r}")
         wait(lambda: typed.read_text().count(done3["text"]) == 3, 10, "third typed text")
+        check(typed.read_text().rstrip().endswith(f"{done2['text']}{done3['text']}"),
+              "after a restart there is no earlier dictation to join: no leading space")
         check(len(x_binds()) == 2, "still exactly two binds after the key started the app")
         check(not (runtime / "open-whisper" / "starting").exists(), "start lock removed once the app answered")
         info = json.loads((runtime / "open-whisper" / "server.json").read_text())
@@ -283,7 +287,7 @@ def main() -> None:
               "runtime dir is private and holds the dictation token")
         key("quit")
         wait(lambda: not (runtime / "open-whisper" / "server.json").exists(), 15, "auto-started app stopped")
-        check(True, "`ow-dictate quit` stopped the app that the key started")
+        print("  ok  `ow-dictate quit` stopped the app that the key started")
         print("E2E HOTKEY OK")
     finally:
         if server:

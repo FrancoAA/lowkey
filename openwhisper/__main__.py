@@ -86,7 +86,10 @@ def setup_global_dictation(app, url: str, args) -> object | None:
 
     if args.no_hotkey:
         removed = hk.remove_app_binds() if hk.hyprland_running() else []
-        print("  Global dictation key: off (--no-hotkey)" + (f"; removed {', '.join(removed)}." if removed else "."))
+        print("  Global dictation key: not added (--no-hotkey)" + (f"; removed {', '.join(removed)}." if removed else "."))
+        if hk.hyprland_running() and hk.CONFIG_DESC in [b.get("description") for b in hk.key_binds(args.hotkey or hk.DEFAULT_KEY)]:
+            print("  Note: the key is in your Hyprland config (open-whisper.dictation block in bindings.lua) and still")
+            print("  works. Delete that block to turn it off.")
         return None
     if not hk.hyprland_running():
         print("  Global dictation key: not on Hyprland; bind scripts/ow-dictate in your desktop (see README).")

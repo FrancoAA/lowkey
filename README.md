@@ -55,10 +55,13 @@ On Hyprland, open-whisper also adds a **global key: <kbd>Super</kbd>+<kbd>Ctrl</
 - A small window at the bottom of the screen shows a live waveform while it listens. It never
   takes the keyboard focus.
 - The text is **typed into the app that has focus** and is also **copied to the clipboard**.
-- Dictations follow on: if you dictate again within **15 seconds** into the same window, the
-  new text is typed with a space in front ("…a test. And then…"), unless it starts with
-  punctuation. After a longer pause, or in another window, no space is added. The clipboard
-  always gets the text alone.
+- Dictations follow on: if you start talking again soon after the last text was typed (the
+  new recording ends at most **15 seconds** after it) and the same window has focus, the new
+  text is typed with a space in front ("…a test. And then…"), unless it starts with `.`, `,`,
+  `;`, `:`, `!`, `?`, `…`, `%` or a closing bracket or quote. After a longer pause, or in
+  another window, no space is added. The clipboard always gets the text alone.
+  Limits: the check is per window, not per text field (a new field in the same window within
+  15 s still gets the space), and on desktops other than Hyprland only the time is checked.
 
 ![Global dictation overlay](docs/screenshots/06-hotkey-overlay-listening.png)
 ![Text typed into the focused app](docs/screenshots/07-hotkey-text-pasted.png)
@@ -111,8 +114,13 @@ uv run python -m openwhisper.hotkey      # prints the Lua lines to add
 ```
 
 It is two binds (press and release) that run `scripts/ow-dictate`, plus the overlay window
-rule. When the key is in your config, open-whisper sees it and does not add it again, and
-`--no-hotkey` / `--remove` leave it alone (they only remove keys that the app added).
+rule. Put it between `-- BEGIN open-whisper.dictation` and `-- END open-whisper.dictation`
+lines, so it is easy to find and delete. When the key is in your config, open-whisper sees it
+and does not add it again, and `--no-hotkey` / `--remove` leave it alone (they only remove
+keys that the app added). To turn the key off, delete that block. The block contains the
+full path of this folder: if you move the folder, print the snippet again and replace the
+block. If you install voxtype, Omarchy also binds Super+Ctrl+X to it; then pick another key
+for one of the two (`--hotkey`, and the same key in the block).
 
 **Classic `hyprland.conf` (no Lua):** open-whisper cannot add the key itself. Print the two
 bind lines with `uv run python -m openwhisper.hotkey --conf` and add them to your config.

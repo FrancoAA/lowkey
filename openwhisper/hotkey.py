@@ -250,6 +250,7 @@ class HyprlandHotkey:
 
     def __init__(self, key: str = DEFAULT_KEY, cli: Path = CLI) -> None:
         self.key, self.cli, self.added, self.rule = key, cli, False, False
+        self.from_config = False  # the key (and its overlay rule) are in the user's config
         self._watch_stop = threading.Event()
 
     def install(self, keep_existing: bool = False) -> str:
@@ -262,6 +263,7 @@ class HyprlandHotkey:
         self.rule = True
         owners = [b.get("description") or "" for b in key_binds(self.key)]
         if CONFIG_DESC in owners:
+            self.from_config = True
             return f"{self.key} (from your Hyprland config)"
         if RUNTIME_DESC in owners and keep_existing:
             self.added = True
@@ -313,7 +315,7 @@ class HyprlandHotkey:
         if self.added and not keep_bind:
             hyprctl("eval", f"hl.unbind({lua_str(self.key)})")
             self.added = False
-        if self.rule:
+        if self.rule and not self.from_config:  # the config's own rule stays for the next start
             hyprctl("eval", "if _G.open_whisper_rule then _G.open_whisper_rule:set_enabled(false); _G.open_whisper_rule = nil end")
             self.rule = False
 
@@ -334,7 +336,8 @@ def remove_app_binds() -> list[str]:
     def combo(b: dict) -> tuple[int, str]:
         return b.get("modmask", 0), str(b.get("key", "")).upper()
 
-    config_keys = {combo(b) for b in binds if b.get("description") == CONFIG_DESC}
+    # A key with any bind that the app did not add (it has another description) is not ours.
+    config_keys = {combo(b) for b in binds if b.get("description") not in ("", None, RUNTIME_DESC)}
     removed = []
     for b in binds:
         if b.get("description") == RUNTIME_DESC and combo(b) not in config_keys and not b.get("submap"):
@@ -445,7 +448,8 @@ class Overlay:
 # second is typed with a leading space so "…test." + "Hello" does not become "test.Hello".
 JOIN_WINDOW_S = 15.0
 # No leading space before text that starts with punctuation or a closing bracket/quote.
-NO_SPACE_BEFORE = tuple(".,;:!?)]}…%'\"»”’-")
+# Only marks that close or continue a sentence; quotes and dashes can also open one.
+NO_SPACE_BEFORE = tuple(".,;:!?)]}…%»”’")
 
 
 def joining_space(text: str, now: float, last_at: float | None, same_window: bool) -> str:
@@ -505,7 +509,7 @@ class GlobalDictation:
         self.jobs, self.model, self.overlay, self.deliver = jobs, model, overlay, deliver
         self.recorder_factory, self.clock, self.notifier = recorder_factory, clock, notifier
         self.window = window
-        self.last_typed_at: float | None = None  # end of the last typed dictation
+        self.last_typed_at: float | None = None  # when the last dictation was typed
         self.last_typed_window: str | None = None
         self.state = "idle"
         self.level = 0.0
@@ -650,13 +654,14 @@ class GlobalDictation:
     def _stop(self) -> None:
         recorder, self.recorder = self.recorder, None
         pcm = recorder.stop() if recorder else b""
+        recorded_at = self.clock()  # the join window counts from here, not from typing time
         if len(pcm) < MIN_RECORDING_S * RATE * 2:
             self._fail("Too short. Hold the key while you talk, or tap it once to start and again to stop.")
             return
         self._set("transcribing", level=0.0, detail="")
-        threading.Thread(target=self._transcribe, args=(pcm, self.epoch), daemon=True).start()
+        threading.Thread(target=self._transcribe, args=(pcm, self.epoch, recorded_at), daemon=True).start()
 
-    def _transcribe(self, pcm: bytes, epoch: int) -> None:
+    def _transcribe(self, pcm: bytes, epoch: int, recorded_at: float = 0.0) -> None:
         path = write_wav(pcm)
         try:
             job = self.jobs.submit("dictation.wav", path, None, self.model(), priority=0)
@@ -696,7 +701,7 @@ class GlobalDictation:
                 return
         win = self.window()
         same_window = win is None or win == self.last_typed_window  # unknown window: time alone decides
-        prefix = joining_space(text, self.clock(), self.last_typed_at, same_window)
+        prefix = joining_space(text, recorded_at, self.last_typed_at, same_window)
         delivered = self.deliver(text, prefix)
         with self._lock:
             if "typed" in delivered:
