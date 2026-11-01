@@ -4,8 +4,12 @@
   --accent: #e879f9;
 }
 * { box-sizing: border-box; }
-html, body { margin: 0; height: 100%; overflow: hidden; background: #18181b; color: #f4f4f5; }
-.overlay { height: 100%; display: flex; align-items: center; gap: 12px; padding: 0 16px; }
+/* The window is transparent: only the rounded strip is drawn. */
+html, body { margin: 0; height: 100%; overflow: hidden; background: transparent; color: #f4f4f5; }
+.overlay {
+  height: 100%; display: flex; align-items: center; gap: 12px; padding: 0 16px;
+  background: #18181b; border: 1px solid rgba(255, 255, 255, 0.09); border-radius: 18px;
+}
 .dot {
   flex: none; width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center;
   background: #27272a; color: var(--accent);

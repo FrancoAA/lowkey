@@ -89,8 +89,7 @@ impl App {
     fn status(&self) -> Value {
         let current = self.current_model();
         let cfg = self.config.lock().clone();
-        let list: Vec<Value> = models::CATALOG
-            .iter()
+        let list: Vec<Value> = models::catalog()
             .map(|m| {
                 let st = self.engines.state(m.id);
                 json!({
@@ -625,6 +624,8 @@ pub fn run() {
                 .min_inner_size(380.0, 76.0)
                 .max_inner_size(380.0, 76.0)
                 .decorations(false)
+                // Transparent: the page draws the rounded strip, the corners show what is below.
+                .transparent(true)
                 .always_on_top(true)
                 .skip_taskbar(true)
                 .resizable(false)

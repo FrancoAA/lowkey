@@ -1,8 +1,8 @@
 //! Speech engines and model lifecycle (download, load, idle unload).
 //!
 //! whisper.cpp runs inside this process: on the GPU through Vulkan/Metal when there is one,
-//! else on the CPU. Parakeet (NVIDIA, through sherpa-onnx/onnxruntime) runs on the CPU; long
-//! audio is cut at pauses (Silero VAD) into pieces of at most 20 s.
+//! else on the CPU. Parakeet (NVIDIA, through sherpa-onnx/onnxruntime) runs on the CPU; Silero
+//! VAD only decides whether there is speech, and audio over 60 s is cut at its quietest moment.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -65,6 +65,7 @@ pub struct Output {
 #[derive(Clone)]
 enum Loaded {
     Whisper(Arc<WhisperContext>),
+    #[cfg(parakeet)]
     Parakeet(Arc<sherpa_onnx::OfflineRecognizer>),
 }
 
@@ -102,8 +103,7 @@ fn gpu_name() -> Option<String> {
 impl Engines {
     pub fn new(idle_minutes: u64) -> Arc<Self> {
         let hw = detect_hardware();
-        let states = models::CATALOG
-            .iter()
+        let states = models::catalog()
             .map(|m| (m.id.to_string(), ModelState::new(if models::present(m) { "downloaded" } else { "missing" })))
             .collect();
         let me = Arc::new(Self {
@@ -220,11 +220,51 @@ impl Engines {
                     WhisperContext::new_with_params(&path, params).map_err(|e| anyhow::anyhow!("Model failed to load: {e}"))?,
                 ))
             }
-            EngineKind::Parakeet => Loaded::Parakeet(Arc::new(load_parakeet()?)),
+            #[cfg(parakeet)]
+            EngineKind::Parakeet => Loaded::Parakeet(Arc::new(self.load_parakeet_checked(spec)?)),
+            #[cfg(not(parakeet))]
+            EngineKind::Parakeet => anyhow::bail!("Parakeet is not built for this system"),
         };
         *self.loaded.lock() = Some((spec.id.to_string(), model.clone()));
         self.set_state(spec.id, |s| *s = ModelState::new("ready"));
         Ok(model)
+    }
+
+    #[cfg(parakeet)]
+    /// tokens.txt is checked before every load (a wrong one can end the process). If the model
+    /// still fails to load, all files are checked: wrong ones are downloaded again, once.
+    fn load_parakeet_checked(&self, spec: &ModelSpec) -> anyhow::Result<sherpa_onnx::OfflineRecognizer> {
+        let dir = models::models_dir().join(models::PARAKEET_DIR);
+        if !models::parakeet_verify_in(&dir, true) {
+            self.redownload_parakeet(spec)?;
+        }
+        match load_parakeet() {
+            Ok(r) => Ok(r),
+            Err(e) if !models::parakeet_verify_in(&dir, false) => {
+                eprintln!("  Parakeet: {e:#}; a file was damaged, downloading it again");
+                self.redownload_parakeet(spec)?;
+                load_parakeet()
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    #[cfg(parakeet)]
+    fn redownload_parakeet(&self, spec: &ModelSpec) -> anyhow::Result<()> {
+        let id = spec.id;
+        self.set_state(id, |s| *s = ModelState::new("downloading"));
+        models::download_parakeet(|done, total| {
+            self.set_state(id, |s| {
+                s.downloaded = done;
+                s.total = total;
+                s.progress = if total > 0 { done as f64 / total as f64 } else { 0.0 };
+            })
+        })?;
+        self.set_state(id, |s| {
+            s.state = "loading".into();
+            s.progress = 1.0;
+        });
+        Ok(())
     }
 
     pub fn transcribe(&self, id: &str, input: Input, sink: Sink) -> anyhow::Result<Output> {
@@ -253,6 +293,7 @@ impl Engines {
         match model {
             Loaded::Whisper(ctx) => run_whisper_cpp(&ctx, &pcm, input.language.as_deref(), &sink),
             // Parakeet finds the language itself (25 European languages); it has no setting.
+            #[cfg(parakeet)]
             Loaded::Parakeet(rec) => run_parakeet(&rec, &pcm, &sink),
         }
     }
@@ -273,6 +314,7 @@ fn friendly(e: &anyhow::Error) -> String {
     }
 }
 
+#[cfg(parakeet)]
 fn load_parakeet() -> anyhow::Result<sherpa_onnx::OfflineRecognizer> {
     let dir = models::models_dir().join(models::PARAKEET_DIR);
     let file = |f: &str| Some(dir.join(f).to_string_lossy().into_owned());
@@ -297,6 +339,7 @@ const MAX_PIECE_S: f64 = 60.0;
 /// in heavy noise it misses parts of the speech, and dropping those lost most of the words
 /// (84% WER on the noisy Spanish clip). So the pieces cover all the audio, cut only when it is
 /// longer than `MAX_PIECE_S`. No speech: no pieces.
+#[cfg_attr(not(parakeet), allow(dead_code))]
 fn speech_pieces(vad_model: &Path, pcm: &[f32]) -> Vec<(usize, usize)> {
     if pcm.is_empty() || (vad_model.exists() && !has_speech(vad_model, pcm)) {
         return vec![];
@@ -306,15 +349,20 @@ fn speech_pieces(vad_model: &Path, pcm: &[f32]) -> Vec<(usize, usize)> {
 
 /// Join neighbouring ranges while the result fits in `max`; cut longer ones at the quietest
 /// 100 ms in their last quarter (a pause, not the middle of a word, when there is one).
-pub fn join_and_split(ranges: &[(usize, usize)], pcm: &[f32], max: usize) -> Vec<(usize, usize)> {
+fn join_and_split(ranges: &[(usize, usize)], pcm: &[f32], max: usize) -> Vec<(usize, usize)> {
+    let frame = audio::RATE as usize / 10;
+    if max <= 2 * frame {
+        return ranges.to_vec(); // no room to look for a pause: keep the pieces as they are
+    }
+    let mut ranges: Vec<(usize, usize)> = ranges.iter().map(|&(a, b)| (a.min(pcm.len()), b.min(pcm.len()))).filter(|(a, b)| b > a).collect();
+    ranges.sort_unstable();
     let mut joined: Vec<(usize, usize)> = Vec::new();
-    for &(a, b) in ranges {
+    for &(a, b) in &ranges {
         match joined.last_mut() {
             Some(last) if a <= last.1 || b - last.0 <= max => last.1 = last.1.max(b),
             _ => joined.push((a, b)),
         }
     }
-    let frame = audio::RATE as usize / 10;
     let mut out = Vec::new();
     for (mut a, b) in joined {
         while b - a > max {
@@ -337,8 +385,9 @@ fn energy(block: &[f32]) -> f32 {
 }
 
 /// Sentences from Parakeet's tokens and times: one segment per sentence, for subtitles.
+#[cfg_attr(not(parakeet), allow(dead_code))]
 pub fn sentences(tokens: &[String], times: Option<&[f32]>, durations: Option<&[f32]>, offset: f64, piece_end: f64) -> Vec<Segment> {
-    let mut out = Vec::new();
+    let mut out: Vec<Segment> = Vec::new();
     let mut text = String::new();
     let mut start = None;
     for (i, tok) in tokens.iter().enumerate() {
@@ -354,7 +403,9 @@ pub fn sentences(tokens: &[String], times: Option<&[f32]>, durations: Option<&[f
             };
             let s = text.trim().to_string();
             if !s.is_empty() {
-                out.push(Segment { start: start.unwrap_or(offset), end: end.max(start.unwrap_or(offset)), text: s });
+                // Inside the piece, in order, never overlapping the previous cue.
+                let begin = start.unwrap_or(offset).max(out.last().map_or(offset, |p| p.end)).min(piece_end);
+                out.push(Segment { start: begin, end: end.min(piece_end).max(begin), text: s });
             }
             text.clear();
             start = None;
@@ -363,6 +414,7 @@ pub fn sentences(tokens: &[String], times: Option<&[f32]>, durations: Option<&[f
     out
 }
 
+#[cfg(parakeet)]
 fn run_parakeet(rec: &sherpa_onnx::OfflineRecognizer, pcm: &[f32], sink: &Sink) -> anyhow::Result<Output> {
     let rate = audio::RATE as f64;
     let duration = pcm.len() as f64 / rate;
@@ -480,6 +532,10 @@ mod tests {
         assert_eq!(out[1].1, 30 * r);
         assert!(out.iter().all(|(a, b)| b - a <= 20 * r));
         assert!(join_and_split(&[], &pcm, 20 * r).is_empty());
+        // Exactly at the limit: one piece; one sample more: two. A tiny limit never loops.
+        assert_eq!(join_and_split(&[(0, 20 * r)], &pcm, 20 * r), vec![(0, 20 * r)]);
+        assert_eq!(join_and_split(&[(0, 20 * r + 1)], &pcm, 20 * r).len(), 2);
+        assert_eq!(join_and_split(&[(0, 5 * r)], &pcm, 0), vec![(0, 5 * r)]);
     }
 
     #[test]
@@ -494,6 +550,12 @@ mod tests {
         assert_eq!(segs[1].text, "How are you?");
         let no_times = sentences(&toks[..3], None, None, 5.0, 7.0);
         assert_eq!((no_times[0].start, no_times[0].end), (5.0, 7.0));
+        // No punctuation: one cue for the whole piece. Times past the piece end are clamped.
+        let words: Vec<String> = [" so", " we", " go"].iter().map(|s| s.to_string()).collect();
+        let one = sentences(&words, Some(&[0.0, 0.5, 1.9]), Some(&[0.4, 0.4, 0.9]), 0.0, 2.0);
+        assert_eq!(one.len(), 1);
+        assert_eq!((one[0].text.as_str(), one[0].start, one[0].end), ("so we go", 0.0, 2.0));
+        assert!(sentences(&[], None, None, 0.0, 1.0).is_empty());
     }
 
     #[test]

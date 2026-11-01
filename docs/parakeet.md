@@ -11,13 +11,21 @@ Status: added on 2026-11-01 as an option in Options (`parakeet-v3`). Franco chos
   `csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8` at revision `2bda32ec`. Four files,
   670 MB, each checked with SHA-256 after the download (`models.rs`, `PARAKEET_FILES`).
 - 25 European languages, English and Spanish included. It finds the language itself; it has no
-  language setting, so the language in Options does not change it.
+  language setting, so Options disables the language list while it is selected.
 - Runtime: [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) 2.0.1 (Apache-2.0) with
   onnxruntime (MIT), linked statically into the app through the `sherpa-onnx` crate. The
   archive (22 MB) is fetched by `desktop/scripts/sherpa-onnx.sh` and checked with the SHA-256
   that GitHub publishes for the release asset; the crate's build script then takes it from
-  `desktop/.deps/sherpa-onnx` (`SHERPA_ONNX_ARCHIVE_DIR`) instead of downloading it unchecked.
-  The app binary grows from 55 MB to 84 MB.
+  `desktop/.deps/sherpa-onnx` (`SHERPA_ONNX_ARCHIVE_DIR`, set in `src-tauri/.cargo/config.toml`,
+  so it applies to builds started from `desktop/src-tauri`, as the Makefile does) instead of
+  downloading it unchecked. The crate is pinned to `=2.0.1`, the release of the archive. Note:
+  the crate reuses an archive already unpacked in `target/sherpa-onnx-prebuilt/` without a
+  check; the checked one applies to a clean `target/`. The app binary grows from 55 MB to 84 MB.
+- Built only on Linux x86-64 (`cfg(parakeet)` from `src-tauri/build.rs`), where an archive is
+  pinned. On other systems the app has the Whisper models only, and Options does not list it.
+- The four files are checked by size at every start; `tokens.txt` (a wrong one can end the
+  process inside sherpa-onnx) is checked with SHA-256 before every load; if loading still
+  fails, all files are checked and the wrong ones downloaded again, once.
 - CPU only: onnxruntime has no Vulkan backend for the Radeon iGPU. 8 threads (the physical
   cores), about 1.1 GB of memory with the model loaded.
 - Long audio: Silero VAD decides only whether there is speech. The pieces cover all the audio
@@ -62,9 +70,11 @@ VAD it doubled the WER (3.6% → 7.5%), so it was dropped.
 
 ## Tests
 
-- Unit: pieces (joined up to the limit, long speech cut at a pause), Parakeet tokens to
-  sentences with times, the catalog entry.
+- Unit: pieces (joined up to the limit, long speech cut at a pause, exactly at the limit, a
+  tiny limit), Parakeet tokens to sentences with times (no punctuation, times past the piece,
+  no times), a wrong file is not "present" and is deleted, the catalog entry.
 - Real model: a clean models folder; the app downloads and checks the four files, then
   transcribes (the JFK clip comes back exact, as two sentences).
 - `make e2e-desktop`: Options switches to Parakeet, it loads, a global-key dictation into the
-  terminal is typed with it, and Options switches back.
+  terminal is typed with it, and Options switches back. Only when the model is cached in
+  `bench/.work/parakeet-tdt-0.6b-v3-int8` (else it picks Small and prints SKIP).

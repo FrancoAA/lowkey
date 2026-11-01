@@ -12,10 +12,18 @@ case "$(uname -s)-$(uname -m)" in
     name="sherpa-onnx-v$version-linux-x64-static-lib.tar.bz2"
     sha=55cfadf65ba50d0afc1a802b7a337942819e51c94a5b5a384def1978f7c70871 ;;
   *)
-    echo "sherpa-onnx: no pinned archive for $(uname -s)-$(uname -m) yet; add one to $0"; exit 1 ;;
+    # Not built there (see src-tauri/build.rs): the app has the Whisper models only.
+    echo "sherpa-onnx: not used on $(uname -s)-$(uname -m) (no Parakeet engine there)"; exit 0 ;;
 esac
 mkdir -p "$dir"
-sum() { sha256sum "$1" 2>/dev/null | cut -d' ' -f1 || shasum -a 256 "$1" | cut -d' ' -f1; }
+if command -v sha256sum >/dev/null 2>&1; then
+  sum() { sha256sum "$1" | cut -d' ' -f1; }
+elif command -v shasum >/dev/null 2>&1; then
+  sum() { shasum -a 256 "$1" | cut -d' ' -f1; }
+else
+  echo "sherpa-onnx: needs sha256sum or shasum to check the download"; exit 1
+fi
+command -v curl >/dev/null 2>&1 || { echo "sherpa-onnx: needs curl"; exit 1; }
 if [ ! -f "$dir/$name" ] || [ "$(sum "$dir/$name")" != "$sha" ]; then
   curl -fsSL -o "$dir/$name.part" "https://github.com/k2-fsa/sherpa-onnx/releases/download/v$version/$name"
   got=$(sum "$dir/$name.part")

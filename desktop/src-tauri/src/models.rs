@@ -57,12 +57,34 @@ pub const PARAKEET_FILES: &[(&str, u64, &str)] = &[
     ("tokens.txt", 93_939, "d58544679ea4bc6ac563d1f545eb7d474bd6cfa467f0a6e2c1dc1c7d37e3c35d"),
 ];
 
-/// Is the model on disk?
+/// Is the model on disk? (Parakeet: every file with its exact size.)
 pub fn present(spec: &ModelSpec) -> bool {
     match spec.engine {
         EngineKind::WhisperCpp => local_path(spec.source).exists(),
-        EngineKind::Parakeet => PARAKEET_FILES.iter().all(|(f, _, _)| models_dir().join(PARAKEET_DIR).join(f).exists()),
+        EngineKind::Parakeet => parakeet_present_in(&models_dir().join(PARAKEET_DIR)),
     }
+}
+
+pub fn parakeet_present_in(dir: &Path) -> bool {
+    PARAKEET_FILES.iter().all(|(f, size, _)| std::fs::metadata(dir.join(f)).map(|m| m.len() == *size).unwrap_or(false))
+}
+
+/// Check every Parakeet file with SHA-256 and delete the wrong ones; true when all were right.
+/// (A wrong tokens.txt can make sherpa-onnx end the process, so it is never loaded unchecked.)
+pub fn parakeet_verify_in(dir: &Path, only_small: bool) -> bool {
+    let mut ok = true;
+    for (f, size, sha) in PARAKEET_FILES {
+        if only_small && *size > 1_000_000 {
+            continue;
+        }
+        let path = dir.join(f);
+        let right = std::fs::metadata(&path).map(|m| m.len() == *size).unwrap_or(false) && sha256_file(&path).map(|h| h == *sha).unwrap_or(false);
+        if !right {
+            let _ = std::fs::remove_file(&path);
+            ok = false;
+        }
+    }
+    ok
 }
 
 /// Download the Parakeet files that are missing, each checked with SHA-256 (a wrong file is
@@ -73,6 +95,9 @@ pub fn download_parakeet(mut progress: impl FnMut(u64, u64)) -> anyhow::Result<(
     let mut before = 0;
     for (file, size, sha) in PARAKEET_FILES {
         let dest = dir.join(file);
+        if std::fs::metadata(&dest).map(|m| m.len() != *size).unwrap_or(false) {
+            let _ = std::fs::remove_file(&dest); // wrong size: not this file
+        }
         if !dest.exists() {
             download(&format!("{PARAKEET_URL}{file}"), &dest, |done, _| progress(before + done, total))?;
             let got = sha256_file(&dest)?;
@@ -108,7 +133,12 @@ pub const VAD_URL: &str = "https://huggingface.co/ggml-org/whisper-vad/resolve/m
 const MODEL_URL: &str = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/";
 
 pub fn spec(id: &str) -> Option<&'static ModelSpec> {
-    CATALOG.iter().find(|m| m.id == id)
+    catalog().find(|m| m.id == id)
+}
+
+/// The models this build can run (Parakeet only where it is built: see build.rs).
+pub fn catalog() -> impl Iterator<Item = &'static ModelSpec> {
+    CATALOG.iter().filter(|m| cfg!(parakeet) || m.engine != EngineKind::Parakeet)
 }
 
 /// What this machine can run well, decided once at start.
@@ -257,6 +287,22 @@ mod tests {
         assert!(CATALOG.iter().all(|m| !m.id.starts_with("fw:")), "no Python engine any more");
         assert_eq!(spec("parakeet-v3").unwrap().engine, EngineKind::Parakeet);
         assert_eq!(PARAKEET_FILES.iter().map(|f| f.1).sum::<u64>() / 1_000_000, 670);
+    }
+
+    #[test]
+    fn a_wrong_parakeet_file_is_not_present_and_is_deleted() {
+        let dir = std::env::temp_dir().join(format!("ow-pk-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        assert!(!parakeet_present_in(&dir));
+        // Right names and sizes, wrong content (e.g. Git LFS pointers padded, or another revision).
+        for (f, size, _) in PARAKEET_FILES.iter().filter(|f| f.1 < 20_000_000) {
+            std::fs::write(dir.join(f), vec![b'x'; *size as usize]).unwrap();
+        }
+        assert!(!parakeet_present_in(&dir), "the encoder is missing");
+        assert!(!parakeet_verify_in(&dir, true), "tokens.txt is wrong");
+        assert!(!dir.join("tokens.txt").exists(), "a wrong file is deleted");
+        assert!(dir.join("decoder.int8.onnx").exists(), "only small files are hashed in a quick check");
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

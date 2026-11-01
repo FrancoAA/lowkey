@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=open-whisper
+GenericName=Speech to text
+Comment=Transcribe audio and video files and dictate into any app, on this computer
+Exec=@BIN@ %F
+Icon=open-whisper
+Terminal=false
+Categories=AudioVideo;Audio;
+Keywords=transcribe;dictation;speech;whisper;subtitles;
+StartupNotify=false

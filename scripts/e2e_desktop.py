@@ -362,28 +362,35 @@ def main() -> None:
         press_key("Return")
         for _ in range(2):
             press_key("Tab")  # language, model
-        press_key("End")  # last model in the list: Parakeet v3
-        wait(lambda: cfg_file.exists() and 'model = "parakeet-v3"' in cfg_file.read_text(), 15, "model saved to config.toml")
-        wait(lambda: any(s["default_model"] == "parakeet-v3" for s in events("status")[-5:]), 15, "status follows the choice")
-        check(True, "Options: choosing a model saves it to config.toml and the app switches to it")
+        # Parakeet (670 MB) only when it is cached, so the run stays offline-capable; else Small.
+        with_pk = BENCH_PARAKEET.is_dir()
+        last = "parakeet-v3" if with_pk else "small"
+        press_key("End" if with_pk else "s")  # Parakeet is last; "s" picks Small by its first letter
+        wait(lambda: cfg_file.exists() and f'model = "{last}"' in cfg_file.read_text(), 15, "model saved to config.toml")
+        wait(lambda: any(s["default_model"] == last for s in events("status")[-5:]), 15, "status follows the choice")
+        check(True, f"Options: choosing a model ({last}) saves it to config.toml and the app switches to it")
+        if not with_pk:
+            print(f"  SKIP Parakeet dictation: no {BENCH_PARAKEET} (it would download 670 MB)")
         ready = lambda: any(m["name"] == "parakeet-v3" and m["state"] == "ready" for s in events("status")[-3:] for m in s["models"])
-        wait(ready, 600 if not BENCH_PARAKEET.is_dir() else 60, "Parakeet loaded")
+        if with_pk:
+            wait(ready, 60, "Parakeet loaded")
         time.sleep(1.0)
         shot("16-desktop-options.png")
         # A global-key dictation with Parakeet, into the terminal.
-        focus(target["address"])
-        n_pk = len(events("dictation"))
-        key("press")
-        wait(lambda: dict_state()["state"] == "listening", 10, "listening (Parakeet)")
-        time.sleep(3.5)
-        key("release")
-        t_rel = time.monotonic()
-        d_pk = wait(lambda: next((d for d in events("dictation")[n_pk:] if d["state"] in ("done", "error")), None), 60, "Parakeet result")
-        took = time.monotonic() - t_rel
-        check(d_pk["state"] == "done" and "short test" in d_pk["text"].lower(), f"Parakeet dictation typed: {d_pk['text']!r} ({took:.2f} s after release)")
-        wait(lambda: typed.read_text().rstrip().endswith(d_pk["text"]), 10, "Parakeet text typed")
-        focus(main_win["address"])
-        time.sleep(0.3)
+        if with_pk:
+            focus(target["address"])
+            n_pk = len(events("dictation"))
+            key("press")
+            wait(lambda: dict_state()["state"] == "listening", 10, "listening (Parakeet)")
+            time.sleep(3.5)
+            key("release")
+            t_rel = time.monotonic()
+            d_pk = wait(lambda: next((d for d in events("dictation")[n_pk:] if d["state"] in ("done", "error")), None), 60, "Parakeet result")
+            took = time.monotonic() - t_rel
+            check(d_pk["state"] == "done" and "short test" in d_pk["text"].lower(), f"Parakeet dictation typed: {d_pk['text']!r} ({took:.2f} s after release)")
+            wait(lambda: typed.read_text().rstrip().endswith(d_pk["text"]), 10, f"Parakeet text typed (terminal has {typed.read_text()[-60:]!r})")
+            focus(main_win["address"])
+            time.sleep(0.3)
         press_key("Home")  # back to the recommended model
         wait(lambda: 'model = "large-v3-turbo-q5_0"' in cfg_file.read_text(), 15, "model back")
         print("  ok  back to large-v3-turbo-q5_0")

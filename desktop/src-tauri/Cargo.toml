@@ -18,7 +18,8 @@ path = "src/main.rs"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon", "image-png"] }
+# macos-private-api: transparent windows on macOS (the rounded dictation overlay).
+tauri = { version = "2", features = ["tray-icon", "image-png", "macos-private-api"] }
 tauri-plugin-single-instance = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-global-shortcut = "2"
@@ -36,14 +37,17 @@ hound = "3"
 libloading = "0.8"
 sha2 = "0.10"
 flate2 = "1"
-# Parakeet (NVIDIA, CC-BY-4.0 weights) through sherpa-onnx (Apache-2.0), linked statically with onnxruntime.
-sherpa-onnx = "2.0.1"
 
 log = "0.4"
 
 # GPU backend per OS: Vulkan (AMD/Intel/NVIDIA) on Linux and Windows, Metal on macOS.
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 whisper-rs = { version = "0.16", features = ["vulkan", "openmp"] }
+
+# Parakeet (NVIDIA, CC-BY-4.0 weights) through sherpa-onnx (Apache-2.0), linked statically with
+# onnxruntime. Exact version: desktop/scripts/sherpa-onnx.sh pins the archive of this release.
+[target.'cfg(all(target_os = "linux", target_arch = "x86_64"))'.dependencies]
+sherpa-onnx = "=2.0.1"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 whisper-rs = { version = "0.16", features = ["metal"] }

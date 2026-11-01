@@ -97,6 +97,10 @@ function renderStatus(): void {
   const m = selectedModel();
   if (!m) return;
   modelStatus.dataset.state = m.state === "downloaded" ? "ready" : m.state;
+  // Parakeet finds the language itself; it has no language setting.
+  const finds = m.engine === "parakeet";
+  languageSelect.disabled = finds;
+  languageSelect.title = finds ? "Parakeet finds the language itself" : "";
   modelStatusText.textContent = modelPhrase(m);
   modelBar.hidden = m.state !== "downloading";
   modelBarFill.style.width = `${Math.floor(m.progress * 100)}%`;
@@ -126,7 +130,7 @@ function details(m: ModelInfo): string {
   const gb = (mb: number) => `${(mb / 1024).toFixed(1)} GB`;
   const one = (x: number | null | undefined) => Number((x ?? 0).toFixed(1)); // f32 from Rust: 8.8999996 → 8.9
   const speed = status?.gpu && m.speed_gpu ? `${one(m.speed_gpu)}× real time on GPU` : `${one(m.speed_cpu)}× real time on CPU`;
-  const engine = m.engine === "parakeet" ? "Parakeet (NVIDIA), CPU · " : "whisper.cpp · ";
+  const engine = m.engine === "parakeet" ? "Parakeet (NVIDIA), CPU, finds the language itself · " : "whisper.cpp · ";
   return `${engine}${gb(m.approx_mb)} download · ~${gb(m.ram_mb)} memory · ${speed} · WER ${one(m.wer)}% (measured on the test machine)`;
 }
 

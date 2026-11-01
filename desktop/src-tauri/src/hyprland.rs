@@ -75,17 +75,16 @@ fn shell_quote(s: &str) -> String {
 }
 
 /// Floating, pinned, never focused, bottom centre. A restart replaces it (Lua global).
-/// Title-bar plugins draw their bar on every window: the rule turns it off for the overlay.
-/// A plugin's rule field is an error when the plugin is not loaded, so it is added only then.
+/// `decorate = false` turns off every decoration, title-bar plugins too (hyprbars draws its
+/// bar on every window): no plugin-specific field, so nothing depends on a plugin being loaded.
+/// `rounding = 0` and `no_blur`: the window is transparent, the page draws the rounded strip.
 pub fn overlay_rule_lua() -> String {
     format!(
         "if _G.open_whisper_desktop_rule then _G.open_whisper_desktop_rule:set_enabled(false) end\n\
-         local ow_rule = {{ name = \"open-whisper-desktop-overlay\", \
+         _G.open_whisper_desktop_rule = hl.window_rule({{ name = \"open-whisper-desktop-overlay\", \
          match = {{ title = {} }}, float = true, pin = true, no_initial_focus = true, no_focus = true, \
          size = {{ 380, 76 }}, move = {{ \"(monitor_w/2-190)\", \"(monitor_h-150)\" }}, \
-         border_size = 0, no_shadow = true, no_anim = true }}\n\
-         if hl.plugin and hl.plugin.hyprbars ~= nil then ow_rule[\"hyprbars:no_bar\"] = true end\n\
-         _G.open_whisper_desktop_rule = hl.window_rule(ow_rule)",
+         border_size = 0, rounding = 0, no_shadow = true, no_blur = true, decorate = false, no_anim = true }})",
         lua_str(&format!("^{OVERLAY_TITLE}$"))
     )
 }
@@ -333,8 +332,8 @@ mod tests {
         assert!(lua.contains("'/opt/open whisper/open-whisper' --dictate press"));
         assert!(lua.contains("release = true") && lua.contains("added by the app"));
         assert!(overlay_rule_lua().contains("no_focus = true") && overlay_rule_lua().contains("open_whisper_desktop_rule"));
-        // Title-bar plugin rule: only when the plugin is loaded (else an unknown field is an error).
-        assert!(overlay_rule_lua().contains("if hl.plugin and hl.plugin.hyprbars ~= nil then ow_rule[\"hyprbars:no_bar\"] = true end"));
+        // No plugin fields (an unknown field is a config error): decorate = false covers title bars.
+        assert!(overlay_rule_lua().contains("decorate = false") && !overlay_rule_lua().contains("hyprbars"));
         let conf = conf_snippet("SUPER + CTRL + X", Path::new("/usr/bin/open-whisper"));
         assert!(conf.contains("bind = SUPER CTRL, X, exec, /usr/bin/open-whisper --dictate press"));
         assert!(conf.contains("bindr = SUPER CTRL, X, exec, /usr/bin/open-whisper --dictate release"));
