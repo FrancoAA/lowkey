@@ -2,6 +2,13 @@ export interface ModelInfo {
   name: string;
   label: string;
   approx_mb: number;
+  // desktop catalog only
+  engine?: "whisper-cpp" | "faster-whisper";
+  ram_mb?: number;
+  speed_gpu?: number | null;
+  speed_cpu?: number;
+  wer?: number;
+  available?: boolean;
   state: "missing" | "downloading" | "downloaded" | "loading" | "ready" | "error";
   downloaded: number;
   total: number;
@@ -11,10 +18,16 @@ export interface ModelInfo {
 
 export interface Status {
   device: string;
-  compute_type: string;
+  compute_type?: string;
   default_model: string;
   models: ModelInfo[];
   max_upload_bytes: number;
+  // desktop only
+  desktop?: boolean;
+  gpu?: boolean;
+  auto_model?: string;
+  hotkey?: string;
+  options?: { model: string; language: string; idle_unload_minutes: number };
 }
 
 export interface Segment {

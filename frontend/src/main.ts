@@ -1,5 +1,7 @@
 import "./style.css";
-import { followJob, getLanguages, getStatus, startJob, type JobEvent, type JobResult, type ModelInfo, type Segment, type Status } from "./api";
+import type { JobEvent, JobResult, ModelInfo, Segment, Status } from "./api";
+import { getBackend, isDesktop, type Backend, type FileRef } from "./backend";
+import { DesktopDictation } from "./desktopDictation";
 import { Dictation, type DictationState } from "./dictation";
 import { Waveform } from "./waveform";
 
@@ -28,10 +30,14 @@ const micButton = $<HTMLButtonElement>("mic-button");
 const dictationLabel = $<HTMLSpanElement>("dictation-label");
 const dictationHint = $<HTMLSpanElement>("dictation-hint");
 const dictationTimer = $<HTMLSpanElement>("dictation-timer");
+const modelDetails = $<HTMLParagraphElement>("model-details");
+const idleRow = $<HTMLLabelElement>("idle-row");
+const idleSelect = $<HTMLSelectElement>("idle-select");
 
 const MEDIA_EXT = /\.(mp3|wav|wave|m4a|aac|ogg|oga|opus|flac|webm|weba|wma|aiff?|amr|mp4|m4v|mov|mkv|avi|3gp)$/i;
 const langNames = new Intl.DisplayNames(["en"], { type: "language" });
 
+let backend!: Backend;
 let status: Status | null = null;
 let busy = false;
 let current: { result: JobResult | null; segments: Segment[]; baseName: string } = { result: null, segments: [], baseName: "transcript" };
@@ -78,7 +84,7 @@ function modelPhrase(m: ModelInfo): string {
       return "Loading model…";
     case "ready":
     case "downloaded": // on disk, loads on first use
-      return `Ready · ${m.label.split(" · ")[0]} on ${status?.device === "cuda" ? "GPU" : "CPU"}`;
+      return `Ready · ${m.label.split(" · ")[0]} on ${status?.gpu || status?.device === "cuda" ? "GPU" : "CPU"}`;
     case "error":
       return m.error ?? "Model error";
     default:
@@ -105,11 +111,24 @@ function renderStatus(): void {
     }
     lastModelState = m.state;
   }
+  const auto = status!.auto_model ?? status!.default_model;
   for (const opt of modelSelect.options) {
     const info = status!.models.find((x) => x.name === opt.value)!;
     const here = info.state === "missing" ? ` (download ~${info.approx_mb} MB)` : "";
-    opt.textContent = `${info.label}${info.name === status!.default_model ? " — default" : ""}${here}`;
+    const unavailable = info.available === false ? " — needs uv" : "";
+    opt.disabled = info.available === false;
+    opt.textContent = `${info.label}${info.name === auto ? " — recommended here" : ""}${here}${unavailable}`;
   }
+  modelDetails.textContent = details(m);
+}
+
+/** "0.5 GB download · ~0.9 GB RAM · 10.9× real time on GPU · WER 3.2%" (desktop catalog only). */
+function details(m: ModelInfo): string {
+  if (m.ram_mb === undefined) return "";
+  const gb = (mb: number) => `${(mb / 1024).toFixed(1)} GB`;
+  const speed = status?.gpu && m.speed_gpu ? `${m.speed_gpu}× real time on GPU` : `${m.speed_cpu}× real time on CPU`;
+  const engine = m.engine === "faster-whisper" ? "faster-whisper" : "whisper.cpp";
+  return `${engine} · ${gb(m.approx_mb)} download · ~${gb(m.ram_mb)} memory · ${speed} · WER ${m.wer}% (measured on the test machine)`;
 }
 
 let lastModelState = "";
@@ -117,16 +136,10 @@ let modelErrorShown = false;
 let statusTimer = 0;
 async function refreshStatus(): Promise<void> {
   try {
-    status = await getStatus();
-    if (!modelSelect.options.length) {
-      for (const m of status.models) modelSelect.add(new Option(m.label, m.name));
-      const saved = localStorage.getItem("ow.model");
-      modelSelect.value = saved && status.models.some((m) => m.name === saved) ? saved : status.default_model;
-    }
-    renderStatus();
+    applyStatus(await backend.getStatus());
   } catch {
     modelStatus.dataset.state = "error";
-    modelStatusText.textContent = "Server not reachable";
+    modelStatusText.textContent = backend.desktop ? "Engine not ready" : "Server not reachable";
   }
   const m = selectedModel();
   // Poll fast only while something is changing; a model that is merely not downloaded yet is idle.
@@ -135,14 +148,25 @@ async function refreshStatus(): Promise<void> {
   statusTimer = window.setTimeout(refreshStatus, settling ? 1000 : 10000);
 }
 
+function applyStatus(next: Status): void {
+  status = next;
+  if (!modelSelect.options.length) {
+    for (const m of status.models) modelSelect.add(new Option(m.label, m.name));
+    const saved = backend.desktop ? status.default_model : localStorage.getItem("ow.model");
+    modelSelect.value = saved && status.models.some((m) => m.name === saved) ? saved : status.default_model;
+    if (status.options) idleSelect.value = String(status.options.idle_unload_minutes);
+  }
+  renderStatus();
+}
+
 async function loadLanguages(): Promise<void> {
   try {
-    const langs = await getLanguages();
+    const langs = await backend.getLanguages();
     const entries = Object.keys(langs)
       .map((code) => [code, langName(code)] as const)
       .sort((a, b) => a[1].localeCompare(b[1]));
     for (const [code, name] of entries) languageSelect.add(new Option(name, code));
-    const saved = localStorage.getItem("ow.language");
+    const saved = backend.desktop ? (await backend.getStatus()).options?.language : localStorage.getItem("ow.language");
     if (saved && langs[saved] !== undefined) languageSelect.value = saved;
   } catch {
     /* Auto-detect still works without the list */
@@ -214,11 +238,7 @@ function onJobEvent(ev: JobEvent): void {
   }
 }
 
-async function transcribe(blob: Blob, filename: string, title: string): Promise<void> {
-  if (busy) {
-    showError("A transcription is already running. Wait for it to finish.");
-    return;
-  }
+function beginResult(filename: string, title: string): void {
   showError(null);
   busy = true;
   current = { result: null, segments: [], baseName: filename.replace(/\.[^.]+$/, "") || "transcript" };
@@ -227,14 +247,25 @@ async function transcribe(blob: Blob, filename: string, title: string): Promise<
   resultMeta.textContent = "";
   setResultReady(false);
   renderTranscript();
-  setProgress(null, "Uploading…");
+}
+
+function follow(jobId: string): void {
+  backend.follow(jobId, onJobEvent, () => {
+    busy = false;
+    progress.hidden = true;
+    showError("Lost the connection to the server. Is it still running?");
+  });
+}
+
+async function transcribe(file: FileRef, title: string): Promise<void> {
+  if (busy) {
+    showError("A transcription is already running. Wait for it to finish.");
+    return;
+  }
+  beginResult(file.name, title);
+  setProgress(null, backend.desktop ? "Starting…" : "Uploading…");
   try {
-    const jobId = await startJob(blob, filename, languageSelect.value, modelSelect.value);
-    followJob(jobId, onJobEvent, () => {
-      busy = false;
-      progress.hidden = true;
-      showError("Lost the connection to the server. Is it still running?");
-    });
+    follow(await backend.start(file, languageSelect.value, modelSelect.value));
   } catch (err) {
     busy = false;
     progress.hidden = true;
@@ -245,13 +276,18 @@ async function transcribe(blob: Blob, filename: string, title: string): Promise<
 
 function handleFile(file: File | undefined): void {
   if (!file) return;
+  handleRef({ name: file.name, blob: file, size: file.size, type: file.type });
+}
+
+function handleRef(file: FileRef): void {
   if (dictation.state !== "idle") {
     // Do not throw away what the user is saying; they can finish or cancel first.
     showError("Finish the dictation first (Space or the mic button), or press Esc to cancel it.");
     return;
   }
-  const looksLikeMedia = file.type.startsWith("audio/") || file.type.startsWith("video/") || MEDIA_EXT.test(file.name);
-  if (status && file.size > status.max_upload_bytes) {
+  const type = file.type ?? "";
+  const looksLikeMedia = type.startsWith("audio/") || type.startsWith("video/") || MEDIA_EXT.test(file.name);
+  if (status && file.size !== undefined && file.size > status.max_upload_bytes) {
     showError(`“${file.name}” is ${fmtMB(file.size)}. The limit is ${fmtMB(status.max_upload_bytes)}.`);
     return;
   }
@@ -259,7 +295,7 @@ function handleFile(file: File | undefined): void {
     showError(`“${file.name}” is not an audio or video file. Try MP3, WAV, M4A, OGG, FLAC, WEBM or a video with sound.`);
     return;
   }
-  void transcribe(file, file.name, file.name);
+  void transcribe(file, file.name);
 }
 
 // ------------------------------------------------------------------ file input + drag and drop
@@ -267,11 +303,21 @@ fileInput.addEventListener("change", () => {
   handleFile(fileInput.files?.[0]);
   fileInput.value = "";
 });
+async function chooseFile(): Promise<void> {
+  if (!backend.desktop) return fileInput.click();
+  const f = await backend.pickFile(); // native dialog: gives a path
+  if (f) handleRef(f);
+}
+dropzone.addEventListener("click", (e) => {
+  if (!backend?.desktop) return; // the label opens the <input type=file>
+  e.preventDefault();
+  void chooseFile();
+});
 dropzone.addEventListener("keydown", (e) => {
   // Space reaches here only when the dropzone has keyboard focus (see the global Space handler).
-  if (e.key === "Enter" || e.code === "Space") {
+  if (e.key === "Enter" || isSpace(e)) {
     e.preventDefault();
-    fileInput.click();
+    void chooseFile();
   }
 });
 for (const type of ["dragenter", "dragover"]) {
@@ -291,15 +337,10 @@ document.addEventListener("drop", (e) => {
 
 // ------------------------------------------------------------------ copy / download
 copyButton.addEventListener("click", async () => {
-  const text = current.result?.text ?? "";
   try {
-    await navigator.clipboard.writeText(text);
-  } catch {
-    const ta = Object.assign(document.createElement("textarea"), { value: text });
-    document.body.append(ta);
-    ta.select();
-    document.execCommand("copy");
-    ta.remove();
+    await backend.copy(current.result?.text ?? "");
+  } catch (err) {
+    return showError(String(err));
   }
   copyButton.textContent = "Copied";
   setTimeout(() => (copyButton.textContent = "Copy"), 1500);
@@ -312,23 +353,22 @@ for (const btn of downloadButtons) {
     const fmt = btn.dataset.format as "txt" | "srt" | "vtt";
     const body = fmt === "txt" ? `${r.text}\n` : r[fmt];
     const type = fmt === "vtt" ? "text/vtt" : fmt === "srt" ? "application/x-subrip" : "text/plain";
-    const url = URL.createObjectURL(new Blob([body], { type: `${type};charset=utf-8` }));
-    const a = Object.assign(document.createElement("a"), { href: url, download: `${current.baseName}.${fmt}` });
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    backend.save(`${current.baseName}.${fmt}`, body, type).catch((err) => showError(String(err)));
   });
 }
 
 // ------------------------------------------------------------------ options
-languageSelect.addEventListener("change", () => localStorage.setItem("ow.language", languageSelect.value));
+languageSelect.addEventListener("change", () => void backend.saveOptions({ language: languageSelect.value }));
 modelSelect.addEventListener("change", () => {
-  localStorage.setItem("ow.model", modelSelect.value);
+  // Desktop: saved to ~/.config/open-whisper/config.toml and loaded at once.
+  void backend.saveOptions({ model: modelSelect.value }).catch((err) => showError(String(err)));
   renderStatus();
 });
+idleSelect.addEventListener("change", () => void backend.saveOptions({ idle_unload_minutes: Number(idleSelect.value) }));
 
 // ------------------------------------------------------------------ dictation
 const waveform = new Waveform($<HTMLCanvasElement>("waveform"));
-const dictation = new Dictation(waveform, {
+const dictationUi = {
   onState(state: DictationState) {
     dictationBox.dataset.state = state;
     micButton.setAttribute("aria-label", state === "idle" ? "Start dictation" : "Stop dictation");
@@ -349,13 +389,20 @@ const dictation = new Dictation(waveform, {
   onTick(elapsed: number) {
     dictationTimer.textContent = fmtClock(elapsed);
   },
-  onAudio(blob, filename) {
-    void transcribe(blob, filename, "Dictation");
+  onAudio(blob: Blob, filename: string) {
+    void transcribe({ name: filename, blob }, "Dictation");
   },
-  onError(message) {
+  onJob(jobId: string) {
+    beginResult("dictation", "Dictation");
+    setProgress(null, "Transcribing…");
+    follow(jobId);
+  },
+  onError(message: string) {
     showError(message);
   },
-});
+};
+// Web: the browser records (MediaRecorder). Desktop: the app records (same UI and keys).
+const dictation: Dictation | DesktopDictation = isDesktop ? new DesktopDictation(waveform, dictationUi) : new Dictation(waveform, dictationUi);
 
 const HOLD_MS = 350;
 const HINT_HOLD = "Release <kbd>Space</kbd> to transcribe · <kbd>Esc</kbd> cancels";
@@ -363,6 +410,13 @@ const HINT_TOGGLE = "Press <kbd>Space</kbd> or the mic to transcribe · <kbd>Esc
 let spaceDownAt = 0;
 let held = false; // true while Space is physically held for push-to-talk
 let holdTimer = 0;
+
+/** Match keys by `key` (the character/name), not `code` (the physical position): virtual
+ * keyboards and some layouts put keys at other positions (wtype's first key is keycode 9,
+ * which `code` reports as "Escape"). */
+function isSpace(e: KeyboardEvent): boolean {
+  return e.key === " " || e.key === "Spacebar";
+}
 
 function isTyping(target: EventTarget | null): boolean {
   const el = target as HTMLElement | null;
@@ -387,12 +441,12 @@ function toggleDictation(): void {
 document.addEventListener(
   "keydown",
   (e) => {
-    if (e.code === "Escape" && dictation.state !== "idle") {
+    if (e.key === "Escape" && dictation.state !== "idle") {
       e.preventDefault();
       dictation.cancel();
       return;
     }
-    if (e.code !== "Space" || e.ctrlKey || e.metaKey || e.altKey || isTyping(e.target) || keyboardFocusedControl(e.target)) return;
+    if (!isSpace(e) || e.ctrlKey || e.metaKey || e.altKey || isTyping(e.target) || keyboardFocusedControl(e.target)) return;
     e.preventDefault(); // no page scroll, no accidental "click" on a mouse-focused button
     if (e.repeat) return;
     spaceDownAt = performance.now();
@@ -413,7 +467,7 @@ document.addEventListener(
 document.addEventListener(
   "keyup",
   (e) => {
-    if (e.code !== "Space" || isTyping(e.target) || (keyboardFocusedControl(e.target) && !spaceDownAt)) return;
+    if (!isSpace(e) || isTyping(e.target) || (keyboardFocusedControl(e.target) && !spaceDownAt)) return;
     e.preventDefault();
     clearTimeout(holdTimer);
     const heldFor = performance.now() - spaceDownAt;
@@ -439,5 +493,20 @@ micButton.addEventListener("click", toggleDictation);
 // Expose a tiny hook for automated UI checks (no effect on normal use).
 (window as unknown as { __ow: unknown }).__ow = { dictation, waveform };
 
-void loadLanguages();
-void refreshStatus();
+void getBackend().then((b) => {
+  backend = b;
+  document.documentElement.dataset.app = b.desktop ? "desktop" : "web";
+  idleRow.hidden = !b.desktop;
+  if (b.desktop) {
+    $<HTMLSpanElement>("engine-credit").innerHTML =
+      '<a href="https://github.com/ggml-org/whisper.cpp">whisper.cpp</a> (and <a href="https://github.com/SYSTRAN/faster-whisper">faster-whisper</a>)';
+  }
+  b.onStatus(applyStatus);
+  b.onFileDrop(
+    (over) => dropzone.classList.toggle("over", over),
+    (files) => files[0] && handleRef(files[0]),
+  );
+  b.onOpenFiles((files) => files[0] && handleRef(files[0]));
+  void loadLanguages();
+  void refreshStatus();
+});

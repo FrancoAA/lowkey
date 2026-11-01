@@ -64,7 +64,17 @@
               <span>Model</span>
               <select id="model-select"></select>
             </label>
+            <label id="idle-row" hidden>
+              <span>Free the model's memory when idle</span>
+              <select id="idle-select">
+                <option value="0">Never</option>
+                <option value="5">After 5 minutes</option>
+                <option value="15" selected>After 15 minutes</option>
+                <option value="60">After 1 hour</option>
+              </select>
+            </label>
           </div>
+          <p id="model-details" class="model-details"></p>
         </details>
       </section>
 
@@ -91,7 +101,7 @@
       </section>
 
       <footer class="foot">
-        Powered by open-source <a href="https://github.com/SYSTRAN/faster-whisper">faster-whisper</a> and
+        Powered by open-source <span id="engine-credit"><a href="https://github.com/SYSTRAN/faster-whisper">faster-whisper</a></span> and
         OpenAI Whisper model weights (MIT).
       </footer>
     </main>

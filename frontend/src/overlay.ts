@@ -81,4 +81,18 @@ function connect(): void {
   };
 }
 
-connect();
+if ("__TAURI_INTERNALS__" in window) {
+  // Desktop app: the dictation state arrives as Tauri events.
+  void (async () => {
+    const { listen } = await import("@tauri-apps/api/event");
+    const { invoke } = await import("@tauri-apps/api/core");
+    await listen<DictationState>("dictation", (e) => render(e.payload));
+    const first = await invoke<DictationState | null>("dictation_state");
+    if (first) render(first);
+    // Let the app show this window only now that the page is loaded and rendered (no blank
+    // first frame). Not in requestAnimationFrame: a hidden page gets no animation frames.
+    await invoke("overlay_ready");
+  })();
+} else {
+  connect();
+}

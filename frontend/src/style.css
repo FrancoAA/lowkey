@@ -216,3 +216,5 @@ select {
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }
 }
+
+.model-details { margin: 8px 0 0; color: var(--muted); font-size: 0.8rem; min-height: 1em; }
