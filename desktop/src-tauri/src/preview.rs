@@ -105,7 +105,23 @@ pub struct Status {
     /// "off" | "preparing" | "ready" | "unavailable"
     pub state: String,
     pub error: Option<String>,
+    /// The engine in use (or being prepared): "whistle" | "parakeet" ("" when off).
+    pub engine: String,
 }
+
+/// The engine a choice means here: "auto" is Parakeet when its files are on disk (no 670 MB
+/// download just for the preview), else Whistle. Parakeet exists only where it is built.
+pub fn resolve(choice: &str) -> &'static str {
+    let parakeet = crate::models::spec("parakeet-v3");
+    match choice {
+        "whistle" => "whistle",
+        "parakeet" if parakeet.is_some() => "parakeet",
+        _ if parakeet.is_some_and(crate::models::present) => "parakeet",
+        _ => "whistle",
+    }
+}
+
+pub const CHOICES: &[&str] = &["auto", "whistle", "parakeet"];
 
 /// One pass of the engine: words committed by this call, and the tail not yet confirmed.
 #[derive(Debug, Default, Clone, PartialEq)]
@@ -130,6 +146,8 @@ pub struct Preview {
     tx: Mutex<Option<Sender<Msg>>>,
     status: Arc<Mutex<Status>>,
     next: std::sync::atomic::AtomicU64,
+    /// Counts workers: an old worker (engine switched) never writes the status again.
+    generation: Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl Default for Preview {
@@ -142,8 +160,9 @@ impl Preview {
     pub fn new() -> Self {
         Self {
             tx: Mutex::new(None),
-            status: Arc::new(Mutex::new(Status { state: "off".into(), error: None })),
+            status: Arc::new(Mutex::new(Status { state: "off".into(), error: None, engine: String::new() })),
             next: std::sync::atomic::AtomicU64::new(1),
+            generation: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         }
     }
 
@@ -151,46 +170,58 @@ impl Preview {
         self.status.lock().clone()
     }
 
-    /// Download (first time) and load the engine in the background. Safe to call again.
-    pub fn prepare(&self, on_change: Arc<dyn Fn() + Send + Sync>) {
-        {
+    /// Download (first time) and load the engine for `choice` in the background. Safe to call
+    /// again: nothing happens when that engine is ready or on its way; another engine replaces
+    /// the running one (a dictation in progress keeps the old one until it ends).
+    pub fn prepare(&self, choice: &str, on_change: Arc<dyn Fn() + Send + Sync>) {
+        use std::sync::atomic::Ordering;
+        let engine = resolve(choice);
+        let my_gen = {
             let mut st = self.status.lock();
-            if matches!(st.state.as_str(), "preparing" | "ready") {
+            if matches!(st.state.as_str(), "preparing" | "ready") && st.engine == engine {
                 return;
             }
-            *st = Status { state: "preparing".into(), error: None };
-        }
+            *st = Status { state: "preparing".into(), error: None, engine: engine.into() };
+            self.generation.fetch_add(1, Ordering::SeqCst) + 1
+        };
         on_change();
         let (tx, rx) = mpsc::channel();
-        *self.tx.lock() = Some(tx);
-        let status = self.status.clone();
+        *self.tx.lock() = Some(tx); // the old worker ends when its last sender is gone
+        let (status, generation) = (self.status.clone(), self.generation.clone());
         std::thread::Builder::new()
-            .name("whistle".into())
+            .name(format!("preview-{engine}"))
             .spawn(move || {
-                // The engine is process-global and not thread-safe: this thread owns it.
-                match open_engine() {
-                    Ok(engine) => {
-                        *status.lock() = Status { state: "ready".into(), error: None };
+                let current = || generation.load(Ordering::SeqCst) == my_gen;
+                // Whistle's engine is process-global and not thread-safe: this thread owns it.
+                match open(engine) {
+                    Ok(asr) if current() => {
+                        *status.lock() = Status { state: "ready".into(), error: None, engine: engine.into() };
                         on_change();
-                        run(engine, rx);
+                        run(asr, rx);
                     }
-                    Err(e) => {
-                        eprintln!("  Live preview not available: {e:#}");
-                        *status.lock() = Status { state: "unavailable".into(), error: Some(format!("{e:#}")) };
+                    Ok(_) => {}
+                    Err(e) if current() => {
+                        eprintln!("  Live preview ({engine}) not available: {e:#}");
+                        *status.lock() = Status { state: "unavailable".into(), error: Some(format!("{e:#}")), engine: engine.into() };
                         on_change();
                     }
+                    Err(_) => {}
                 }
             })
-            .expect("spawn whistle thread");
+            .expect("spawn preview thread");
     }
 
-    /// A preview stream for one dictation, or None (not ready, or a language Whistle lacks).
+    /// A preview stream for one dictation, or None (not ready, or a language Whistle lacks;
+    /// Parakeet finds the language itself).
     pub fn stream(&self, language: Option<&str>, on_text: TextFn) -> Option<Stream> {
-        if self.status.lock().state != "ready" {
-            return None;
-        }
-        if language.is_some_and(|l| !LANGUAGES.contains(&l)) {
-            return None;
+        {
+            let st = self.status.lock();
+            if st.state != "ready" {
+                return None;
+            }
+            if st.engine == "whistle" && language.is_some_and(|l| !LANGUAGES.contains(&l)) {
+                return None;
+            }
         }
         let tx = self.tx.lock().clone()?;
         let id = self.next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -225,7 +256,7 @@ fn join(a: &str, b: &str) -> String {
 
 /// The worker loop: one stream at a time, newest wins. Audio that queued up during a pass is
 /// fed in one call, so the preview never falls far behind the speaker.
-fn run(mut engine: impl Asr, rx: Receiver<Msg>) {
+fn run(mut engine: Box<dyn Asr>, rx: Receiver<Msg>) {
     let mut cur: Option<Current> = None;
     while let Ok(first) = rx.recv() {
         let mut msgs = vec![first];
@@ -254,7 +285,7 @@ fn run(mut engine: impl Asr, rx: Receiver<Msg>) {
                         continue;
                     }
                     if !c.buf.is_empty() {
-                        pass(&mut engine, &mut c);
+                        pass(engine.as_mut(), &mut c);
                     }
                     if c.opened {
                         match engine.stop() {
@@ -269,12 +300,12 @@ fn run(mut engine: impl Asr, rx: Receiver<Msg>) {
             }
         }
         if let Some(c) = cur.as_mut().filter(|c| c.buf.len() >= PASS_SAMPLES) {
-            pass(&mut engine, c);
+            pass(engine.as_mut(), c);
         }
     }
 }
 
-fn pass(engine: &mut impl Asr, c: &mut Current) {
+fn pass(engine: &mut dyn Asr, c: &mut Current) {
     let pcm = std::mem::take(&mut c.buf);
     c.opened = true;
     match engine.process(&pcm, c.language.as_deref()) {
@@ -374,6 +405,14 @@ impl Asr for Needle {
         // SAFETY: as above.
         let code = unsafe { (self.stop)(self.out.as_mut_ptr() as *mut c_char, self.out.len() as c_int) };
         self.result(code)
+    }
+}
+
+fn open(engine: &str) -> anyhow::Result<Box<dyn Asr>> {
+    match engine {
+        #[cfg(parakeet)]
+        "parakeet" => Ok(Box::new(crate::preview_parakeet::ParakeetStream::new(crate::engine::parakeet_for_preview()?))),
+        _ => Ok(Box::new(open_engine()?)),
     }
 }
 
@@ -585,10 +624,14 @@ mod tests {
         let p = Preview::new();
         let (tx, rx) = mpsc::channel();
         *p.tx.lock() = Some(tx);
-        p.status.lock().state = "ready".into();
+        {
+            let mut st = p.status.lock();
+            st.state = "ready".into();
+            st.engine = "whistle".into();
+        }
         let log = Arc::new(Mutex::new(vec![]));
         let engine = FakeAsr { log: log.clone(), n: 0 };
-        let t = std::thread::spawn(move || run(engine, rx));
+        let t = std::thread::spawn(move || run(Box::new(engine), rx));
         (p, log, t)
     }
 
@@ -688,7 +731,18 @@ mod tests {
         assert!(p.stream(None, on_text.clone()).is_none());
         let (p, _log, _t) = ready_preview();
         assert!(p.stream(Some("ja"), on_text.clone()).is_none());
-        assert!(p.stream(Some("pl"), on_text).is_some());
+        assert!(p.stream(Some("pl"), on_text.clone()).is_some());
+        p.status.lock().engine = "parakeet".into(); // finds the language itself: any language
+        assert!(p.stream(Some("ja"), on_text).is_some());
+    }
+
+    #[test]
+    fn engine_choices() {
+        assert_eq!(resolve("whistle"), "whistle");
+        let built = crate::models::spec("parakeet-v3").is_some();
+        assert_eq!(resolve("parakeet"), if built { "parakeet" } else { "whistle" });
+        assert!(["whistle", "parakeet"].contains(&resolve("auto")));
+        assert!(CHOICES.contains(&"auto"));
     }
 
     /// The real engine on a real clip. Needs the downloaded files:

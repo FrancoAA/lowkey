@@ -95,11 +95,16 @@ sees it and does not add it again. Classic `hyprland.conf`: `--print-snippet con
 
 ### Live preview
 
-While you hold the key, the overlay shows the words as you say them. A small second model
-([Cactus Whistle](https://huggingface.co/Cactus-Compute/whistle), 17 MB, on the CPU) makes
-the preview; the main model still writes the text that is typed. It covers English, German,
-French, Spanish, Italian, Dutch and Polish. Turn it off in Options (`live_preview = false`).
-Details and measurements: [docs/live-preview.md](docs/live-preview.md).
+While you hold the key, the overlay shows the words as you say them; the main model still
+writes the text that is typed. Two engines (Options → Preview engine):
+
+- **Parakeet** (the default when its model is on disk): more accurate, 25 languages, about
+  1.1 GB of memory. When Parakeet is also the main model, both share one copy.
+- **Whistle** ([Cactus](https://huggingface.co/Cactus-Compute/whistle), 17 MB, CPU): light;
+  English, German, French, Spanish, Italian, Dutch and Polish.
+
+Turn the preview off in Options (`live_preview = false`). Details and measurements:
+[docs/live-preview.md](docs/live-preview.md).
 
 ## Settings (all optional)
 
@@ -110,7 +115,8 @@ model = "large-v3-turbo-q5_0"   # empty or missing: the default for this machine
 language = "auto"
 idle_unload_minutes = 15        # free the model's memory after 15 idle minutes; 0 = never
 hotkey = "SUPER + CTRL + X"
-live_preview = true             # words in the overlay while you talk (Whistle, 17 MB, CPU)
+live_preview = true             # words in the overlay while you talk
+preview_engine = "auto"         # auto (Parakeet when on disk, else Whistle) | whistle | parakeet
 ```
 
 A model that the app no longer has (the faster-whisper `fw:` models) falls back to the

@@ -12,5 +12,7 @@ pub mod mic;
 pub mod models;
 pub mod output;
 pub mod preview;
+#[cfg(parakeet)]
+pub mod preview_parakeet;
 
 pub use app::run;

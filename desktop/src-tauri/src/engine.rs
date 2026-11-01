@@ -221,7 +221,7 @@ impl Engines {
                 ))
             }
             #[cfg(parakeet)]
-            EngineKind::Parakeet => Loaded::Parakeet(Arc::new(self.load_parakeet_checked(spec)?)),
+            EngineKind::Parakeet => Loaded::Parakeet(shared_parakeet(|| self.load_parakeet_checked(spec))?),
             #[cfg(not(parakeet))]
             EngineKind::Parakeet => anyhow::bail!("Parakeet is not built for this system"),
         };
@@ -314,8 +314,37 @@ fn friendly(e: &anyhow::Error) -> String {
     }
 }
 
+/// One Parakeet in memory for the whole app: the transcription and the live preview share it
+/// (onnxruntime runs one session from several threads). It is freed when neither holds it.
 #[cfg(parakeet)]
-fn load_parakeet() -> anyhow::Result<sherpa_onnx::OfflineRecognizer> {
+static SHARED_PARAKEET: Mutex<std::sync::Weak<sherpa_onnx::OfflineRecognizer>> = Mutex::new(std::sync::Weak::new());
+
+#[cfg(parakeet)]
+fn shared_parakeet(load: impl FnOnce() -> anyhow::Result<sherpa_onnx::OfflineRecognizer>) -> anyhow::Result<Arc<sherpa_onnx::OfflineRecognizer>> {
+    let mut slot = SHARED_PARAKEET.lock();
+    if let Some(r) = slot.upgrade() {
+        return Ok(r);
+    }
+    let r = Arc::new(load()?);
+    *slot = Arc::downgrade(&r);
+    Ok(r)
+}
+
+/// Parakeet for the live preview: downloaded and checked as for transcription (no progress in
+/// Options; the preview shows "Getting it ready…"), and shared with it.
+#[cfg(parakeet)]
+pub fn parakeet_for_preview() -> anyhow::Result<Arc<sherpa_onnx::OfflineRecognizer>> {
+    shared_parakeet(|| {
+        let dir = models::models_dir().join(models::PARAKEET_DIR);
+        if !models::parakeet_present_in(&dir) || !models::parakeet_verify_in(&dir, true) {
+            models::download_parakeet(|_, _| {})?;
+        }
+        load_parakeet()
+    })
+}
+
+#[cfg(parakeet)]
+pub(crate) fn load_parakeet() -> anyhow::Result<sherpa_onnx::OfflineRecognizer> {
     let dir = models::models_dir().join(models::PARAKEET_DIR);
     let file = |f: &str| Some(dir.join(f).to_string_lossy().into_owned());
     let mut cfg = sherpa_onnx::OfflineRecognizerConfig::default();

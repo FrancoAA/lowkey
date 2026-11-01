@@ -13,6 +13,7 @@ export interface Options {
   language?: string;
   idle_unload_minutes?: number;
   live_preview?: boolean;
+  preview_engine?: string;
 }
 
 export interface Backend {

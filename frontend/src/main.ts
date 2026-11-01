@@ -31,6 +31,7 @@ const dictationTimer = $<HTMLSpanElement>("dictation-timer");
 const modelDetails = $<HTMLParagraphElement>("model-details");
 const previewCheck = $<HTMLInputElement>("preview-check");
 const previewNote = $<HTMLElement>("preview-note");
+const previewEngine = $<HTMLSelectElement>("preview-engine");
 const idleSelect = $<HTMLSelectElement>("idle-select");
 
 const MEDIA_EXT = /\.(mp3|wav|wave|m4a|aac|ogg|oga|opus|flac|webm|weba|wma|aiff?|amr|mp4|m4v|mov|mkv|avi|3gp)$/i;
@@ -138,7 +139,10 @@ function details(m: ModelInfo): string {
 function renderPreview(): void {
   const p = status?.preview;
   if (!p) return;
-  const base = "Whistle (17 MB, CPU). Preview only: the model above writes the text. EN, DE, FR, ES, IT, NL, PL.";
+  const base =
+    p.engine === "parakeet"
+      ? "Parakeet (CPU, 25 languages, finds the language itself). Preview only: the model above writes the text."
+      : "Whistle (17 MB, CPU). Preview only: the model above writes the text. EN, DE, FR, ES, IT, NL, PL.";
   const state = !previewCheck.checked
     ? ""
     : p.state === "preparing"
@@ -147,6 +151,7 @@ function renderPreview(): void {
         ? ` Not available: ${p.error ?? "unknown error"}`
         : "";
   previewNote.textContent = base + state;
+  previewEngine.disabled = !previewCheck.checked;
 }
 
 let lastModelState = "";
@@ -179,6 +184,10 @@ function applyStatus(next: Status): void {
     modelSelect.value = status.default_model;
     if (status.options) idleSelect.value = String(status.options.idle_unload_minutes);
     if (status.options?.live_preview !== undefined) previewCheck.checked = status.options.live_preview;
+    if (status.options?.preview_engine) previewEngine.value = status.options.preview_engine;
+    // Parakeet is built on some systems only: offer it where the app has it.
+    const pk = status.models.some((m) => m.name === "parakeet-v3");
+    previewEngine.querySelector<HTMLOptionElement>('option[value="parakeet"]')!.hidden = !pk;
   }
   renderPreview();
   renderStatus();
@@ -361,6 +370,9 @@ modelSelect.addEventListener("change", () => {
   renderStatus();
 });
 idleSelect.addEventListener("change", () => void backend.saveOptions({ idle_unload_minutes: Number(idleSelect.value) }));
+previewEngine.addEventListener("change", () => {
+  void backend.saveOptions({ preview_engine: previewEngine.value }).then(renderPreview, (err) => showError(String(err)));
+});
 previewCheck.addEventListener("change", () => {
   void backend.saveOptions({ live_preview: previewCheck.checked }).then(renderPreview, (err) => showError(String(err)));
 });

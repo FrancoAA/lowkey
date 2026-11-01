@@ -79,7 +79,8 @@ impl App {
 
     fn prepare_preview(self: &Arc<Self>) {
         let weak = Arc::downgrade(self);
-        self.preview.prepare(Arc::new(move || {
+        let choice = self.config.lock().preview_engine.clone();
+        self.preview.prepare(&choice, Arc::new(move || {
             if let Some(a) = weak.upgrade() {
                 a.emit_status();
             }
@@ -105,7 +106,7 @@ impl App {
             "default_model": current,
             "auto_model": models::auto_model(&self.engines.hw),
             "models": list,
-            "options": { "model": cfg.model, "language": cfg.language, "idle_unload_minutes": cfg.idle_unload_minutes, "live_preview": cfg.live_preview },
+            "options": { "model": cfg.model, "language": cfg.language, "idle_unload_minutes": cfg.idle_unload_minutes, "live_preview": cfg.live_preview, "preview_engine": cfg.preview_engine },
             "preview": self.preview.status(),
             "hotkey": *self.hotkey_text.lock(),
         })
@@ -345,12 +346,13 @@ struct OptionsIn {
     language: Option<String>,
     idle_unload_minutes: Option<u64>,
     live_preview: Option<bool>,
+    preview_engine: Option<String>,
 }
 
 #[tauri::command]
 fn set_options(app: State<'_, AppRef>, options: OptionsIn) -> Result<Value, String> {
     let model_changed;
-    let preview_on = options.live_preview == Some(true);
+    let preview_on = options.live_preview == Some(true) || options.preview_engine.is_some();
     {
         let mut cfg = app.config.lock();
         let before = cfg.model.clone();
@@ -373,17 +375,27 @@ fn set_options(app: State<'_, AppRef>, options: OptionsIn) -> Result<Value, Stri
         if let Some(on) = options.live_preview {
             cfg.live_preview = on;
         }
+        if let Some(e) = options.preview_engine.clone() {
+            if !crate::preview::CHOICES.contains(&e.as_str()) {
+                return Err(format!("Unknown preview engine {e:?}"));
+            }
+            cfg.preview_engine = e;
+        }
         model_changed = cfg.model != before;
         cfg.save().map_err(|e| e.to_string())?;
     }
-    if preview_on {
-        app.prepare_preview(); // turned on (again): get it ready, or retry after a failure
+    if preview_on && app.config.lock().live_preview {
+        app.prepare_preview(); // turned on (again), or another engine: get it ready
     }
     if model_changed {
-        let engines = app.engines.clone();
+        let app2 = app.inner().clone();
         let model = app.current_model();
         std::thread::spawn(move || {
-            let _ = engines.prepare(&model);
+            let _ = app2.engines.prepare(&model);
+            // "auto": a model just downloaded (Parakeet) can now serve the preview too.
+            if app2.config.lock().live_preview {
+                app2.prepare_preview();
+            }
         });
     }
     app.emit_status();

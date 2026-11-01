@@ -22,9 +22,9 @@ export interface Status {
   gpu?: boolean;
   auto_model?: string;
   hotkey?: string;
-  options?: { model: string; language: string; idle_unload_minutes: number; live_preview?: boolean };
-  /** Live preview engine (Whistle): off | preparing | ready | unavailable. */
-  preview?: { state: string; error: string | null };
+  options?: { model: string; language: string; idle_unload_minutes: number; live_preview?: boolean; preview_engine?: string };
+  /** Live preview: state off | preparing | ready | unavailable; engine whistle | parakeet. */
+  preview?: { state: string; error: string | null; engine?: string };
 }
 
 export interface Segment {

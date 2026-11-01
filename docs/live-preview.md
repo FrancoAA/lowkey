@@ -1,7 +1,10 @@
-# Live preview in the dictation overlay (Cactus Whistle)
+# Live preview in the dictation overlay
 
 Status: built on branch `feat/tauri-desktop` (desktop app only), decided by Franco on
-2026-11-01 ("option 1").
+2026-11-01 ("option 1"), first with Cactus Whistle. Later the same day Parakeet became the
+second engine for it (see "Parakeet as the preview engine" below), chosen in Options →
+Preview engine: `auto` (Parakeet when its files are on disk, else Whistle), `whistle`,
+`parakeet`.
 
 While you hold the dictation key, the overlay shows the words as you say them. The text that
 is typed and copied still comes from the main model (default whisper.cpp
@@ -74,6 +77,35 @@ to about 1.1 s at worst; the engine trims its window, and the time drops back (7
 max 1.08 s per pass). The CPU load is about 3.5 cores while you talk. Memory: about 76 MB
 while the app runs (the engine has no unload call; turning the preview off stops its use, and
 the memory is freed at the next start).
+
+## Parakeet as the preview engine
+
+`src/preview_parakeet.rs`. Each pass (about once a second, in the same worker as Whistle)
+transcribes the audio not yet confirmed. When that tail is longer than 12 s, the part before
+its quietest 100 ms (between 6 s and 2 s before the end) is transcribed once more and
+confirmed; the rest stays the tail. So a pass never handles more than ~12 s of audio, however
+long the dictation. On release the tail is transcribed once more.
+
+The model is shared: `engine.rs` keeps one Parakeet for the app (a `Weak` slot), so with
+Parakeet as the main model the preview costs no extra memory; with Whisper as the main model
+it adds about 1.1 GB. It stays loaded while the app runs (the preview keeps it).
+"auto" never downloads Parakeet just for the preview; choosing "parakeet" does (670 MB).
+Parakeet finds the language itself, so the preview works in every language Parakeet knows.
+
+Same clips fed in 1 s chunks as the mic does (`cargo test --release --lib preview_engines --
+--ignored --nocapture`), WER of the text the overlay shows before release, and pass times:
+
+| Clip | Parakeet WER | Parakeet pass avg / max | Whistle WER | Whistle pass avg / max |
+|---|---|---|---|---|
+| JFK (real speech, 11 s) | 0.0% | 189 / 291 ms | 0.0% | 331 / 1011 ms |
+| English clean | 2.7% | 269 / 461 ms | 5.5% | 520 / 1130 ms |
+| English, extreme noise | 34.2% | 270 / 510 ms | 42.5% | 608 / 1704 ms |
+| Spanish clean | 5.7% | 253 / 512 ms | 14.3% | 548 / 1584 ms |
+| Spanish, extreme noise | 7.1% | 251 / 449 ms | 34.3% | 587 / 1103 ms |
+| Long dictation (70 s) | 3.2% | 298 / 700 ms | 5.0% | 642 / 1171 ms |
+
+Both show the first words about 1 s after speech starts. Parakeet's passes stay under 0.7 s
+(always ahead of the speaker); Whistle's sometimes take over 1 s.
 
 ## What the Whistle best-practices article changes here
 

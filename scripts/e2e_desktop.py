@@ -33,6 +33,8 @@ APP = Path(os.environ.get("OW_E2E_APP") or ROOT / "desktop" / "src-tauri" / "tar
 # OW_E2E_HYPRBARS=<hyprbars.so>: load that title-bar plugin in the nested Hyprland (bars in pure red) and
 # check that the overlay has no bar. Omarchy's window controls use it.
 HYPRBARS = os.environ.get("OW_E2E_HYPRBARS")
+# OW_E2E_PREVIEW=whistle|parakeet: the live preview engine (default "auto": Parakeet when cached).
+PREVIEW = os.environ.get("OW_E2E_PREVIEW", "auto")
 SHOTS = ROOT / "docs" / "screenshots"
 SPEECH = ROOT / "tests" / "fixtures" / "hello.ogg"
 OUTPUT = "OWDESK"
@@ -225,7 +227,7 @@ def main() -> None:
 
         # ---------------------------------------------------------------- start
         (tmp / "config" / "open-whisper").mkdir(parents=True)
-        (tmp / "config" / "open-whisper" / "config.toml").write_text('idle_unload_minutes = 5\n')
+        (tmp / "config" / "open-whisper" / "config.toml").write_text(f'idle_unload_minutes = 5\npreview_engine = "{PREVIEW}"\n')
         app = subprocess.Popen([APP], env=env, stdout=open(tmp / "app.log", "w"), stderr=subprocess.STDOUT)
         main_win = wait(lambda: win("open-whisper"), 30, "main window")
         print("  ok  main window opened")
@@ -298,8 +300,9 @@ def main() -> None:
         if not preview_ok:  # e.g. offline with no cached copy: dictation must work without it
             print(f"  SKIP live preview checks: {pv['error']}")
         else:
-            print("  ok  live preview engine ready")
-            if not BENCH_WHISTLE.is_dir():
+            want = {"auto": "parakeet" if BENCH_PARAKEET.is_dir() else "whistle"}.get(PREVIEW, PREVIEW)
+            check(pv.get("engine") == want, f"live preview engine ready: {pv.get('engine')} (asked {PREVIEW})")
+            if not BENCH_WHISTLE.is_dir() and (models / "whistle").is_dir():
                 shutil.copytree(models / "whistle", BENCH_WHISTLE)
         n_key = len(events("dictation"))
         key("press")
