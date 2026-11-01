@@ -1,0 +1,5 @@
+# whisper.cpp Vulkan build: desktop/scripts/vulkan-sdk.sh prepares ../.deps/vulkan-sdk
+# (Vulkan + SPIR-V headers, a link to the system Vulkan loader and glslc). No system install.
+[env]
+VULKAN_SDK = { value = "../.deps/vulkan-sdk", relative = true }
+CMAKE_PREFIX_PATH = { value = "../.deps/vulkan-sdk", relative = true }

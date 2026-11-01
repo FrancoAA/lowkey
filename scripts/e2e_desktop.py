@@ -1,0 +1,329 @@
+"""End-to-end check of the Tauri desktop app, in a nested Hyprland (your session is not touched).
+
+The nested Hyprland sits on a temporary headless output of your session; it and the app get
+their own XDG_RUNTIME_DIR, XDG_STATE_HOME, XDG_CONFIG_HOME, XDG_DATA_HOME and a private D-Bus
+session bus, so nothing reaches your desktop, your config or your notifications.
+
+The app runs with two test seams: OPENWHISPER_FAKE_MIC (a speech file instead of the mic) and
+OPENWHISPER_TEST_LOG (UI events appended to a file, because the webview has no WebDriver here).
+Hyprland ignores binds from virtual keyboards, so the key bind's command is run through
+Hyprland's own exec dispatcher, exactly as a key press/release would.
+
+Usage: uv run python scripts/e2e_desktop.py [--first-run]
+  --first-run  empty model folder: the key-started app downloads the model (~550 MB)
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import signal
+import subprocess
+import sys
+import tempfile
+import time
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+APP = ROOT / "desktop" / "src-tauri" / "target" / "release" / "open-whisper"
+SHOTS = ROOT / "docs" / "screenshots"
+SPEECH = ROOT / "tests" / "fixtures" / "hello.ogg"
+OUTPUT = "OWDESK"
+BENCH_MODELS = ROOT / "bench" / ".work" / "ggml"
+RUNTIME_DESC = "Dictate (open-whisper, added by the app)"
+NESTED_CONFIG = """
+hl.monitor({ output = "", mode = "preferred", position = "auto", scale = 1 })
+hl.config({ misc = { disable_hyprland_logo = true, disable_splash_rendering = true, disable_watchdog_warning = true },
+            ecosystem = { no_donation_nag = true }, decoration = { rounding = 12 } })
+"""
+
+
+def run(args, env=None, check=True) -> str:
+    out = subprocess.run([str(a) for a in args], capture_output=True, text=True, env=env)
+    if check and out.returncode:
+        raise RuntimeError(f"{args}: {out.stderr or out.stdout}")
+    return out.stdout
+
+
+def wait(cond, timeout: float, what: str, step: float = 0.1):
+    end = time.time() + timeout
+    while time.time() < end:
+        v = cond()
+        if v:
+            return v
+        time.sleep(step)
+    raise AssertionError(f"timed out waiting for {what}")
+
+
+def check(cond: bool, msg: str) -> None:
+    if not cond:
+        raise AssertionError(msg)
+    print(f"  ok  {msg}")
+
+
+def test_pids(log: Path) -> list[int]:
+    """App processes started by this test (their environment carries this run's log path)."""
+    out = subprocess.run(["pgrep", "-f", f"^{APP}"], capture_output=True, text=True).stdout
+    mine = []
+    for p in out.split():
+        try:
+            if f"OPENWHISPER_TEST_LOG={log}".encode() in Path(f"/proc/{p}/environ").read_bytes():
+                mine.append(int(p))
+        except OSError:
+            pass
+    return mine
+
+
+def main() -> None:
+    first_run = "--first-run" in sys.argv
+    for tool in ("hyprctl", "Hyprland", "wtype", "wl-paste", "grim", "foot", "ffmpeg", "dbus-daemon"):
+        if not shutil.which(tool):
+            sys.exit(f"needs {tool}")
+    if not APP.exists():
+        sys.exit(f"build the app first: cd desktop/src-tauri && cargo build --release ({APP})")
+    outer_runtime, outer_display = os.environ.get("XDG_RUNTIME_DIR", ""), os.environ.get("WAYLAND_DISPLAY", "")
+    if not (os.environ.get("HYPRLAND_INSTANCE_SIGNATURE") and outer_runtime and outer_display):
+        sys.exit("needs a running Hyprland session")
+
+    tmp = Path(tempfile.mkdtemp(prefix="ow-desktop-e2e-"))
+    runtime = Path(tempfile.mkdtemp(prefix="ow", dir="/tmp"))  # short: socket paths max 108 bytes
+    (tmp / "hyprland.lua").write_text(NESTED_CONFIG)
+    models = tmp / "models"
+    models.mkdir()
+    if not first_run:
+        for f in ("ggml-large-v3-turbo-q5_0.bin", "ggml-small.bin"):
+            if (BENCH_MODELS / f).exists():
+                (models / f).symlink_to(BENCH_MODELS / f)
+    mic = tmp / "mic.wav"
+    run(["ffmpeg", "-loglevel", "error", "-y", "-i", SPEECH, "-af", "apad=pad_dur=4", "-ar", "16000", "-ac", "1", mic])
+    log = tmp / "events.jsonl"
+    typed = tmp / "typed.txt"
+    bus = subprocess.Popen(["dbus-daemon", "--session", "--nofork", "--print-address=1", f"--address=unix:path={runtime}/bus"],
+                           stdout=subprocess.PIPE, text=True)
+    bus_addr = bus.stdout.readline().strip()
+
+    nested_env = {
+        **os.environ,
+        "XDG_RUNTIME_DIR": str(runtime),
+        "XDG_STATE_HOME": str(tmp / "state"),
+        "XDG_CONFIG_HOME": str(tmp / "config"),
+        "XDG_DATA_HOME": str(tmp / "data"),
+        "WAYLAND_DISPLAY": str(Path(outer_runtime) / outer_display),
+        "DBUS_SESSION_BUS_ADDRESS": bus_addr,
+        "OPENWHISPER_FAKE_MIC": str(mic),
+        "OPENWHISPER_TEST_LOG": str(log),
+        "OPENWHISPER_MODELS_DIR": str(models),
+    }
+    nested_env.pop("HYPRLAND_INSTANCE_SIGNATURE", None)
+
+    nested = app = None
+    try:
+        run(["hyprctl", "output", "create", "headless", OUTPUT])
+        run(["hyprctl", "eval",
+             '_G.ow_desk_rule = hl.window_rule({ name = "ow-desktop-e2e", match = { class = "^(aquamarine)$" }, '
+             f'monitor = "{OUTPUT}", float = true, size = {{ 1280, 800 }}, no_initial_focus = true }})'])
+        nested = subprocess.Popen(["Hyprland", "-c", tmp / "hyprland.lua"], env=nested_env,
+                                  stdout=open(tmp / "nested.log", "w"), stderr=subprocess.STDOUT)
+
+        def instances():
+            try:
+                return json.loads(run(["hyprctl", "instances", "-j"], nested_env, check=False) or "[]")
+            except ValueError:
+                return []
+
+        inst = wait(instances, 20, "nested Hyprland")[0]
+        env = {**nested_env, "HYPRLAND_INSTANCE_SIGNATURE": inst["instance"], "WAYLAND_DISPLAY": inst["wl_socket"]}
+        wait(lambda: run(["hyprctl", "eval", "return true"], env, check=False).strip() == "ok", 10, "nested Lua")
+
+        def hj(*a):
+            return json.loads(run(["hyprctl", *a, "-j"], env) or "null")
+
+        def win(title: str):
+            return next((c for c in hj("clients") if c["title"] == title and c["workspace"]["id"] >= 0), None)
+
+        def x_binds():
+            return [b for b in hj("binds") if b.get("modmask") == 68 and b.get("key", "").upper() == "X"]
+
+        def events(kind: str) -> list:
+            if not log.exists():
+                return []
+            out = []
+            for line in log.read_text().splitlines():
+                try:
+                    e = json.loads(line)
+                except ValueError:
+                    continue
+                if e["event"] == kind:
+                    out.append(e["payload"])
+            return out
+
+        def job(pred):
+            return next((j for j in reversed(events("job")) if pred(j) and j["state"] in ("done", "error")), None)
+
+        def dict_state():
+            d = events("dictation")
+            return d[-1] if d else {"state": "idle"}
+
+        def key(action: str) -> None:
+            run(["hyprctl", "dispatch", f'hl.dsp.exec_cmd("{APP} --dictate {action}")'], env)
+
+        def shot(name: str) -> None:
+            SHOTS.mkdir(parents=True, exist_ok=True)
+            run(["grim", SHOTS / name], env)
+            print(f"  screenshot docs/screenshots/{name}")
+
+        def app_pids() -> list[int]:
+            return test_pids(log)
+
+        def focus(addr: str) -> None:
+            run(["hyprctl", "dispatch", f'hl.dsp.focus({{ window = "address:{addr}" }})'], env)
+            wait(lambda: (hj("activewindow") or {}).get("address") == addr, 5, "focus")
+
+        print(f"nested Hyprland {inst['wl_socket']} on {OUTPUT}; private runtime, config, data and D-Bus")
+
+        # ---------------------------------------------------------------- start
+        (tmp / "config" / "open-whisper").mkdir(parents=True)
+        (tmp / "config" / "open-whisper" / "config.toml").write_text('idle_unload_minutes = 5\n')
+        app = subprocess.Popen([APP], env=env, stdout=open(tmp / "app.log", "w"), stderr=subprocess.STDOUT)
+        main_win = wait(lambda: win("open-whisper"), 30, "main window")
+        check(True, "main window opened")
+        status = wait(lambda: next((s for s in reversed(events("status"))
+                                    if any(m["name"] == s["default_model"] and m["state"] == "ready" for m in s["models"])), None),
+                      600 if first_run else 120, "model ready")
+        check(status["gpu"] and status["default_model"] == "large-v3-turbo-q5_0",
+              f"zero config: {status['device']}, default model {status['default_model']}")
+        check(status["options"]["idle_unload_minutes"] == 5, "config.toml is read (idle_unload_minutes = 5)")
+        b = wait(lambda: x_binds() or None, 10, "binds")
+        check(len(b) == 2 and any(x["description"] == RUNTIME_DESC for x in b), "SUPER+CTRL+X added at runtime")
+        check(win("open-whisper-overlay") is None, "overlay hidden at start")
+        time.sleep(1.0)
+        shot("09-desktop-main.png")
+
+        # ---------------------------------------------------------------- files (single instance)
+        second = subprocess.run([APP, SPEECH], env=env, capture_output=True, timeout=20)
+        check(second.returncode == 0 and len(app_pids()) == 1, "a second launch hands the file over and exits (single instance)")
+        j = wait(lambda: job(lambda j: j["filename"] == "hello.ogg"), 60, "file job")
+        check(j["state"] == "done" and "hello" in j["result"]["text"].lower() and j["language"] == "en",
+              f"file transcribed: {j['result']['text']!r} ({j['language']})")
+        check("-->" in j["result"]["srt"] and j["result"]["vtt"].startswith("WEBVTT"), ".srt and .vtt produced")
+        time.sleep(1.0)
+        shot("10-desktop-transcript.png")
+
+        bogus = tmp / "song.mp3"
+        bogus.write_bytes(b"this is not audio\n" * 200)
+        run([APP, bogus], env)
+        jb = wait(lambda: job(lambda j: j["filename"] == "song.mp3"), 30, "bad file job")
+        check(jb["state"] == "error" and "not an audio or video format" in jb["error"], f"clear error: {jb['error']!r}")
+        time.sleep(0.8)
+        shot("11-desktop-error.png")
+
+        # ---------------------------------------------------------------- in-window dictation (Space)
+        # A real key through Hyprland's keymap (wtype's virtual keymap reaches GTK as Escape).
+        def space(state: str) -> None:
+            run(["hyprctl", "dispatch", f'hl.dsp.send_key_state({{ mods = "", key = "space", state = "{state}" }})'], env)
+
+        focus(main_win["address"])
+        space("down")
+        time.sleep(2.5)
+        shot("12-desktop-window-dictation.png")
+        time.sleep(1.0)
+        space("up")
+        jd = wait(lambda: job(lambda j: j["filename"] == "Dictation"), 60, "window dictation job")
+        check(jd["state"] == "done" and "hello" in jd["result"]["text"].lower(), f"Space dictation in the window: {jd['result']['text']!r}")
+
+        # ---------------------------------------------------------------- global key
+        subprocess.Popen(["foot", "--app-id=ow-e2e-target", "-o", "font=monospace:size=15", "sh", "-c",
+                          f"stty -icanon; printf 'Text from the global hotkey lands here:\\n\\n'; cat > {typed}"],
+                         env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        target = wait(lambda: next((c for c in hj("clients") if c["class"] == "ow-e2e-target"), None), 10, "terminal")
+        focus(target["address"])
+        key("press")
+        wait(lambda: dict_state()["state"] == "listening", 10, "listening")
+        ov = wait(lambda: win("open-whisper-overlay"), 10, "overlay window")
+        check(ov["floating"] and ov["pinned"], f"overlay floating and pinned (size {ov['size']}, at {ov['at']})")
+        check((hj("activewindow") or {}).get("address") == target["address"], "overlay did not take keyboard focus")
+        time.sleep(1.5)
+        lv = max(d.get("level", 0) for d in events("dictation")[-30:])
+        check(lv > 0.2, f"live mic level reaches the overlay (level={lv:.2f})")
+        shot("13-desktop-overlay-listening.png")
+        time.sleep(1.5)
+        key("release")
+        d1 = wait(lambda: (s := dict_state())["state"] in ("done", "error") and s, 60, "global result")
+        check(d1["state"] == "done" and d1["delivered"] == ["copied", "typed"], f"typed and copied: {d1['text']!r}")
+        wait(lambda: typed.exists() and typed.read_text().strip() == d1["text"], 10, "typed text")
+        check(run(["wl-paste", "--no-newline"], env) == d1["text"], "clipboard has the transcript")
+        time.sleep(0.3)
+        shot("14-desktop-text-typed.png")
+
+        key("press")
+        time.sleep(0.1)
+        key("release")
+        time.sleep(1.0)
+        check(dict_state()["state"] == "listening", "tap mode keeps listening")
+        time.sleep(2.5)
+        key("press")
+        time.sleep(0.1)
+        key("release")
+        d2 = wait(lambda: (s := dict_state())["state"] in ("done", "error") and s, 60, "tap result")
+        wait(lambda: typed.read_text().strip() == f"{d1['text']} {d2['text']}", 10, "joined text")
+        print("  ok  second dictation within 15 s joined with a space")
+
+        # ---------------------------------------------------------------- close, quit, key starts the app
+        run(["hyprctl", "dispatch", f'hl.dsp.window.close({{ window = "address:{main_win["address"]}" }})'], env)
+        time.sleep(1.0)
+        check(app.poll() is None and win("open-whisper") is None, "closing the window keeps the app running (for the key)")
+        key("quit")
+        app.wait(20)
+        app = None
+        check(len(x_binds()) == 2, "the key stays after quitting")
+
+        n_before = len(events("dictation"))
+        key("press")
+        wait(lambda: any(d["state"] == "starting" for d in events("dictation")[n_before:]), 60, "starting state")
+        print("  ok  the key started the closed app (background, no main window)")
+        starting = [d for d in events("dictation")[n_before:] if d["state"] == "starting"]
+        wait(lambda: win("open-whisper-overlay"), 30, "overlay during start-up")
+        if first_run:
+            wait(lambda: any("%" in d["detail"] for d in events("dictation")[n_before:]), 300, "download progress")
+            time.sleep(1.0)
+        shot("15-desktop-key-starting.png")
+        check(any(d["detail"] for d in starting), f"start-up detail shown: {starting[-1]['detail']!r}")
+        check(win("open-whisper") is None, "main window stays closed")
+        wait(lambda: dict_state()["state"] == "listening", 600 if first_run else 60, "listening after start")
+        time.sleep(3.0)
+        key("release")
+        d3 = wait(lambda: (s := dict_state())["state"] in ("done", "error") and s, 60, "cold-start result")
+        check(d3["state"] == "done" and "typed" in d3["delivered"], f"typed after a cold start: {d3['text']!r}")
+        check(len(app_pids()) == 1, "one app process")
+        key("quit")
+        wait(lambda: not app_pids(), 20, "quit")
+
+        # ---------------------------------------------------------------- --model flag
+        out = json.loads(run([APP, "--transcribe", SPEECH, "--model", "small"], env).strip().splitlines()[-1])
+        check(out["model"] == "small" and "short test" in out["text"].lower(), f"--model small: {out['text']!r}")
+        print("E2E DESKTOP OK")
+    finally:
+        if app and app.poll() is None:
+            app.terminate()
+        for pid in test_pids(log):  # only processes of this test run, never yours
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except OSError:
+                pass
+        if nested:
+            nested.terminate()
+            try:
+                nested.wait(10)
+            except subprocess.TimeoutExpired:
+                nested.kill()
+        bus.terminate()
+        subprocess.run(["hyprctl", "eval", "if _G.ow_desk_rule then _G.ow_desk_rule:set_enabled(false); _G.ow_desk_rule = nil end"],
+                       capture_output=True)
+        subprocess.run(["hyprctl", "output", "remove", OUTPUT], capture_output=True)
+        shutil.rmtree(runtime, ignore_errors=True)
+        print(f"  cleanup done; logs in {tmp}")
+
+
+if __name__ == "__main__":
+    main()

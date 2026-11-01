@@ -1,0 +1,57 @@
+[package]
+name = "open-whisper"
+version = "0.2.0"
+description = "Local, open-source speech to text: desktop app"
+edition = "2021"
+rust-version = "1.80"
+license = "MIT"
+
+[lib]
+name = "open_whisper_lib"
+crate-type = ["rlib"]
+
+[[bin]]
+name = "open-whisper"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri-plugin-single-instance = "2"
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.9"
+dirs = "6"
+anyhow = "1"
+parking_lot = "0.12"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "blocking"] }
+symphonia = { version = "0.5", features = ["all"] }
+cpal = "0.16"
+hound = "3"
+
+whisper-rs = { version = "0.16", features = ["vulkan", "openmp"] }
+log = "0.4"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# Same versions as wry/tauri use: only to set the overlay webview's GTK size request.
+gtk = "0.18"
+webkit2gtk = "2.0"
+
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+enigo = "0.6"
+arboard = "3"
+global-hotkey = "0.7"
+
+[features]
+default = []
+# Embed the built UI (frontend/dist). `tauri build` turns it on; for a plain cargo build use
+# `cargo build --release --features custom-protocol` (see Makefile: make desktop).
+custom-protocol = ["tauri/custom-protocol"]
+
+[profile.release]
+lto = "thin"
+codegen-units = 4
+strip = true
