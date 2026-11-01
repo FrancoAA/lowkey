@@ -34,7 +34,9 @@ SHOTS = ROOT / "docs" / "screenshots"
 SPEECH = ROOT / "tests" / "fixtures" / "hello.ogg"
 OUTPUT = "OWDESK"
 BENCH_MODELS = ROOT / "bench" / ".work" / "ggml"
-BENCH_WHISTLE = ROOT / "bench" / ".work" / "whistle"  # live preview engine + model, if cached
+# Live preview engine + model. Filled after the first run that downloads them (17 MB);
+# later runs link them, so they work offline like the ggml models above.
+BENCH_WHISTLE = ROOT / "bench" / ".work" / "whistle"
 RUNTIME_DESC = "Dictate (open-whisper, added by the app)"
 NESTED_CONFIG = """
 hl.monitor({ output = "", mode = "preferred", position = "auto", scale = 1 })
@@ -270,18 +272,27 @@ def main() -> None:
         # Live preview (Whistle): on by default; the engine is fetched once (17 MB) at start.
         pv = wait(lambda: next((s["preview"] for s in reversed(events("status")) if s.get("preview", {}).get("state") in ("ready", "unavailable")), None),
                   180, "live preview engine")
-        check(pv["state"] == "ready", f"live preview engine ready ({pv})")
+        preview_ok = pv["state"] == "ready"
+        if not preview_ok:  # e.g. offline with no cached copy: dictation must work without it
+            print(f"  SKIP live preview checks: {pv['error']}")
+        else:
+            print("  ok  live preview engine ready")
+            if not BENCH_WHISTLE.is_dir():
+                shutil.copytree(models / "whistle", BENCH_WHISTLE)
         n_key = len(events("dictation"))
         key("press")
         wait(lambda: dict_state()["state"] == "listening", 10, "listening")
         ov = wait(lambda: win("open-whisper-overlay"), 10, "overlay window")
         check(ov["floating"] and ov["pinned"], f"overlay floating and pinned (size {ov['size']}, at {ov['at']})")
         check((hj("activewindow") or {}).get("address") == target["address"], "overlay did not take keyboard focus")
-        live = wait(lambda: next((d["preview"] for d in reversed(events("dictation")[n_key:])
-                                  if d["state"] == "listening" and len(d.get("preview", "").split()) >= 3), None), 8, "preview words")
-        check(True, f"words reach the overlay while the key is held: {live!r}")
-        time.sleep(0.4)
-        shot("18-desktop-overlay-live-preview.png")
+        if preview_ok:
+            live = wait(lambda: next((d["preview"] for d in reversed(events("dictation")[n_key:])
+                                      if d["state"] == "listening" and len(d.get("preview", "").split()) >= 3), None), 8, "preview words")
+            check(True, f"words reach the overlay while the key is held: {live!r}")
+            time.sleep(0.4)
+            shot("18-desktop-overlay-live-preview.png")
+        else:
+            time.sleep(2.0)
         lv = max(d.get("level", 0) for d in events("dictation")[-30:])
         check(lv > 0.2, f"live mic level reaches the overlay (level={lv:.2f})")
         shot("13-desktop-overlay-listening.png")

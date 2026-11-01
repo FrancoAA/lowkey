@@ -115,7 +115,7 @@ pub struct Step {
 }
 
 /// The streaming calls, so the worker can be tested without the real engine.
-pub trait Asr: Send {
+pub trait Asr {
     fn process(&mut self, pcm: &[f32], language: Option<&str>) -> anyhow::Result<Step>;
     fn stop(&mut self) -> anyhow::Result<Step>;
 }
@@ -301,9 +301,6 @@ pub struct Needle {
     _lib: libloading::Library,
 }
 
-// The engine is used from one thread only (the worker owns it).
-unsafe impl Send for Needle {}
-
 impl Needle {
     pub fn open(lib: &Path, weights: &Path) -> anyhow::Result<Self> {
         let data = std::fs::read(weights)?;
@@ -386,24 +383,32 @@ fn open_engine() -> anyhow::Result<Needle> {
     Needle::open(&lib, &weights)
 }
 
-/// The engine library and the model, downloaded and checked once. OPENWHISPER_WHISTLE_LIB
-/// points at another build of the library (for tests or an unsupported system).
+/// The engine library and the model, downloaded once and checked with SHA-256 at every start
+/// (a corrupted file or a new pin downloads it again). OPENWHISPER_WHISTLE_LIB points at
+/// another build of the library (for tests or an unsupported system).
 pub fn ensure_files() -> anyhow::Result<(PathBuf, PathBuf)> {
+    // Decide what this system can load before any download.
+    let lib_override = std::env::var_os("OPENWHISPER_WHISTLE_LIB").map(PathBuf::from);
+    if lib_override.is_none() && ENGINE.is_none() {
+        anyhow::bail!("no Whistle engine build for this system yet");
+    }
     let dir = dir();
     let weights = dir.join(WEIGHTS_FILE);
-    if !weights.exists() {
+    if !verified(&weights, WEIGHTS.sha256) {
         download_checked(&WEIGHTS, &weights)?;
     }
-    if let Some(p) = std::env::var_os("OPENWHISPER_WHISTLE_LIB") {
-        return Ok((PathBuf::from(p), weights));
+    if let Some(p) = lib_override {
+        return Ok((p, weights));
     }
-    let build = ENGINE.ok_or_else(|| anyhow::anyhow!("no Whistle engine build for this system yet"))?;
+    let build = ENGINE.expect("checked above");
     let lib = dir.join(build.file);
-    if !lib.exists() {
+    if !verified(&lib, build.sha256) {
         let wheel = dir.join("engine.whl");
+        let _ = std::fs::remove_file(&wheel); // a leftover from an interrupted start
         download_checked(&build.wheel, &wheel)?;
-        let bytes = zip_member(&std::fs::read(&wheel)?, build.member)?;
+        let bytes = zip_member(&std::fs::read(&wheel)?, build.member);
         let _ = std::fs::remove_file(&wheel);
+        let bytes = bytes?;
         if sha256_hex(&bytes) != build.sha256 {
             anyhow::bail!("{} in the engine package has an unexpected checksum", build.member);
         }
@@ -414,12 +419,23 @@ pub fn ensure_files() -> anyhow::Result<(PathBuf, PathBuf)> {
     Ok((lib, weights))
 }
 
+/// True when the file is there with the expected checksum; a wrong file is deleted.
+fn verified(path: &Path, sha256: &str) -> bool {
+    match std::fs::read(path) {
+        Ok(bytes) if sha256_hex(&bytes) == sha256 => true,
+        Ok(_) => {
+            eprintln!("  {} has an unexpected checksum; downloading it again", path.display());
+            let _ = std::fs::remove_file(path);
+            false
+        }
+        Err(_) => false,
+    }
+}
+
 fn download_checked(pin: &Pinned, dest: &Path) -> anyhow::Result<()> {
     crate::models::download(pin.url, dest, |_, _| {})?;
-    let got = sha256_hex(&std::fs::read(dest)?);
-    if got != pin.sha256 {
-        let _ = std::fs::remove_file(dest);
-        anyhow::bail!("{} has an unexpected checksum ({got})", dest.display());
+    if !verified(dest, pin.sha256) {
+        anyhow::bail!("{} has an unexpected checksum after the download", dest.display());
     }
     Ok(())
 }
@@ -628,6 +644,41 @@ mod tests {
         assert_eq!(seen.lock().len(), 1);
         assert_eq!(*seen2.lock(), vec!["w2 p2"]);
         assert_eq!(log.lock().iter().filter(|l| *l == "stop").count(), 1);
+    }
+
+    #[test]
+    fn a_new_recording_closes_the_open_stream_and_late_audio_is_ignored() {
+        let (p, log, _t) = ready_preview();
+        let (on_text, seen) = texts();
+        let s1 = p.stream(None, on_text).unwrap();
+        (s1.audio)(&vec![0.0; 16_000], 16_000);
+        wait_for(&seen, 1);
+        let late = s1.audio.clone();
+        std::mem::forget(s1); // as if its end message were lost: the next Begin must close it
+        let (on_text2, seen2) = texts();
+        let s2 = p.stream(None, on_text2).unwrap();
+        late(&vec![0.0; 16_000], 16_000); // old id: dropped
+        (s2.audio)(&vec![0.0; 8_000], 16_000);
+        s2.finish();
+        wait_for(&seen2, 2);
+        assert_eq!(*seen2.lock(), vec!["w2 p2", "w2 tail"]);
+        assert_eq!(seen.lock().len(), 1);
+        let log = log.lock().clone();
+        assert_eq!(log, vec!["process 16000 -", "stop", "process 8000 -", "stop"]);
+    }
+
+    #[test]
+    fn a_wrong_cached_file_is_deleted() {
+        let dir = std::env::temp_dir().join(format!("ow-preview-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("whistle.cact");
+        std::fs::write(&f, b"abc").unwrap();
+        assert!(verified(&f, "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"));
+        assert!(f.exists());
+        assert!(!verified(&f, WEIGHTS.sha256)); // truncated or old pin: removed, downloaded again
+        assert!(!f.exists());
+        assert!(!verified(&f, WEIGHTS.sha256)); // missing
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

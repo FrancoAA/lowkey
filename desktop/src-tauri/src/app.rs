@@ -353,6 +353,7 @@ struct OptionsIn {
 #[tauri::command]
 fn set_options(app: State<'_, AppRef>, options: OptionsIn) -> Result<Value, String> {
     let model_changed;
+    let preview_on = options.live_preview == Some(true);
     {
         let mut cfg = app.config.lock();
         let before = cfg.model.clone();
@@ -378,8 +379,8 @@ fn set_options(app: State<'_, AppRef>, options: OptionsIn) -> Result<Value, Stri
         model_changed = cfg.model != before;
         cfg.save().map_err(|e| e.to_string())?;
     }
-    if app.config.lock().live_preview {
-        app.prepare_preview(); // no-op when it is ready or on its way
+    if preview_on {
+        app.prepare_preview(); // turned on (again): get it ready, or retry after a failure
     }
     if model_changed {
         let engines = app.engines.clone();

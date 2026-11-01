@@ -229,3 +229,35 @@ impl Recorder for FakeMic {
         self.shared.take_16k()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn preview_gets_half_second_blocks_and_the_rest_at_stop() {
+        let got: Arc<Mutex<Vec<(usize, u32)>>> = Arc::default();
+        let g = got.clone();
+        let shared = Shared::new(Some(Arc::new(move |pcm: &[f32], rate: u32| g.lock().push((pcm.len(), rate)))));
+        *shared.rate.lock() = 48_000;
+        let (on_level, on_end): (LevelFn, EndFn) = (Arc::new(|_| {}), Arc::new(|_| {}));
+        let mut pending = Vec::new();
+        for _ in 0..7 {
+            shared.push(&[0.1; 4_800], &mut pending, &on_level, &on_end); // 0.1 s each
+        }
+        assert_eq!(*got.lock(), vec![(24_000, 48_000)]);
+        let pcm = shared.take_16k();
+        assert_eq!(*got.lock(), vec![(24_000, 48_000), (9_600, 48_000)]);
+        assert_eq!(pcm.len(), 7 * 1_600);
+        shared.take_16k(); // nothing left: nothing sent
+        assert_eq!(got.lock().len(), 2);
+    }
+
+    #[test]
+    fn no_preview_tap_records_the_same() {
+        let shared = Shared::new(None);
+        let (on_level, on_end): (LevelFn, EndFn) = (Arc::new(|_| {}), Arc::new(|_| {}));
+        shared.push(&[0.1; 16_000], &mut Vec::new(), &on_level, &on_end);
+        assert_eq!(shared.take_16k().len(), 16_000);
+    }
+}

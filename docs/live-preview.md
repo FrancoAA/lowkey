@@ -17,8 +17,11 @@ is typed and copied still comes from the main model (default whisper.cpp
 | Engine | `libneedle3.so` (C API `needle.h`, libc++ inside, only libc/libm/pthread needed) | 1.6 MB | from `cactus_needle-3.3.3-py3-none-manylinux2014_x86_64.whl` in `Cactus-Compute/needle3` @ `d6c7d6a2`, SHA-256 of the wheel `b909897e…` and of the library `87476ff7…` |
 
 - Both files are downloaded once at app start into
-  `~/.local/share/open-whisper/models/whistle/` (or `$OPENWHISPER_MODELS_DIR/whistle`). A
-  checksum mismatch deletes the file and turns the preview off.
+  `~/.local/share/open-whisper/models/whistle/` (or `$OPENWHISPER_MODELS_DIR/whistle`). The
+  checksums are checked at every start: a wrong or truncated file (or a new pin in the code)
+  is deleted and downloaded again. If the download fails, the preview is off until the next
+  start, or until it is turned off and on again in Options.
+- On a system without an engine build, nothing is downloaded.
 - The app loads the library at run time (`libloading`). The engine is process-global and not
   thread-safe, so one worker thread ("whistle") owns it.
 - No Python and no telemetry: the telemetry of Cactus lives in their Python package only. The
@@ -90,13 +93,17 @@ From <https://cactuscompute.com/blog/whistle-best-practices>, checked on our cli
 
 ## Tests
 
-- Rust unit tests (`make test-desktop`): zip reading (stored and deflated, written by hand in
+- Rust unit tests (`make test-desktop`): the mic's audio blocks for the preview (0.5 s, the
+  rest at stop), a wrong cached file is deleted, zip reading (stored and deflated, written by hand in
   the test), checksum, engine JSON, the worker (1 s passes, tail on stop, a dropped stream is
-  discarded, a new stream starts clean, no stream when not ready or for an unsupported
+  discarded, a new stream starts clean and closes a stream left open, late audio of an old
+  stream is ignored, no stream when not ready or for an unsupported
   language), and dictation (preview while listening and transcribing, never typed, discarded
   on cancel and on a too-short recording, the key uses the language from Options).
 - Real engine (`cargo test --lib real_whistle -- --ignored --nocapture`): downloads the pinned
   files into the models folder, streams the JFK clip, checks the text.
 - `make e2e-desktop` (nested Hyprland): the engine becomes ready, words reach the overlay
   while the key is held (screenshot 18), the typed text is the main model's text, and the
-  preview is gone after typing.
+  preview is gone after typing. The first run downloads the engine and keeps a copy in
+  `bench/.work/whistle`; later runs work offline. Without network and without that copy, the
+  preview checks are skipped (with a SKIP line) and the rest must still pass.
