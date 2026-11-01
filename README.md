@@ -82,6 +82,8 @@ sees it and does not add it again. Classic `hyprland.conf`: `--print-snippet con
 
 - Another key: `open-whisper --hotkey "SUPER + ALT + D"` or `hotkey = "…"` in the settings.
   `--no-hotkey` adds none; `--remove-hotkey` removes a key that the app added (never yours).
+- Title-bar plugins (hyprbars, as in Omarchy's window controls) skip the overlay: its rule
+  turns the bar off when the plugin is loaded.
 - It needs `wl-copy` and `wtype` (typing on Wayland). The microphone is recorded by the app
   itself, and only while the overlay shows "Listening".
 - **X11, macOS, Windows:** the app registers the key while it runs. Typing uses xdotool (X11)
@@ -154,6 +156,7 @@ make test          # UI typecheck + build, Rust unit tests
 make e2e-desktop   # the app in a nested Hyprland (your session is not touched): files,
                    # errors, dictation, the global key, live preview, Options; screenshots 09-18.
                    # python3 scripts/e2e_desktop.py --first-run: empty model folder
+                   # OW_E2E_HYPRBARS=<hyprbars.so>: also checks that title-bar plugins skip the overlay
 make bench         # research only: the model benchmark (docs/benchmark.md), Python via uv
 ```
 

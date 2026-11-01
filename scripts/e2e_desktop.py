@@ -29,7 +29,10 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-APP = ROOT / "desktop" / "src-tauri" / "target" / "release" / "open-whisper"
+APP = Path(os.environ.get("OW_E2E_APP") or ROOT / "desktop" / "src-tauri" / "target" / "release" / "open-whisper")
+# OW_E2E_HYPRBARS=<hyprbars.so>: load that title-bar plugin in the nested Hyprland (bars in pure red) and
+# check that the overlay has no bar. Omarchy's window controls use it.
+HYPRBARS = os.environ.get("OW_E2E_HYPRBARS")
 SHOTS = ROOT / "docs" / "screenshots"
 SPEECH = ROOT / "tests" / "fixtures" / "hello.ogg"
 OUTPUT = "OWDESK"
@@ -153,6 +156,12 @@ def main() -> None:
         inst = wait(instances, 20, "nested Hyprland")[0]
         env = {**nested_env, "HYPRLAND_INSTANCE_SIGNATURE": inst["instance"], "WAYLAND_DISPLAY": inst["wl_socket"]}
         wait(lambda: run(["hyprctl", "eval", "return true"], env, check=False).strip() == "ok", 10, "nested Lua")
+        if HYPRBARS:
+            run(["hyprctl", "plugin", "load", HYPRBARS], env)
+            wait(lambda: "hyprbars" in run(["hyprctl", "plugin", "list"], env, check=False), 10, "hyprbars loaded")
+            run(["hyprctl", "eval", 'hl.config({ plugin = { hyprbars = { enabled = true, bar_height = 34, '
+                                    'bar_color = "rgb(ff0000)", bar_title_enabled = true } } })'], env)
+            print(f"  hyprbars loaded in the nested Hyprland ({HYPRBARS}); bars are pure red")
 
         def hj(*a):
             return json.loads(run(["hyprctl", *a, "-j"], env) or "null")
@@ -192,6 +201,15 @@ def main() -> None:
             SHOTS.mkdir(parents=True, exist_ok=True)
             run(["grim", SHOTS / name], env)
             print(f"  screenshot docs/screenshots/{name}")
+
+        def red_pixels_around(w) -> int:
+            """Pure-red pixels (the nested hyprbars colour) in and just above a window."""
+            (x, y), (wd, ht) = w["at"], w["size"]
+            png = tmp / "around.png"
+            run(["grim", "-g", f"{x - 10},{max(0, y - 60)} {wd + 20}x{ht + 70}", png], env)
+            raw = subprocess.run(["ffmpeg", "-loglevel", "error", "-i", str(png), "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+                                 capture_output=True, check=True).stdout
+            return sum(1 for i in range(0, len(raw) - 2, 3) if raw[i] > 220 and raw[i + 1] < 30 and raw[i + 2] < 30)
 
         def app_pids() -> list[int]:
             return test_pids(log)
@@ -286,6 +304,11 @@ def main() -> None:
         ov = wait(lambda: win("open-whisper-overlay"), 10, "overlay window")
         check(ov["floating"] and ov["pinned"], f"overlay floating and pinned (size {ov['size']}, at {ov['at']})")
         check((hj("activewindow") or {}).get("address") == target["address"], "overlay did not take keyboard focus")
+        if HYPRBARS:
+            main_red = red_pixels_around(wait(lambda: win("open-whisper"), 10, "main window"))
+            check(main_red > 1000, f"hyprbars draws its bar on normal windows (main window: {main_red} red pixels)")
+            red = red_pixels_around(ov)
+            check(red == 0, f"no title bar on the overlay ({red} red pixels around it)")
         if preview_ok:
             live = wait(lambda: next((d["preview"] for d in reversed(events("dictation")[n_key:])
                                       if d["state"] == "listening" and len(d.get("preview", "").split()) >= 3), None), 8, "preview words")
