@@ -34,6 +34,7 @@ SHOTS = ROOT / "docs" / "screenshots"
 SPEECH = ROOT / "tests" / "fixtures" / "hello.ogg"
 OUTPUT = "OWDESK"
 BENCH_MODELS = ROOT / "bench" / ".work" / "ggml"
+BENCH_WHISTLE = ROOT / "bench" / ".work" / "whistle"  # live preview engine + model, if cached
 RUNTIME_DESC = "Dictate (open-whisper, added by the app)"
 NESTED_CONFIG = """
 hl.monitor({ output = "", mode = "preferred", position = "auto", scale = 1 })
@@ -103,6 +104,10 @@ def main() -> None:
         for f in ("ggml-large-v3-turbo-q5_0.bin", "ggml-small.bin"):
             if (BENCH_MODELS / f).exists():
                 (models / f).symlink_to(BENCH_MODELS / f)
+        if BENCH_WHISTLE.is_dir():
+            (models / "whistle").mkdir()
+            for f in BENCH_WHISTLE.iterdir():
+                (models / "whistle" / f.name).symlink_to(f)
     mic = tmp / "mic.wav"
     run(["ffmpeg", "-loglevel", "error", "-y", "-i", SPEECH, "-af", "apad=pad_dur=4", "-ar", "16000", "-ac", "1", mic])
     log = tmp / "events.jsonl"
@@ -262,19 +267,31 @@ def main() -> None:
                          env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         target = wait(lambda: next((c for c in hj("clients") if c["class"] == "ow-e2e-target"), None), 10, "terminal")
         focus(target["address"])
+        # Live preview (Whistle): on by default; the engine is fetched once (17 MB) at start.
+        pv = wait(lambda: next((s["preview"] for s in reversed(events("status")) if s.get("preview", {}).get("state") in ("ready", "unavailable")), None),
+                  180, "live preview engine")
+        check(pv["state"] == "ready", f"live preview engine ready ({pv})")
+        n_key = len(events("dictation"))
         key("press")
         wait(lambda: dict_state()["state"] == "listening", 10, "listening")
         ov = wait(lambda: win("open-whisper-overlay"), 10, "overlay window")
         check(ov["floating"] and ov["pinned"], f"overlay floating and pinned (size {ov['size']}, at {ov['at']})")
         check((hj("activewindow") or {}).get("address") == target["address"], "overlay did not take keyboard focus")
-        time.sleep(1.5)
+        live = wait(lambda: next((d["preview"] for d in reversed(events("dictation")[n_key:])
+                                  if d["state"] == "listening" and len(d.get("preview", "").split()) >= 3), None), 8, "preview words")
+        check(True, f"words reach the overlay while the key is held: {live!r}")
+        time.sleep(0.4)
+        shot("18-desktop-overlay-live-preview.png")
         lv = max(d.get("level", 0) for d in events("dictation")[-30:])
         check(lv > 0.2, f"live mic level reaches the overlay (level={lv:.2f})")
         shot("13-desktop-overlay-listening.png")
-        time.sleep(1.5)
+        time.sleep(1.0)
         key("release")
         d1 = wait(lambda: (s := dict_state())["state"] in ("done", "error") and s, 60, "global result")
         check(d1["state"] == "done" and d1["delivered"] == ["copied", "typed"], f"typed and copied: {d1['text']!r}")
+        tail = [d["preview"] for d in events("dictation")[n_key:] if d["state"] == "transcribing" and d.get("preview")]
+        print(f"  info  preview while transcribing: {tail[-1] if tail else '(the main model was first)'!r}; typed: {d1['text']!r}")
+        check(not d1.get("preview"), "the preview is gone once the text is typed")
         wait(lambda: typed.exists() and typed.read_text().strip() == d1["text"], 10, "typed text")
         check(run(["wl-paste", "--no-newline"], env) == d1["text"], "clipboard has the transcript")
         time.sleep(0.3)

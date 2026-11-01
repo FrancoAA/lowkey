@@ -147,9 +147,15 @@ as its window. It does everything the web app does, plus:
   press|release`); a second launch hands its command or file to the running app.
 - **Closing the window keeps it running** in the tray, so the key stays instant. Quit from
   the tray or with `open-whisper --dictate quit`.
+- **Live preview.** While you hold the key, the overlay shows the words as you say them. A
+  small second model ([Cactus Whistle](https://huggingface.co/Cactus-Compute/whistle), 17 MB,
+  on the CPU) makes the preview; the main model still writes the text that is typed. It
+  covers English, German, French, Spanish, Italian, Dutch and Polish. It is on by default and
+  is downloaded once at start; turn it off in Options (`live_preview = false`). Details and
+  measurements: [docs/live-preview.md](docs/live-preview.md).
 
 ![Desktop app](docs/screenshots/10-desktop-transcript.png)
-![Desktop overlay](docs/screenshots/13-desktop-overlay-listening.png)
+![Desktop overlay with live preview](docs/screenshots/18-desktop-overlay-live-preview.png)
 
 **Build and run** (needs Rust: `rustup`, Node.js 20+, and on Linux the WebKitGTK 4.1, GTK 3,
 libappindicator, Vulkan loader and `glslc` packages; `make desktop` fetches the Vulkan and
@@ -170,6 +176,7 @@ model = "large-v3-turbo-q5_0"   # empty or missing: picked for this machine
 language = "auto"
 idle_unload_minutes = 15        # free the model's memory after 15 idle minutes; 0 = never
 hotkey = "SUPER + CTRL + X"
+live_preview = true             # words in the overlay while you talk (Whistle, 17 MB, CPU)
 ```
 
 Command line: `--model <id>` (overrides the file), `--language <code>`, `--hotkey "…"`,
@@ -267,7 +274,8 @@ Dependencies are pinned in `uv.lock` and `frontend/package-lock.json`.
 ## Privacy
 
 Audio and transcripts stay on your computer. The only network access is the one-time
-model download from Hugging Face.
+model download from Hugging Face (the desktop app also downloads the live preview engine and
+model once, from pinned revisions checked with SHA-256; that engine has no network code).
 
 ## Licenses
 
@@ -275,5 +283,8 @@ model download from Hugging Face.
   [CTranslate2](https://github.com/OpenNMT/CTranslate2) (MIT),
   Whisper model weights by OpenAI (MIT).
 - FastAPI, Uvicorn, PyAV, Vite and TypeScript are open source (MIT/BSD/Apache).
+- Desktop app: [whisper.cpp](https://github.com/ggml-org/whisper.cpp) (MIT); live preview
+  with [Cactus Whistle and the needle engine](https://huggingface.co/Cactus-Compute/whistle)
+  (Apache-2.0).
 - Benchmark only: [Piper](https://github.com/rhasspy/piper) TTS (MIT) and
   [whisper.cpp](https://github.com/ggml-org/whisper.cpp) (MIT).

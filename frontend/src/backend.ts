@@ -16,6 +16,7 @@ export interface Options {
   model?: string;
   language?: string;
   idle_unload_minutes?: number;
+  live_preview?: boolean;
 }
 
 export interface Backend {

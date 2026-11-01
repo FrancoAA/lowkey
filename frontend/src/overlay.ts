@@ -10,12 +10,16 @@ interface DictationState {
   detail: string;
   delivered: string[];
   elapsed: number;
+  /** Live preview words (desktop app with Whistle); never what gets typed. */
+  preview?: string;
 }
 
 const root = document.getElementById("overlay")!;
 const label = document.getElementById("label")!;
 const detail = document.getElementById("detail")!;
 const timer = document.getElementById("timer")!;
+const preview = document.getElementById("preview")!;
+const measure = document.createElement("canvas").getContext("2d")!;
 const waveform = new Waveform(document.getElementById("wave") as HTMLCanvasElement);
 
 let level = 0;
@@ -26,6 +30,22 @@ let tick = 0;
 function clock(ms: number): string {
   const s = Math.floor(ms / 1000);
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+
+/** The newest words that fit on the line, with "… " in front when older words are cut. */
+function fitTail(text: string, el: HTMLElement): string {
+  measure.font = getComputedStyle(el).font;
+  const width = el.clientWidth;
+  if (!width || measure.measureText(text).width <= width) return text;
+  const words = text.split(/\s+/);
+  while (words.length > 1 && measure.measureText(`… ${words.join(" ")}`).width > width) words.shift();
+  return `… ${words.join(" ")}`;
+}
+
+function renderPreview(d: DictationState): void {
+  const text = (d.state === "listening" || d.state === "transcribing" ? d.preview ?? "" : "").trim();
+  root.dataset.preview = text ? "1" : "";
+  preview.textContent = text ? fitTail(text, preview) : "";
 }
 
 function render(d: DictationState): void {
@@ -70,6 +90,7 @@ function render(d: DictationState): void {
       label.textContent = "Ready";
       detail.textContent = "";
   }
+  renderPreview(d);
 }
 
 function connect(): void {

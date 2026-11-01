@@ -228,13 +228,14 @@ pub mod tests {
 
     pub struct FakeEngine {
         pub calls: Mutex<Vec<String>>,
+        pub languages: Mutex<Vec<Option<String>>>,
         pub gate: Mutex<bool>,
         pub cv: Condvar,
     }
 
     impl FakeEngine {
         pub fn new(open: bool) -> Arc<Self> {
-            Arc::new(Self { calls: Mutex::default(), gate: Mutex::new(open), cv: Condvar::new() })
+            Arc::new(Self { calls: Mutex::default(), languages: Mutex::default(), gate: Mutex::new(open), cv: Condvar::new() })
         }
         pub fn open(&self) {
             *self.gate.lock() = true;
@@ -251,6 +252,7 @@ pub mod tests {
                 }
             }
             self.calls.lock().push(model.to_string());
+            self.languages.lock().push(input.language.clone());
             sink(EngineEvent::Transcribing);
             let segs = vec![
                 Segment { start: 0.0, end: 0.5, text: "Hello there.".into() },

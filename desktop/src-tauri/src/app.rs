@@ -18,6 +18,7 @@ use crate::engine::{Engines, Input};
 use crate::jobs::{JobSnapshot, Jobs};
 use crate::mic::{self, EndFn, LevelFn, Recorder};
 use crate::models;
+use crate::preview::{AudioFn, Preview, Stream, TextFn};
 use crate::{hyprland, output};
 
 pub struct App {
@@ -35,6 +36,7 @@ pub struct App {
     /// The overlay page has loaded and rendered (shown only then: no blank first frame).
     overlay_ready: AtomicBool,
     overlay_pending: AtomicBool,
+    preview: Preview,
 }
 
 type AppRef = Arc<App>;
@@ -71,6 +73,21 @@ impl App {
         models::auto_model(&self.engines.hw).to_string()
     }
 
+    /// CLI --language > config.toml; None = detect.
+    pub fn current_language(&self) -> Option<String> {
+        let lang = self.cli.language.clone().unwrap_or_else(|| self.config.lock().language.clone());
+        (!lang.is_empty() && lang != "auto").then_some(lang)
+    }
+
+    fn prepare_preview(self: &Arc<Self>) {
+        let weak = Arc::downgrade(self);
+        self.preview.prepare(Arc::new(move || {
+            if let Some(a) = weak.upgrade() {
+                a.emit_status();
+            }
+        }));
+    }
+
     fn status(&self) -> Value {
         let current = self.current_model();
         let cfg = self.config.lock().clone();
@@ -94,7 +111,8 @@ impl App {
             "auto_model": models::auto_model(&self.engines.hw),
             "models": list,
             "max_upload_bytes": crate::audio::MAX_FILE_BYTES,
-            "options": { "model": cfg.model, "language": cfg.language, "idle_unload_minutes": cfg.idle_unload_minutes },
+            "options": { "model": cfg.model, "language": cfg.language, "idle_unload_minutes": cfg.idle_unload_minutes, "live_preview": cfg.live_preview },
+            "preview": self.preview.status(),
             "hotkey": *self.hotkey_text.lock(),
         })
     }
@@ -185,8 +203,18 @@ struct TauriIo {
 }
 
 impl Io for TauriIo {
-    fn recorder(&self, on_level: LevelFn, on_end: EndFn) -> Box<dyn Recorder> {
-        mic::new_recorder(on_level, on_end)
+    fn recorder(&self, on_level: LevelFn, on_end: EndFn, on_audio: Option<AudioFn>) -> Box<dyn Recorder> {
+        mic::new_recorder(on_level, on_end, on_audio)
+    }
+    fn preview(&self, on_text: TextFn) -> Option<Stream> {
+        let app = self.app.upgrade()?;
+        if !app.config.lock().live_preview {
+            return None;
+        }
+        app.preview.stream(app.current_language().as_deref(), on_text)
+    }
+    fn language(&self) -> Option<String> {
+        self.app.upgrade().and_then(|a| a.current_language())
     }
     fn deliver(&self, text: &str, prefix: &str) -> Vec<&'static str> {
         output::deliver(text, prefix)
@@ -319,6 +347,7 @@ struct OptionsIn {
     model: Option<String>,
     language: Option<String>,
     idle_unload_minutes: Option<u64>,
+    live_preview: Option<bool>,
 }
 
 #[tauri::command]
@@ -343,8 +372,14 @@ fn set_options(app: State<'_, AppRef>, options: OptionsIn) -> Result<Value, Stri
             cfg.idle_unload_minutes = n;
             app.engines.idle_minutes.store(n, std::sync::atomic::Ordering::Relaxed);
         }
+        if let Some(on) = options.live_preview {
+            cfg.live_preview = on;
+        }
         model_changed = cfg.model != before;
         cfg.save().map_err(|e| e.to_string())?;
+    }
+    if app.config.lock().live_preview {
+        app.prepare_preview(); // no-op when it is ready or on its way
     }
     if model_changed {
         let engines = app.engines.clone();
@@ -394,7 +429,7 @@ fn window_dictation_inner(app: &AppRef, action: &str) -> Result<Option<String>, 
             let on_end: EndFn = Arc::new(move |reason| {
                 let _ = h2.emit_to("main", "window-dictation-end", reason);
             });
-            let mut rec = mic::new_recorder(on_level, on_end);
+            let mut rec = mic::new_recorder(on_level, on_end, None);
             rec.start().map_err(|e| format!("Could not open the microphone: {e}"))?;
             *slot = Some(rec);
             Ok(None)
@@ -405,8 +440,7 @@ fn window_dictation_inner(app: &AppRef, action: &str) -> Result<Option<String>, 
             if (pcm.len() as f64) < dictation::MIN_RECORDING_S * crate::audio::RATE as f64 {
                 return Err("That was too short. Hold Space (or click the mic) while you talk.".into());
             }
-            let lang = app.config.lock().language.clone();
-            let language = (lang != "auto").then_some(lang);
+            let language = app.current_language();
             let model = app.current_model();
             app.jobs.submit("Dictation", Input { path: None, pcm: Some(pcm), language }, &model, 0).map(Some).map_err(|e| e.to_string())
         }
@@ -553,6 +587,7 @@ pub fn run() {
                 started: Instant::now(),
                 overlay_ready: AtomicBool::new(false),
                 overlay_pending: AtomicBool::new(false),
+                preview: Preview::new(),
             });
             let io = Arc::new(TauriIo { app: Arc::downgrade(&app), handle: handle.clone() });
             *app.dictation.lock() = Some(Dictation::new(io, jobs));
@@ -670,6 +705,10 @@ pub fn run() {
                     eprintln!("  model {model}: {e:#}");
                 }
             });
+            // Live preview: 17 MB, downloaded once; dictation works without it meanwhile.
+            if config.live_preview {
+                app.prepare_preview();
+            }
             app.handle_cli(&cli, true);
             for argv in std::mem::take(&mut *EARLY_ARGS.lock()) {
                 app.handle_cli(&Cli::parse(argv), false);

@@ -32,6 +32,10 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 symphonia = { version = "0.5", features = ["all"] }
 cpal = "0.16"
 hound = "3"
+# Live preview (Whistle): load the engine library at run time, check downloads, read its wheel.
+libloading = "0.8"
+sha2 = "0.10"
+flate2 = "1"
 
 log = "0.4"
 

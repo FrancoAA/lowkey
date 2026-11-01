@@ -32,6 +32,9 @@ const dictationHint = $<HTMLSpanElement>("dictation-hint");
 const dictationTimer = $<HTMLSpanElement>("dictation-timer");
 const modelDetails = $<HTMLParagraphElement>("model-details");
 const idleRow = $<HTMLLabelElement>("idle-row");
+const previewRow = $<HTMLLabelElement>("preview-row");
+const previewCheck = $<HTMLInputElement>("preview-check");
+const previewNote = $<HTMLElement>("preview-note");
 const idleSelect = $<HTMLSelectElement>("idle-select");
 
 const MEDIA_EXT = /\.(mp3|wav|wave|m4a|aac|ogg|oga|opus|flac|webm|weba|wma|aiff?|amr|mp4|m4v|mov|mkv|avi|3gp)$/i;
@@ -133,6 +136,21 @@ function details(m: ModelInfo): string {
   return `${engine} · ${gb(m.approx_mb)} download · ~${gb(m.ram_mb)} memory · ${speed} · WER ${one(m.wer)}% (measured on the test machine)`;
 }
 
+/** The live preview's note: what it is, and whether it can run here. */
+function renderPreview(): void {
+  const p = status?.preview;
+  if (!p) return;
+  const base = "Whistle (17 MB, CPU). Preview only: the model above writes the text. EN, DE, FR, ES, IT, NL, PL.";
+  const state = !previewCheck.checked
+    ? ""
+    : p.state === "preparing"
+      ? " Getting it ready…"
+      : p.state === "unavailable"
+        ? ` Not available: ${p.error ?? "unknown error"}`
+        : "";
+  previewNote.textContent = base + state;
+}
+
 let lastModelState = "";
 let modelErrorShown = false;
 let statusTimer = 0;
@@ -163,7 +181,9 @@ function applyStatus(next: Status): void {
     const saved = backend.desktop ? status.default_model : localStorage.getItem("ow.model");
     modelSelect.value = saved && status.models.some((m) => m.name === saved) ? saved : status.default_model;
     if (status.options) idleSelect.value = String(status.options.idle_unload_minutes);
+    if (status.options?.live_preview !== undefined) previewCheck.checked = status.options.live_preview;
   }
+  renderPreview();
   renderStatus();
 }
 
@@ -374,6 +394,9 @@ modelSelect.addEventListener("change", () => {
   renderStatus();
 });
 idleSelect.addEventListener("change", () => void backend.saveOptions({ idle_unload_minutes: Number(idleSelect.value) }));
+previewCheck.addEventListener("change", () => {
+  void backend.saveOptions({ live_preview: previewCheck.checked }).then(renderPreview, (err) => showError(String(err)));
+});
 
 // ------------------------------------------------------------------ dictation
 const waveform = new Waveform($<HTMLCanvasElement>("waveform"));
@@ -506,6 +529,7 @@ void getBackend().then((b) => {
   backend = b;
   document.documentElement.dataset.app = b.desktop ? "desktop" : "web";
   idleRow.hidden = !b.desktop;
+  previewRow.hidden = !b.desktop;
   if (b.desktop) {
     $<HTMLSpanElement>("engine-credit").innerHTML =
       '<a href="https://github.com/ggml-org/whisper.cpp">whisper.cpp</a> (and <a href="https://github.com/SYSTRAN/faster-whisper">faster-whisper</a>)';

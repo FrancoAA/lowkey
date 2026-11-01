@@ -52,11 +52,13 @@ pub struct Config {
     pub idle_unload_minutes: u64,
     /// Global dictation key (Hyprland syntax, e.g. "SUPER + CTRL + X"). Empty = no key.
     pub hotkey: String,
+    /// Show the words in the dictation overlay while you talk (Whistle, 17 MB, CPU).
+    pub live_preview: bool,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Self { model: String::new(), language: "auto".into(), idle_unload_minutes: 15, hotkey: DEFAULT_HOTKEY.into() }
+        Self { model: String::new(), language: "auto".into(), idle_unload_minutes: 15, hotkey: DEFAULT_HOTKEY.into(), live_preview: true }
     }
 }
 

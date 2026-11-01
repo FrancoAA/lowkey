@@ -153,6 +153,9 @@ kbd {
 .options summary:hover { color: var(--text); }
 .options-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
 .options-grid label { display: flex; flex-direction: column; gap: 4px; font-size: 0.82rem; color: var(--muted); }
+.options-grid label.check { flex-direction: row; align-items: flex-start; gap: 8px; grid-column: 1 / -1; color: var(--text, inherit); }
+.options-grid label.check input { margin-top: 2px; accent-color: var(--accent); }
+.options-grid label.check small { display: block; margin-top: 2px; color: var(--muted); font-size: 0.75rem; }
 select {
   font: inherit;
   font-size: 0.9rem;

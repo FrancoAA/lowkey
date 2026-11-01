@@ -11,5 +11,6 @@ pub mod jobs;
 pub mod mic;
 pub mod models;
 pub mod output;
+pub mod preview;
 
 pub use app::run;

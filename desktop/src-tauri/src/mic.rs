@@ -13,6 +13,7 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use parking_lot::Mutex;
 
 use crate::audio;
+use crate::preview::AudioFn;
 
 pub const MAX_RECORDING_S: usize = 10 * 60;
 
@@ -26,10 +27,11 @@ pub trait Recorder: Send {
     fn stop(&mut self) -> Vec<f32>;
 }
 
-pub fn new_recorder(on_level: LevelFn, on_end: EndFn) -> Box<dyn Recorder> {
+/// `on_audio` (the live preview) gets the mono samples at the device rate in ~0.5 s blocks.
+pub fn new_recorder(on_level: LevelFn, on_end: EndFn, on_audio: Option<AudioFn>) -> Box<dyn Recorder> {
     match std::env::var_os("OPENWHISPER_FAKE_MIC") {
-        Some(path) => Box::new(FakeMic::new(path.into(), on_level, on_end)),
-        None => Box::new(CpalMic::new(on_level, on_end)),
+        Some(path) => Box::new(FakeMic::new(path.into(), on_level, on_end, on_audio)),
+        None => Box::new(CpalMic::new(on_level, on_end, on_audio)),
     }
 }
 
@@ -38,11 +40,31 @@ struct Shared {
     rate: Mutex<u32>,
     stopping: AtomicBool,
     ended: AtomicBool,
+    on_audio: Option<AudioFn>,
+    /// Samples not yet sent to `on_audio`.
+    audio_block: Mutex<Vec<f32>>,
 }
 
 impl Shared {
-    fn new() -> Arc<Self> {
-        Arc::new(Self { samples: Mutex::default(), rate: Mutex::new(audio::RATE), stopping: AtomicBool::new(false), ended: AtomicBool::new(false) })
+    fn new(on_audio: Option<AudioFn>) -> Arc<Self> {
+        Arc::new(Self {
+            samples: Mutex::default(),
+            rate: Mutex::new(audio::RATE),
+            stopping: AtomicBool::new(false),
+            ended: AtomicBool::new(false),
+            on_audio,
+            audio_block: Mutex::default(),
+        })
+    }
+
+    fn send_audio(&self, mono: &[f32], rate: usize, flush: bool) {
+        let Some(on_audio) = &self.on_audio else { return };
+        let mut block = self.audio_block.lock();
+        block.extend_from_slice(mono);
+        if !block.is_empty() && (flush || block.len() >= rate / 2) {
+            on_audio(&block, rate as u32);
+            block.clear();
+        }
     }
 
     /// Append mono samples; report the level every ~50 ms; stop at the length limit.
@@ -56,12 +78,14 @@ impl Shared {
             on_level(audio::level(&pending[..block]));
             pending.drain(..block);
         }
+        self.send_audio(mono, rate, false);
         if s.len() >= MAX_RECORDING_S * rate && !self.stopping.load(Ordering::Relaxed) && !self.ended.swap(true, Ordering::Relaxed) {
             on_end("limit".into());
         }
     }
 
     fn take_16k(&self) -> Vec<f32> {
+        self.send_audio(&[], *self.rate.lock() as usize, true);
         let samples = std::mem::take(&mut *self.samples.lock());
         audio::resample(&samples, *self.rate.lock(), audio::RATE)
     }
@@ -76,8 +100,8 @@ pub struct CpalMic {
 }
 
 impl CpalMic {
-    fn new(on_level: LevelFn, on_end: EndFn) -> Self {
-        Self { on_level, on_end, shared: Shared::new(), stop_tx: None, thread: None }
+    fn new(on_level: LevelFn, on_end: EndFn, on_audio: Option<AudioFn>) -> Self {
+        Self { on_level, on_end, shared: Shared::new(on_audio), stop_tx: None, thread: None }
     }
 }
 
@@ -174,8 +198,8 @@ pub struct FakeMic {
 }
 
 impl FakeMic {
-    fn new(path: std::path::PathBuf, on_level: LevelFn, on_end: EndFn) -> Self {
-        Self { path, on_level, on_end, shared: Shared::new(), thread: None }
+    fn new(path: std::path::PathBuf, on_level: LevelFn, on_end: EndFn, on_audio: Option<AudioFn>) -> Self {
+        Self { path, on_level, on_end, shared: Shared::new(on_audio), thread: None }
     }
 }
 

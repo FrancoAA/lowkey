@@ -16,6 +16,7 @@ use crate::engine::{Input, ModelState};
 use crate::jobs::Jobs;
 use crate::mic::{EndFn, LevelFn, Recorder};
 use crate::output::joining_space;
+use crate::preview::{AudioFn, Stream, TextFn};
 
 pub const HOLD_S: f64 = 0.35;
 pub const MIN_RECORDING_S: f64 = 0.4;
@@ -24,7 +25,11 @@ pub const ERROR_SHOWN_S: f64 = 5.0;
 
 /// Side effects, so tests can run without a mic, a compositor or a clipboard.
 pub trait Io: Send + Sync {
-    fn recorder(&self, on_level: LevelFn, on_end: EndFn) -> Box<dyn Recorder>;
+    fn recorder(&self, on_level: LevelFn, on_end: EndFn, on_audio: Option<AudioFn>) -> Box<dyn Recorder>;
+    /// Live preview for one recording (None: off, not ready, or the language is not covered).
+    fn preview(&self, on_text: TextFn) -> Option<Stream>;
+    /// The language from Options (None = detect).
+    fn language(&self) -> Option<String>;
     fn deliver(&self, text: &str, prefix: &str) -> Vec<&'static str>;
     fn focused_window(&self) -> Option<String>;
     fn notify(&self, message: &str);
@@ -43,6 +48,8 @@ pub struct Snapshot {
     pub detail: String,
     pub delivered: Vec<String>,
     pub elapsed: f64,
+    /// Live preview text while listening and transcribing (not what gets typed).
+    pub preview: String,
 }
 
 struct Inner {
@@ -55,6 +62,9 @@ struct Inner {
     pressed_at: f64,
     started_at: f64,
     recorder: Option<Box<dyn Recorder>>,
+    preview: String,
+    /// Dropping it discards the preview stream; `finish` asks for its tail.
+    stream: Option<Stream>,
     last_typed_at: Option<f64>,
     last_typed_window: Option<String>,
 }
@@ -85,6 +95,8 @@ impl Dictation {
                 pressed_at: 0.0,
                 started_at: 0.0,
                 recorder: None,
+                preview: String::new(),
+                stream: None,
                 last_typed_at: None,
                 last_typed_window: None,
             }),
@@ -117,6 +129,7 @@ impl Dictation {
             detail: i.detail.clone(),
             delivered: i.delivered.clone(),
             elapsed: if i.state == "listening" { ((now - i.started_at) * 10.0).round() / 10.0 } else { 0.0 },
+            preview: if matches!(i.state.as_str(), "listening" | "transcribing") { i.preview.clone() } else { String::new() },
         }
     }
 
@@ -182,6 +195,7 @@ impl Dictation {
         if let Some(mut r) = i.recorder.take() {
             r.stop();
         }
+        i.stream = None;
         if matches!(i.state.as_str(), "starting" | "listening" | "transcribing") {
             i.epoch += 1; // a running transcript is dropped, not typed
             i.detail.clear();
@@ -260,8 +274,21 @@ impl Dictation {
         i.error = None;
         i.detail.clear();
         i.delivered.clear();
+        i.preview.clear();
+        i.stream = None;
         self.set_level(0.0);
         self.set(i, "listening");
+        let me_t = self.me.clone();
+        let on_text: TextFn = Arc::new(move |text| {
+            if let Some(me) = me_t.upgrade() {
+                let mut i = me.inner.lock();
+                if i.epoch == epoch && matches!(i.state.as_str(), "listening" | "transcribing") && i.preview != text {
+                    i.preview = text;
+                    me.publish(&i);
+                }
+            }
+        });
+        let stream = self.io.preview(on_text);
         let me_l = self.me.clone();
         let on_level: LevelFn = Arc::new(move |lv| {
             if let Some(me) = me_l.upgrade() {
@@ -293,28 +320,35 @@ impl Dictation {
                 });
             }
         });
-        let mut rec = self.io.recorder(on_level, on_end);
+        let mut rec = self.io.recorder(on_level, on_end, stream.as_ref().map(|s| s.audio.clone()));
         if let Err(e) = rec.start() {
             self.fail(i, &format!("Could not open the microphone: {e}"), "");
             return;
         }
         i.recorder = Some(rec);
+        i.stream = stream;
         self.io.overlay(true);
     }
 
     fn stop(&self, i: &mut Inner) {
         let pcm = i.recorder.take().map(|mut r| r.stop()).unwrap_or_default();
         let recorded_at = self.io.clock();
+        let stream = i.stream.take();
         if (pcm.len() as f64) < MIN_RECORDING_S * crate::audio::RATE as f64 {
+            drop(stream);
             self.fail(i, "Too short. Hold the key while you talk, or tap it once to start and again to stop.", "");
             return;
         }
         self.set_level(0.0);
         i.detail.clear();
         self.set(i, "transcribing");
+        if let Some(s) = stream {
+            s.finish(); // the preview's last words arrive while the main model works
+        }
         let epoch = i.epoch;
         let model = self.io.model();
-        let job = self.jobs.submit("dictation", Input { path: None, pcm: Some(pcm), language: None }, &model, 0);
+        let language = self.io.language();
+        let job = self.jobs.submit("dictation", Input { path: None, pcm: Some(pcm), language }, &model, 0);
         let me = self.arc();
         std::thread::spawn(move || me.finish(epoch, job, recorded_at));
     }
@@ -406,6 +440,7 @@ impl Dictation {
     }
 
     fn fail(&self, i: &mut Inner, message: &str, text: &str) {
+        i.stream = None;
         i.error = Some(message.to_string());
         self.set_level(0.0);
         i.text = text.to_string();
@@ -467,6 +502,11 @@ mod tests {
         rec_log: Arc<Mutex<Vec<String>>>,
         ends: Mutex<Vec<EndFn>>,
         emits: AtomicU64,
+        language: Mutex<Option<String>>,
+        /// Live preview: on, the text callback of the last stream, and what the stream got.
+        preview_on: Mutex<bool>,
+        preview_text: Mutex<Option<TextFn>>,
+        preview_log: Arc<Mutex<Vec<String>>>,
     }
 
     impl FakeIo {
@@ -482,6 +522,10 @@ mod tests {
                 rec_log: Arc::default(),
                 ends: Mutex::default(),
                 emits: AtomicU64::new(0),
+                language: Mutex::new(None),
+                preview_on: Mutex::new(false),
+                preview_text: Mutex::new(None),
+                preview_log: Arc::default(),
             })
         }
         fn advance(&self, s: f64) {
@@ -490,9 +534,26 @@ mod tests {
     }
 
     impl Io for FakeIo {
-        fn recorder(&self, on_level: LevelFn, on_end: EndFn) -> Box<dyn Recorder> {
+        fn recorder(&self, on_level: LevelFn, on_end: EndFn, on_audio: Option<AudioFn>) -> Box<dyn Recorder> {
             self.ends.lock().push(on_end.clone());
+            if let Some(a) = on_audio {
+                a(&[0.0; 8_000], 16_000);
+            }
             Box::new(FakeRec { secs: *self.secs.lock(), on_end, on_level, log: self.rec_log.clone() })
+        }
+        fn preview(&self, on_text: TextFn) -> Option<Stream> {
+            if !*self.preview_on.lock() {
+                return None;
+            }
+            *self.preview_text.lock() = Some(on_text);
+            let (l1, l2) = (self.preview_log.clone(), self.preview_log.clone());
+            Some(Stream::new(
+                Arc::new(move |pcm, _| l1.lock().push(format!("audio {}", pcm.len()))),
+                Box::new(move |flush| l2.lock().push(if flush { "finish".into() } else { "discard".into() })),
+            ))
+        }
+        fn language(&self) -> Option<String> {
+            self.language.lock().clone()
         }
         fn deliver(&self, text: &str, prefix: &str) -> Vec<&'static str> {
             self.delivered.lock().push(format!("{prefix}{text}"));
@@ -534,6 +595,78 @@ mod tests {
             std::thread::sleep(Duration::from_millis(5));
         }
         panic!("state stayed {}", d.snapshot().state);
+    }
+
+    fn say(io: &FakeIo, text: &str) {
+        let f = io.preview_text.lock().clone().expect("a preview stream");
+        f(text.to_string());
+    }
+
+    #[test]
+    fn live_preview_shows_while_listening_and_transcribing_but_never_is_typed() {
+        let (d, io, engine) = setup(false);
+        *io.preview_on.lock() = true;
+        d.toggle();
+        say(&io, "hello from");
+        assert_eq!(d.snapshot().preview, "hello from");
+        d.toggle();
+        assert_eq!(d.snapshot().state, "transcribing");
+        say(&io, "hello from open whisper");
+        assert_eq!(d.snapshot().preview, "hello from open whisper");
+        assert_eq!(*io.preview_log.lock(), vec!["audio 8000", "finish"]);
+        engine.open();
+        wait_state(&d, &["done"]);
+        assert_eq!(d.snapshot().preview, "");
+        assert_eq!(*io.delivered.lock(), vec!["Hello there. General test."]);
+        say(&io, "late words"); // after done: ignored
+        assert_eq!(d.snapshot().preview, "");
+    }
+
+    #[test]
+    fn cancel_discards_the_preview_and_a_new_recording_starts_empty() {
+        let (d, io, _) = setup(true);
+        *io.preview_on.lock() = true;
+        d.toggle();
+        let old = io.preview_text.lock().clone().unwrap();
+        old("first try".into());
+        d.cancel();
+        assert_eq!(*io.preview_log.lock(), vec!["audio 8000", "discard"]);
+        d.toggle();
+        assert_eq!(d.snapshot().preview, "");
+        old("stale".into()); // the old stream's late text does not reach the new recording
+        assert_eq!(d.snapshot().preview, "");
+        d.cancel();
+    }
+
+    #[test]
+    fn too_short_discards_the_preview() {
+        let (d, io, _) = setup(true);
+        *io.preview_on.lock() = true;
+        *io.secs.lock() = 0.1;
+        d.toggle();
+        d.toggle();
+        assert_eq!(d.snapshot().state, "error");
+        assert_eq!(io.preview_log.lock().last().unwrap(), "discard");
+    }
+
+    #[test]
+    fn dictation_without_preview_works_as_before() {
+        let (d, io, _) = setup(true);
+        d.toggle();
+        d.toggle();
+        wait_state(&d, &["done"]);
+        assert!(io.preview_log.lock().is_empty());
+        assert_eq!(io.delivered.lock().len(), 1);
+    }
+
+    #[test]
+    fn the_key_uses_the_language_from_options() {
+        let (d, io, engine) = setup(true);
+        *io.language.lock() = Some("es".into());
+        d.toggle();
+        d.toggle();
+        wait_state(&d, &["done"]);
+        assert_eq!(*engine.languages.lock(), vec![Some("es".to_string())]);
     }
 
     #[test]
