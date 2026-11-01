@@ -6,8 +6,9 @@ Flow: the key bind runs `scripts/ow-dictate press|release`, which POSTs to this 
 Hold the key = push-to-talk; tap it = start, tap again = stop. The server records the mic
 itself (PipeWire `pw-record`), so recording starts at the key press and the overlay is only
 a display. Nothing here edits Hyprland config files: the bind and the overlay window rule
-are added to the running Hyprland with `hyprctl eval`, added again after a config reload,
-and removed on exit.
+are added to the running Hyprland with `hyprctl eval` and added again after a config reload.
+The bind stays when the app stops, so the key can start the app again (ow-dictate does that,
+and the dictation begins when the app is ready); a Hyprland reload or a new login drops it.
 """
 
 from __future__ import annotations
@@ -42,8 +43,8 @@ OVERLAY_PATH = "/open-whisper-overlay"
 # Chromium on Wayland ignores --class; an --app window's app_id is built from its URL.
 OVERLAY_CLASS_RE = "^chrome-.*open-whisper-overlay.*$"
 CLI = Path(__file__).resolve().parent.parent / "scripts" / "ow-dictate"
-# Runtime binds say "while running"; the permanent snippet says just "Dictate (open-whisper)".
-RUNTIME_DESC = "Dictate (open-whisper, while running)"
+# Binds added by the app say so; the permanent snippet says just "Dictate (open-whisper)".
+RUNTIME_DESC = "Dictate (open-whisper, added by the app)"
 CONFIG_DESC = "Dictate (open-whisper)"
 
 
@@ -255,7 +256,7 @@ class HyprlandHotkey:
             return f"not added: {self.key} is already bound ({owners[0] or 'no description'}). Use --hotkey."
         hyprctl("eval", bind_lua(self.key, self.cli, RUNTIME_DESC), check=True)
         self.added = True
-        return f"{self.key} — hold to talk, tap to start/stop (active while open-whisper runs)"
+        return f"{self.key} — hold to talk, tap to start/stop (also starts open-whisper when it is closed)"
 
     def watch_reloads(self) -> None:
         """Re-install after `hyprctl reload` or a config change, using the event socket."""
@@ -290,14 +291,31 @@ class HyprlandHotkey:
 
         threading.Thread(target=loop, name="hypr-events", daemon=True).start()
 
-    def uninstall(self) -> None:
+    def uninstall(self, keep_bind: bool = True) -> None:
+        """On exit the bind stays (it starts the app again); the overlay rule goes."""
         self._watch_stop.set()
-        if self.added:
+        if self.added and not keep_bind:
             hyprctl("eval", f"hl.unbind({lua_str(self.key)})")
             self.added = False
         if self.rule:
             hyprctl("eval", "if _G.open_whisper_rule then _G.open_whisper_rule:set_enabled(false); _G.open_whisper_rule = nil end")
             self.rule = False
+
+
+def remove_app_binds() -> list[str]:
+    """Remove binds that the app added (any key), e.g. for --no-hotkey. Config binds stay."""
+    try:
+        binds = json.loads(hyprctl("binds", "-j") or "[]")
+    except (json.JSONDecodeError, subprocess.SubprocessError, OSError):
+        return []
+    masks = {1: "SHIFT", 4: "CTRL", 8: "ALT", 64: "SUPER"}
+    removed = []
+    for b in binds:
+        if b.get("description") == RUNTIME_DESC:
+            key = " + ".join([v for m, v in masks.items() if b["modmask"] & m] + [b["key"]])
+            hyprctl("eval", f"hl.unbind({lua_str(key)})")
+            removed.append(key)
+    return removed
 
 
 class Overlay:
@@ -418,7 +436,10 @@ def notify(message: str) -> None:
 
 # --------------------------------------------------------------------------- state machine
 class GlobalDictation:
-    """idle -> listening -> transcribing -> done/error -> (overlay hides) ...
+    """(starting ->) idle -> listening -> transcribing -> done/error -> (overlay hides) ...
+
+    "starting" is used when the key started the app: the overlay shows start-up and model
+    download progress, and listening begins as soon as the model is ready.
 
     All state changes happen under one lock. `epoch` counts recordings, so late events from
     an old recording (its transcript, its hide timer) cannot touch a newer one.
@@ -448,6 +469,11 @@ class GlobalDictation:
     # -- public events (from the key bind) --
     def press(self) -> dict[str, Any]:
         with self._lock:
+            if self.state == "starting":
+                self._set("idle", detail="")  # tapped again before it was ready: never mind
+                self.epoch += 1
+                self._schedule_hide(0)
+                return self.snapshot()
             self.pressed_at = self.clock()
             if self.state == "listening":
                 self._stop()  # second tap in toggle mode
@@ -473,12 +499,46 @@ class GlobalDictation:
                 self._start()
             return self.snapshot()
 
+    def start_when_ready(self, model_state: Callable[[], dict[str, Any]], poll_s: float = 0.2) -> None:
+        """The key started the app: show the overlay now, start listening when the model is
+        ready. The key press happened about now, so a later release still counts as a hold."""
+        with self._lock:
+            self.epoch += 1
+            epoch = self.epoch
+            self.pressed_at = self.clock()
+            self._set("starting", detail="Starting open-whisper…", text="", error=None, delivered=[])
+        if self.overlay:
+            threading.Thread(target=self.overlay.show, daemon=True).start()
+
+        def wait() -> None:
+            last = None
+            while True:
+                ms = model_state()
+                with self._lock:
+                    if epoch != self.epoch or self.state != "starting":
+                        return  # cancelled by a second tap or Esc
+                    if ms["state"] == "ready":
+                        self._start(keep_press=True)
+                        return
+                    if ms["state"] == "error":
+                        self._fail(ms.get("error") or "The model could not be loaded.")
+                        return
+                    detail = (f"Downloading the model (first run)… {int(ms['progress'] * 100)}%"
+                              if ms["state"] == "downloading" else "Loading the model…")
+                    if detail != last:
+                        last = detail
+                        self.detail = detail
+                        self.version += 1
+                time.sleep(poll_s)
+
+        threading.Thread(target=wait, name="dictate-on-start", daemon=True).start()
+
     def cancel(self) -> dict[str, Any]:
         with self._lock:
             if self.state == "listening" and self.recorder:
                 self.recorder.stop()
                 self.recorder = None
-            if self.state in ("listening", "transcribing"):
+            if self.state in ("starting", "listening", "transcribing"):
                 self.epoch += 1  # a running transcript is dropped, not typed
                 self._set("idle", detail="")
                 self._schedule_hide(0)
@@ -510,9 +570,11 @@ class GlobalDictation:
                 self.recorder = None
                 self._fail(f"The microphone stopped: {reason.removeprefix('failed: ')}")
 
-    def _start(self) -> None:
+    def _start(self, keep_press: bool = False) -> None:
         if self._hide_timer:
             self._hide_timer.cancel()
+        if not keep_press:
+            self.pressed_at = self.clock()
         self.epoch += 1
         epoch = self.epoch
         self.started_at = self.clock()
@@ -598,7 +660,7 @@ class GlobalDictation:
 
         def hide() -> None:
             with self._lock:
-                if epoch != self.epoch or self.state in ("listening", "transcribing"):
+                if epoch != self.epoch or self.state in ("starting", "listening", "transcribing"):
                     return  # a newer dictation owns the overlay now
                 self.overlay.hide()
 
@@ -611,5 +673,9 @@ if __name__ == "__main__":
     import sys
 
     # `python -m openwhisper.hotkey` prints the snippet for ~/.config/hypr/bindings.lua;
-    # `--conf` prints the binds for a classic hyprland.conf.
-    print(conf_snippet() if "--conf" in sys.argv else permanent_snippet())
+    # `--conf` prints the binds for a classic hyprland.conf; `--remove` removes the key that
+    # the app added to the running Hyprland.
+    if "--remove" in sys.argv:
+        print("removed: " + (", ".join(remove_app_binds()) or "nothing"))
+    else:
+        print(conf_snippet() if "--conf" in sys.argv else permanent_snippet())

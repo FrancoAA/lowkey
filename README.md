@@ -60,9 +60,15 @@ On Hyprland, open-whisper also adds a **global key: <kbd>Super</kbd>+<kbd>Ctrl</
 ![Text typed into the focused app](docs/screenshots/07-hotkey-text-pasted.png)
 
 **Setup: none** on Hyprland 0.56+ with a Lua config (as Omarchy has). `./run` adds the key
-and the overlay window rule to the running Hyprland with `hyprctl eval`, adds them again if
-Hyprland reloads its config, and removes them when open-whisper stops. No config file is
-changed.
+and the overlay window rule to the running Hyprland with `hyprctl eval`, and adds them again if
+Hyprland reloads its config while open-whisper runs. No config file is changed.
+
+**The key also works when open-whisper is closed.** The key stays after open-whisper stops.
+Press it, and open-whisper starts in the background (no browser tab); the overlay shows
+"Getting ready…" with the start-up or first-run download progress, and the dictation begins
+as soon as the model is ready. Keep holding the key for push-to-talk, or let go and tap it
+again to finish. This lasts until you log out or Hyprland reloads its config without
+open-whisper running; after that, start `./run` once (or keep the key in your config, below).
 The terminal shows the result, for example:
 
 ```
@@ -72,7 +78,8 @@ The terminal shows the result, for example:
 - While a dictation is still being transcribed, a new press shows "Still transcribing" in the
   overlay. Dictation goes ahead of file uploads in the queue.
 - If the key is already in use, open-whisper does not take it and tells you. Choose another
-  key: `./run --hotkey "SUPER + ALT + D"`. Turn the key off with `./run --no-hotkey`.
+  key: `./run --hotkey "SUPER + ALT + D"`. Turn the key off with `./run --no-hotkey`, or remove
+  it at once with `uv run python -m openwhisper.hotkey --remove`.
 - It needs PipeWire (`pw-record`), `wl-copy`, `wtype` and Chromium (or Chrome/Brave) for the
   overlay. Omarchy has all of them.
 - The overlay is a separate browser profile in `~/.local/state/open-whisper/overlay-browser`
@@ -162,8 +169,9 @@ make test-all  # + a real-model test on a 3-second TTS clip
 make e2e       # headless Chromium with a fake microphone: file, error and dictation flows,
                # writes docs/screenshots/. Uses the system chromium; without one, run
                # `uv run playwright install chromium` once
-make e2e-hotkey  # global key in a nested Hyprland (your session is not touched):
-                 # overlay, typing, clipboard, hold and tap; writes docs/screenshots/06-07
+make e2e-hotkey  # global key in a nested Hyprland (your session is not touched): overlay,
+                 # typing, clipboard, hold and tap, key starts the closed app; screenshots 06-08.
+                 # `uv run python scripts/e2e_hotkey.py --first-run` also shows the download
 make bench     # model benchmark on this machine -> bench/.work/results.md
 ```
 

@@ -3,7 +3,7 @@ import { Waveform } from "./waveform";
 
 /** Global-hotkey overlay: shows what the server-side dictation is doing. Display only. */
 interface DictationState {
-  state: "idle" | "listening" | "transcribing" | "done" | "error";
+  state: "idle" | "starting" | "listening" | "transcribing" | "done" | "error";
   level: number;
   text: string;
   error: string | null;
@@ -47,6 +47,11 @@ function render(d: DictationState): void {
     case "listening":
       label.textContent = "Listening";
       detail.textContent = "release or tap the key to finish";
+      break;
+    case "starting":
+      // The key started the app: show start-up / first-run download until it can listen.
+      label.textContent = "Getting ready…";
+      detail.textContent = d.detail;
       break;
     case "transcribing":
       label.textContent = "Transcribing…";

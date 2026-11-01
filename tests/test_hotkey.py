@@ -259,3 +259,68 @@ def test_dictation_jobs_go_ahead_of_uploads():
 def test_conf_snippet_for_classic_config():
     text = hk.conf_snippet("SUPER + CTRL + X", hk.CLI)
     assert "bind = SUPER CTRL, X, exec," in text and "bindr = SUPER CTRL, X, exec," in text
+
+
+class ModelStates:
+    """Fake engine.model_state(): downloading -> loading -> ready, one step per call."""
+
+    def __init__(self, *states: dict) -> None:
+        self.states = list(states)
+
+    def __call__(self) -> dict:
+        return self.states.pop(0) if len(self.states) > 1 else self.states[0]
+
+
+DL = {"state": "downloading", "progress": 0.42}
+LOADING = {"state": "loading", "progress": 1.0}
+READY = {"state": "ready", "progress": 1.0}
+
+
+def test_key_started_the_app_listening_begins_when_ready():
+    clock = Clock()
+    d, delivered, recs = make(clock=clock)
+    seen = []
+    d.start_when_ready(ModelStates(DL, DL, LOADING, READY), poll_s=0.01)
+    assert d.state == "starting"
+    end = time.time() + 2
+    while d.state == "starting" and time.time() < end:
+        seen.append(d.detail)
+        time.sleep(0.002)
+    assert any("42%" in s for s in seen) and any("Loading" in s for s in seen)
+    assert d.state == "listening" and recs and recs[0].started
+    clock.t += 3.0  # the key was held through start-up: the release is push-to-talk
+    assert d.release()["state"] == "transcribing"
+    wait_state(d, "done")
+    assert len(delivered) == 1
+
+
+def test_release_during_start_up_leaves_tap_mode():
+    clock = Clock()
+    d, delivered, _ = make(clock=clock)
+    d.start_when_ready(ModelStates(LOADING, LOADING, READY), poll_s=0.01)
+    clock.t += 0.1
+    assert d.release()["state"] == "starting"  # ignored: nothing to stop yet
+    wait_state(d, "listening")
+    clock.t += 2.0
+    assert d.press()["state"] == "transcribing"  # the next tap stops it
+    wait_state(d, "done")
+
+
+def test_second_tap_during_start_up_cancels():
+    d, delivered, recs = make()
+    d.start_when_ready(ModelStates(LOADING), poll_s=0.01)
+    assert d.press()["state"] == "idle"
+    time.sleep(0.1)
+    assert d.state == "idle" and recs == []  # the waiter saw the cancel and never opened the mic
+
+
+def test_model_error_during_start_up_is_reported():
+    d, _, _ = make()
+    d.start_when_ready(ModelStates({"state": "error", "progress": 0, "error": "No internet connection"}), poll_s=0.01)
+    wait_state(d, "error")
+    assert "No internet" in d.error and d.notes
+
+
+def test_app_binds_are_marked():
+    lua = hk.bind_lua("SUPER + CTRL + X", hk.CLI, hk.RUNTIME_DESC)
+    assert "added by the app" in lua

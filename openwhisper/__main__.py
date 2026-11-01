@@ -67,7 +67,8 @@ def report_model(engine, name: str) -> None:
 
 def setup_global_dictation(app, url: str, args) -> object | None:
     """Publish our URL for scripts/ow-dictate and, on Hyprland, add the key bind + overlay rule
-    to the running session (no config file is edited; they go away with the app)."""
+    to the running session (no config file is edited). The overlay browser starts later, in
+    after_start(), when the server can answer it."""
     import json
     import os
 
@@ -79,10 +80,15 @@ def setup_global_dictation(app, url: str, args) -> object | None:
         (rd / "server.json").write_text(json.dumps({"url": url, "pid": os.getpid()}))
     except OSError as exc:  # the web app must start anyway
         print(f"  Global dictation: cannot write {hk.runtime_dir()} ({exc}); the key will not reach this app.")
+    try:  # ow-dictate's "starting" lock: we are up now
+        (hk.runtime_dir() / "starting").rmdir()
+    except OSError:
+        pass
     app.state.dictation.overlay = hk.Overlay(url)
 
     if args.no_hotkey:
-        print("  Global dictation key: off (--no-hotkey). scripts/ow-dictate still works.")
+        removed = hk.remove_app_binds() if hk.hyprland_running() else []
+        print("  Global dictation key: off (--no-hotkey)" + (f"; removed {', '.join(removed)}." if removed else "."))
         return None
     if not hk.hyprland_running():
         print("  Global dictation key: not on Hyprland; bind scripts/ow-dictate in your desktop (see README).")
@@ -95,13 +101,23 @@ def setup_global_dictation(app, url: str, args) -> object | None:
         print(f"  Global dictation key: could not add it ({exc}). See README for the config snippet.")
         return None
     binding.watch_reloads()
-    overlay = app.state.dictation.overlay
-    overlay.enabled = binding.rule  # without our window rule the overlay could take focus
-    if overlay.available():
-        overlay.start()  # starts hidden, so the first press shows it at once
+    app.state.dictation.overlay.enabled = binding.rule  # without our window rule the overlay could take focus
     if missing:
         print(f"  Note: install {', '.join(missing)} for the global key to record/copy/type.")
     return binding
+
+
+def after_start(app, args) -> None:
+    """Runs once the server answers: start the overlay browser (hidden, so the first press
+    shows it at once) and, if the key started us, begin that dictation when the model is ready."""
+    from . import config
+
+    dictation = app.state.dictation
+    if dictation.overlay and dictation.overlay.available():
+        dictation.overlay.start()
+    if args.dictate_on_start:
+        engine = app.state.engine
+        dictation.start_when_ready(lambda: engine.model_state(config.DEFAULT_MODEL))
 
 
 def teardown_global_dictation(app, binding) -> None:
@@ -115,7 +131,7 @@ def teardown_global_dictation(app, binding) -> None:
     app.state.torn_down = True
     try:
         if binding:
-            binding.uninstall()
+            binding.uninstall(keep_bind=True)  # the key can start the app again
         overlay = app.state.dictation.overlay
         if overlay:
             overlay.close()
@@ -131,7 +147,8 @@ def main() -> None:
     ap.add_argument("--port", type=int, default=None, help=f"default: first free port from {config.PORT}")
     ap.add_argument("--no-browser", action="store_true", help="do not open a browser tab")
     ap.add_argument("--hotkey", default=None, help='global dictation key on Hyprland (default: "SUPER + CTRL + X")')
-    ap.add_argument("--no-hotkey", action="store_true", help="do not add the global dictation key")
+    ap.add_argument("--no-hotkey", action="store_true", help="do not add the global dictation key (removes one the app added)")
+    ap.add_argument("--dictate-on-start", action="store_true", help=argparse.SUPPRESS)  # used by scripts/ow-dictate
     args = ap.parse_args()
 
     quiet_logs()
@@ -156,14 +173,16 @@ def main() -> None:
         uvicorn.Config(app, host=config.HOST, port=port, log_level="warning", timeout_graceful_shutdown=2)
     )
 
-    if not args.no_browser:
-
-        def open_when_ready() -> None:
-            while not server.started:
-                time.sleep(0.1)
+    def when_started() -> None:
+        while not server.started:
+            if server.should_exit:
+                return
+            time.sleep(0.05)
+        after_start(app, args)
+        if not args.no_browser:
             webbrowser.open(url)
 
-        threading.Thread(target=open_when_ready, daemon=True).start()
+    threading.Thread(target=when_started, daemon=True).start()
     try:
         server.run()
     finally:

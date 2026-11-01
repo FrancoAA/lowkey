@@ -24,7 +24,8 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #18181b; col
 .overlay[data-state="listening"] .detail { display: none; }
 .timer { display: none; font-variant-numeric: tabular-nums; color: #a1a1aa; font-size: 0.8rem; }
 .overlay[data-state="listening"] .timer { display: block; }
-.overlay[data-state="transcribing"] .dot { animation: pulse 1s ease-in-out infinite; }
+.overlay[data-state="transcribing"] .dot,
+.overlay[data-state="starting"] .dot { animation: pulse 1s ease-in-out infinite; }
 @keyframes ring { 0% { box-shadow: 0 0 0 0 rgba(232, 121, 249, 0.5); } 100% { box-shadow: 0 0 0 10px transparent; } }
 @keyframes pulse { 50% { opacity: 0.4; } }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; } }

@@ -1,16 +1,39 @@
 #!/bin/sh
-# Global dictation control for open-whisper. Bind it to a key in your desktop:
+# Global dictation control for open-whisper. The key bind runs it:
 #   ow-dictate press    on key press      (hold = push-to-talk, tap = start/stop)
 #   ow-dictate release  on key release
 #   ow-dictate toggle   one key, no hold detection
 #   ow-dictate cancel   stop without transcribing
+# If open-whisper is not running, a press (or toggle) starts it in the background, without
+# the browser tab, and the dictation begins as soon as it is ready. The overlay shows the
+# start-up and first-run download progress.
 action=${1:-toggle}
-state="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/open-whisper/server.json"
-url=$(sed -n 's/.*"url": *"\([^"]*\)".*/\1/p' "$state" 2>/dev/null)
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+dir="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/open-whisper"
+url=$(sed -n 's/.*"url": *"\([^"]*\)".*/\1/p' "$dir/server.json" 2>/dev/null)
+
 if [ -n "$url" ] && curl -fsS -m 3 -X POST "$url/api/dictation/$action" >/dev/null 2>&1; then
   exit 0
 fi
-[ "$action" = release ] && exit 0  # the press already reported the problem
-command -v notify-send >/dev/null 2>&1 &&
-  notify-send -a open-whisper "open-whisper is not running" "Start it with ./run in the open-whisper folder."
-exit 1
+
+case "$action" in
+  press | toggle) ;;
+  *) exit 0 ;; # release/cancel with no app running: nothing to do
+esac
+
+mkdir -p "$dir" && chmod 700 "$dir"
+# One start at a time: a second press while it starts is ignored (the lock is removed by the
+# app when it is up, or considered stale after 2 minutes).
+lock="$dir/starting"
+if ! mkdir "$lock" 2>/dev/null; then
+  [ -n "$(find "$lock" -maxdepth 0 -mmin -2 2>/dev/null)" ] && exit 0
+  rmdir "$lock" 2>/dev/null
+  mkdir "$lock" 2>/dev/null || exit 0
+fi
+
+if [ -x "$root/.venv/bin/python" ] && [ -f "$root/frontend/dist/overlay.html" ]; then
+  set -- "$root/.venv/bin/python" -m openwhisper   # fast path: already installed and built
+else
+  set -- "$root/run"                                # first time: install + build, then start
+fi
+cd "$root" && setsid -f "$@" --no-browser --dictate-on-start >"$dir/app.log" 2>&1 </dev/null

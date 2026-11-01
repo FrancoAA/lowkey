@@ -18,7 +18,7 @@ test-all: test  ## + real-model test (downloads the default model once)
 e2e:            ## headless-browser UI check with fake microphone; writes docs/screenshots/
 	uv run python scripts/e2e_ui.py
 
-e2e-hotkey:     ## global dictation key in a nested Hyprland; writes docs/screenshots/06-07
+e2e-hotkey:     ## global dictation key in a nested Hyprland; writes docs/screenshots/06-08
 	uv run python scripts/e2e_hotkey.py
 
 bench:          ## benchmark candidate models on this machine (see docs/benchmark.md)
