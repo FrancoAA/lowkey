@@ -126,7 +126,8 @@ function details(m: ModelInfo): string {
   const gb = (mb: number) => `${(mb / 1024).toFixed(1)} GB`;
   const one = (x: number | null | undefined) => Number((x ?? 0).toFixed(1)); // f32 from Rust: 8.8999996 → 8.9
   const speed = status?.gpu && m.speed_gpu ? `${one(m.speed_gpu)}× real time on GPU` : `${one(m.speed_cpu)}× real time on CPU`;
-  return `${gb(m.approx_mb)} download · ~${gb(m.ram_mb)} memory · ${speed} · WER ${one(m.wer)}% (measured on the test machine)`;
+  const engine = m.engine === "parakeet" ? "Parakeet (NVIDIA), CPU · " : "whisper.cpp · ";
+  return `${engine}${gb(m.approx_mb)} download · ~${gb(m.ram_mb)} memory · ${speed} · WER ${one(m.wer)}% (measured on the test machine)`;
 }
 
 /** The live preview's note: what it is, and whether it can run here. */

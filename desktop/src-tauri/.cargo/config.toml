@@ -3,3 +3,5 @@
 [env]
 VULKAN_SDK = { value = "../.deps/vulkan-sdk", relative = true }
 CMAKE_PREFIX_PATH = { value = "../.deps/vulkan-sdk", relative = true }
+# Parakeet engine: desktop/scripts/sherpa-onnx.sh puts the checked sherpa-onnx archive here.
+SHERPA_ONNX_ARCHIVE_DIR = { value = "../.deps/sherpa-onnx", relative = true }

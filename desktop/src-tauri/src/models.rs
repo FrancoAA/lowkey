@@ -11,15 +11,25 @@ use serde::Serialize;
 
 use crate::config::data_dir;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum EngineKind {
+    /// whisper.cpp (GPU through Vulkan/Metal, else CPU).
+    WhisperCpp,
+    /// NVIDIA Parakeet TDT through sherpa-onnx (onnxruntime, CPU).
+    Parakeet,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct ModelSpec {
     pub id: &'static str,
+    pub engine: EngineKind,
     pub label: &'static str,
-    /// The file in ggerganov/whisper.cpp on Hugging Face.
+    /// whisper.cpp: the file in ggerganov/whisper.cpp. Parakeet: the folder in the models dir.
     pub source: &'static str,
     pub download_mb: u32,
     pub ram_mb: u32,
-    /// × real time on the test machine's GPU.
+    /// × real time on the test machine's GPU (None: CPU only).
     pub speed_gpu: Option<f32>,
     /// × real time on the test machine's CPU.
     pub speed_cpu: f32,
@@ -28,11 +38,69 @@ pub struct ModelSpec {
 }
 
 pub const CATALOG: &[ModelSpec] = &[
-    ModelSpec { id: "large-v3-turbo-q5_0", label: "Large v3 Turbo (q5)", source: "ggml-large-v3-turbo-q5_0.bin", download_mb: 547, ram_mb: 900, speed_gpu: Some(10.9), speed_cpu: 1.4, wer: 3.2 },
-    ModelSpec { id: "large-v3-turbo", label: "Large v3 Turbo", source: "ggml-large-v3-turbo.bin", download_mb: 1549, ram_mb: 1800, speed_gpu: Some(8.9), speed_cpu: 1.3, wer: 3.9 },
-    ModelSpec { id: "medium", label: "Medium", source: "ggml-medium.bin", download_mb: 1463, ram_mb: 2100, speed_gpu: Some(6.6), speed_cpu: 1.7, wer: 3.2 },
-    ModelSpec { id: "small", label: "Small · fastest", source: "ggml-small.bin", download_mb: 466, ram_mb: 760, speed_gpu: Some(17.6), speed_cpu: 5.6, wer: 12.7 },
+    ModelSpec { engine: EngineKind::WhisperCpp, id: "large-v3-turbo-q5_0", label: "Large v3 Turbo (q5)", source: "ggml-large-v3-turbo-q5_0.bin", download_mb: 547, ram_mb: 900, speed_gpu: Some(10.9), speed_cpu: 1.4, wer: 3.2 },
+    ModelSpec { engine: EngineKind::WhisperCpp, id: "large-v3-turbo", label: "Large v3 Turbo", source: "ggml-large-v3-turbo.bin", download_mb: 1549, ram_mb: 1800, speed_gpu: Some(8.9), speed_cpu: 1.3, wer: 3.9 },
+    ModelSpec { engine: EngineKind::WhisperCpp, id: "medium", label: "Medium", source: "ggml-medium.bin", download_mb: 1463, ram_mb: 2100, speed_gpu: Some(6.6), speed_cpu: 1.7, wer: 3.2 },
+    ModelSpec { engine: EngineKind::WhisperCpp, id: "small", label: "Small", source: "ggml-small.bin", download_mb: 466, ram_mb: 760, speed_gpu: Some(17.6), speed_cpu: 5.6, wer: 12.7 },
+    // CPU only. WER on the same 5 clips; one is extreme noise (0 dB + telephone band), where it
+    // gets 49%: on the other four it is 0-5.7% (docs/parakeet.md).
+    ModelSpec { engine: EngineKind::Parakeet, id: "parakeet-v3", label: "Parakeet v3 · fastest (25 languages)", source: PARAKEET_DIR, download_mb: 640, ram_mb: 1150, speed_gpu: None, speed_cpu: 35.9, wer: 14.3 },
 ];
+
+/// Parakeet TDT 0.6B v3 (int8, sherpa-onnx export), pinned revision; sizes and SHA-256 per file.
+pub const PARAKEET_DIR: &str = "parakeet-tdt-0.6b-v3-int8";
+const PARAKEET_URL: &str = "https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/resolve/2bda32ec70b097a55adaa07d9a7173915b43cc78/";
+pub const PARAKEET_FILES: &[(&str, u64, &str)] = &[
+    ("encoder.int8.onnx", 652_184_281, "acfc2b4456377e15d04f0243af540b7fe7c992f8d898d751cf134c3a55fd2247"),
+    ("decoder.int8.onnx", 11_845_275, "179e50c43d1a9de79c8a24149a2f9bac6eb5981823f2a2ed88d655b24248db4e"),
+    ("joiner.int8.onnx", 6_355_277, "3164c13fc2821009440d20fcb5fdc78bff28b4db2f8d0f0b329101719c0948b3"),
+    ("tokens.txt", 93_939, "d58544679ea4bc6ac563d1f545eb7d474bd6cfa467f0a6e2c1dc1c7d37e3c35d"),
+];
+
+/// Is the model on disk?
+pub fn present(spec: &ModelSpec) -> bool {
+    match spec.engine {
+        EngineKind::WhisperCpp => local_path(spec.source).exists(),
+        EngineKind::Parakeet => PARAKEET_FILES.iter().all(|(f, _, _)| models_dir().join(PARAKEET_DIR).join(f).exists()),
+    }
+}
+
+/// Download the Parakeet files that are missing, each checked with SHA-256 (a wrong file is
+/// deleted). `progress(done, total)` covers all files.
+pub fn download_parakeet(mut progress: impl FnMut(u64, u64)) -> anyhow::Result<()> {
+    let dir = models_dir().join(PARAKEET_DIR);
+    let total: u64 = PARAKEET_FILES.iter().map(|f| f.1).sum();
+    let mut before = 0;
+    for (file, size, sha) in PARAKEET_FILES {
+        let dest = dir.join(file);
+        if !dest.exists() {
+            download(&format!("{PARAKEET_URL}{file}"), &dest, |done, _| progress(before + done, total))?;
+            let got = sha256_file(&dest)?;
+            if got != *sha {
+                let _ = std::fs::remove_file(&dest);
+                anyhow::bail!("{file} has an unexpected checksum ({got})");
+            }
+        }
+        before += size;
+        progress(before, total);
+    }
+    Ok(())
+}
+
+pub fn sha256_file(path: &Path) -> anyhow::Result<String> {
+    use sha2::{Digest, Sha256};
+    let mut f = std::io::BufReader::with_capacity(1 << 20, std::fs::File::open(path)?);
+    let mut h = Sha256::new();
+    let mut buf = vec![0u8; 1 << 20];
+    loop {
+        let n = f.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        h.update(&buf[..n]);
+    }
+    Ok(h.finalize().iter().map(|b| format!("{b:02x}")).collect())
+}
 
 /// Silero VAD for whisper.cpp (drops silence, avoids "Thank you." on silent audio).
 pub const VAD_FILE: &str = "ggml-silero-v5.1.2.bin";
@@ -187,6 +255,8 @@ mod tests {
         assert_eq!(auto_model(&Hardware { gpu: Some("AMD Radeon 780M".into()) }), "large-v3-turbo-q5_0");
         assert_eq!(auto_model(&Hardware { gpu: None }), "small");
         assert!(CATALOG.iter().all(|m| !m.id.starts_with("fw:")), "no Python engine any more");
+        assert_eq!(spec("parakeet-v3").unwrap().engine, EngineKind::Parakeet);
+        assert_eq!(PARAKEET_FILES.iter().map(|f| f.1).sum::<u64>() / 1_000_000, 670);
     }
 
     #[test]

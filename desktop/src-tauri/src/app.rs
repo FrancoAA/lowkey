@@ -94,7 +94,7 @@ impl App {
             .map(|m| {
                 let st = self.engines.state(m.id);
                 json!({
-                    "name": m.id, "label": m.label, "approx_mb": m.download_mb,
+                    "name": m.id, "label": m.label, "engine": m.engine, "approx_mb": m.download_mb,
                     "ram_mb": m.ram_mb, "speed_gpu": m.speed_gpu, "speed_cpu": m.speed_cpu, "wer": m.wer,
                                         "state": st.state, "downloaded": st.downloaded, "total": st.total, "progress": st.progress, "error": st.error,
                 })
@@ -509,13 +509,17 @@ pub fn headless(cli: &Cli) -> bool {
             .filter(|m| models::spec(m).is_some())
             .or_else(|| models::spec(&cfg.model).map(|m| m.id.to_string()))
             .unwrap_or_else(|| models::auto_model(&engines.hw).to_string());
+        // Load first, so "seconds" is the transcription alone (what the app does with a loaded model).
+        let t_load = Instant::now();
+        let _ = engines.prepare(&model);
+        let load_seconds = t_load.elapsed().as_secs_f64();
         let t0 = Instant::now();
         let input = Input { path: Some(path.clone()), pcm: None, language: cli.language.clone() };
         let out = engines.transcribe(&model, input, Arc::new(|_| {}));
         match out {
             Ok(o) => println!(
                 "{}",
-                json!({"model": model, "device": engines.hw.gpu, "seconds": t0.elapsed().as_secs_f64(), "language": o.language,
+                json!({"model": model, "device": engines.hw.gpu, "load_seconds": load_seconds, "seconds": t0.elapsed().as_secs_f64(), "language": o.language,
                        "duration": o.duration, "text": crate::formats::to_txt(&o.segments).trim(), "segments": o.segments})
             ),
             Err(e) => {

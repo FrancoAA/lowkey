@@ -40,6 +40,7 @@ BENCH_MODELS = ROOT / "bench" / ".work" / "ggml"
 # Live preview engine + model. Filled after the first run that downloads them (17 MB);
 # later runs link them, so they work offline like the ggml models above.
 BENCH_WHISTLE = ROOT / "bench" / ".work" / "whistle"
+BENCH_PARAKEET = ROOT / "bench" / ".work" / "parakeet-tdt-0.6b-v3-int8"  # Parakeet files (670 MB), if cached
 RUNTIME_DESC = "Dictate (open-whisper, added by the app)"
 NESTED_CONFIG = """
 hl.monitor({ output = "", mode = "preferred", position = "auto", scale = 1 })
@@ -110,6 +111,8 @@ def main() -> None:
         for f in ("ggml-large-v3-turbo-q5_0.bin", "ggml-small.bin"):
             if (BENCH_MODELS / f).exists():
                 (models / f).symlink_to(BENCH_MODELS / f)
+        if BENCH_PARAKEET.is_dir():
+            (models / BENCH_PARAKEET.name).symlink_to(BENCH_PARAKEET)
         if BENCH_WHISTLE.is_dir():
             (models / "whistle").mkdir()
             for f in BENCH_WHISTLE.iterdir():
@@ -359,12 +362,28 @@ def main() -> None:
         press_key("Return")
         for _ in range(2):
             press_key("Tab")  # language, model
-        press_key("End")  # last model in the list: Small
-        wait(lambda: cfg_file.exists() and 'model = "small"' in cfg_file.read_text(), 15, "model saved to config.toml")
-        wait(lambda: any(s["default_model"] == "small" for s in events("status")[-5:]), 15, "status follows the choice")
+        press_key("End")  # last model in the list: Parakeet v3
+        wait(lambda: cfg_file.exists() and 'model = "parakeet-v3"' in cfg_file.read_text(), 15, "model saved to config.toml")
+        wait(lambda: any(s["default_model"] == "parakeet-v3" for s in events("status")[-5:]), 15, "status follows the choice")
         check(True, "Options: choosing a model saves it to config.toml and the app switches to it")
+        ready = lambda: any(m["name"] == "parakeet-v3" and m["state"] == "ready" for s in events("status")[-3:] for m in s["models"])
+        wait(ready, 600 if not BENCH_PARAKEET.is_dir() else 60, "Parakeet loaded")
         time.sleep(1.0)
         shot("16-desktop-options.png")
+        # A global-key dictation with Parakeet, into the terminal.
+        focus(target["address"])
+        n_pk = len(events("dictation"))
+        key("press")
+        wait(lambda: dict_state()["state"] == "listening", 10, "listening (Parakeet)")
+        time.sleep(3.5)
+        key("release")
+        t_rel = time.monotonic()
+        d_pk = wait(lambda: next((d for d in events("dictation")[n_pk:] if d["state"] in ("done", "error")), None), 60, "Parakeet result")
+        took = time.monotonic() - t_rel
+        check(d_pk["state"] == "done" and "short test" in d_pk["text"].lower(), f"Parakeet dictation typed: {d_pk['text']!r} ({took:.2f} s after release)")
+        wait(lambda: typed.read_text().rstrip().endswith(d_pk["text"]), 10, "Parakeet text typed")
+        focus(main_win["address"])
+        time.sleep(0.3)
         press_key("Home")  # back to the recommended model
         wait(lambda: 'model = "large-v3-turbo-q5_0"' in cfg_file.read_text(), 15, "model back")
         print("  ok  back to large-v3-turbo-q5_0")

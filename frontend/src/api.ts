@@ -3,6 +3,7 @@ export interface ModelInfo {
   name: string;
   label: string;
   approx_mb: number;
+  engine?: "whisper-cpp" | "parakeet";
   ram_mb?: number;
   speed_gpu?: number | null;
   speed_cpu?: number;

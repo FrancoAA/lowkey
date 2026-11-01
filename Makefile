@@ -7,20 +7,24 @@ DESKTOP_BIN = desktop/src-tauri/target/release/open-whisper
 desktop:        ## build the desktop app -> desktop/src-tauri/target/release/open-whisper
 	cd frontend && ([ -d node_modules ] || npm ci) && npm run build
 	./desktop/scripts/vulkan-sdk.sh
+	./desktop/scripts/sherpa-onnx.sh
 	cd desktop/src-tauri && $(CARGO) build --release --features custom-protocol
 
 desktop-dev:    ## desktop app with hot reload (Vite + tauri dev)
 	cd frontend && ([ -d node_modules ] || npm ci)
 	./desktop/scripts/vulkan-sdk.sh
+	./desktop/scripts/sherpa-onnx.sh
 	cd desktop && PATH="$(dir $(CARGO)):$$PATH" $(TAURI) dev
 
 desktop-bundle: ## AppImage, .deb and .rpm in desktop/src-tauri/target/release/bundle/
 	cd frontend && ([ -d node_modules ] || npm ci)
 	./desktop/scripts/vulkan-sdk.sh
+	./desktop/scripts/sherpa-onnx.sh
 	cd desktop && PATH="$(dir $(CARGO)):$$PATH" $(TAURI) build
 
 test:           ## UI typecheck + build, Rust unit tests, key script syntax
 	sh -n scripts/ow-dictate
+	./desktop/scripts/sherpa-onnx.sh
 	cd frontend && ([ -d node_modules ] || npm ci) && npm run build
 	cd desktop/src-tauri && $(CARGO) test --lib
 

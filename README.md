@@ -27,6 +27,7 @@ The window shows the progress. Other builds:
 
 ```sh
 make desktop             # only build: desktop/src-tauri/target/release/open-whisper
+                         # (also fetches the checked sherpa-onnx libraries into desktop/.deps)
 make desktop-bundle      # AppImage / .deb / .rpm in desktop/src-tauri/target/release/bundle/
 ```
 
@@ -119,7 +120,7 @@ default. Command line: `--model <id>` (overrides the file), `--language <code>`,
 
 ## Models
 
-All models run in whisper.cpp. Numbers are from the development machine (Ryzen 7 H 255,
+The Whisper models run in whisper.cpp, Parakeet in sherpa-onnx (onnxruntime, CPU). Numbers are from the development machine (Ryzen 7 H 255,
 Radeon 780M; [docs/tauri-desktop-options.md](docs/tauri-desktop-options.md)):
 
 | Model | Download | GPU (Vulkan) | CPU only | WER | Notes |
@@ -127,7 +128,11 @@ Radeon 780M; [docs/tauri-desktop-options.md](docs/tauri-desktop-options.md)):
 | large-v3-turbo-q5_0 | 0.55 GB | 10.9× real time | 1.4× | 3.2% | **default with a GPU** |
 | large-v3-turbo | 1.6 GB | 8.9× | 1.3× | 3.9% | |
 | medium | 1.5 GB | 6.6× | 1.7× | 3.2% | |
-| small | 0.47 GB | 17.6× | 5.6× | 12.7% | fastest; **default without a GPU** |
+| small | 0.47 GB | 17.6× | 5.6× | 12.7% | **default without a GPU** |
+| parakeet-v3 | 0.67 GB | — | **35.9×** | 14.3%* | NVIDIA Parakeet (CPU, 25 languages): a 3 s dictation in 0.14 s instead of 1.56 s |
+
+\*Parakeet: 0–5.7% on four of the five clips, 49% on the extreme-noise English one; in Spanish
+it makes 2–4× more errors than the default. Details: [docs/parakeet.md](docs/parakeet.md).
 
 A model that is not on disk downloads the first time you use it, into
 `~/.local/share/open-whisper/models`. Silero VAD drops silence, so silent audio gives no text.
@@ -173,6 +178,9 @@ checked with SHA-256; that engine has no network code).
 
 - [whisper.cpp](https://github.com/ggml-org/whisper.cpp) (MIT), Whisper model weights by
   OpenAI (MIT), Silero VAD (MIT).
+- Parakeet: [NVIDIA Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3)
+  weights (CC-BY-4.0), run with [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx)
+  (Apache-2.0) and onnxruntime (MIT).
 - Live preview: [Cactus Whistle and the needle engine](https://huggingface.co/Cactus-Compute/whistle)
   (Apache-2.0).
 - Tauri, Vite and TypeScript are open source (MIT/Apache).

@@ -36,6 +36,8 @@ hound = "3"
 libloading = "0.8"
 sha2 = "0.10"
 flate2 = "1"
+# Parakeet (NVIDIA, CC-BY-4.0 weights) through sherpa-onnx (Apache-2.0), linked statically with onnxruntime.
+sherpa-onnx = "2.0.1"
 
 log = "0.4"
 
