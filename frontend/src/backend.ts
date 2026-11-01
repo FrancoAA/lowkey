@@ -6,8 +6,6 @@ import type { JobEvent, Status } from "./api";
 export interface FileRef {
   name: string;
   path: string;
-  size?: number;
-  type?: string;
 }
 
 export interface Options {

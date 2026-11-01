@@ -18,7 +18,6 @@ export interface Status {
   device: string;
   default_model: string;
   models: ModelInfo[];
-  max_upload_bytes: number;
   gpu?: boolean;
   auto_model?: string;
   hotkey?: string;

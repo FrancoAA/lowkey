@@ -19,7 +19,8 @@ desktop-bundle: ## AppImage, .deb and .rpm in desktop/src-tauri/target/release/b
 	./desktop/scripts/vulkan-sdk.sh
 	cd desktop && PATH="$(dir $(CARGO)):$$PATH" $(TAURI) build
 
-test:           ## UI typecheck + build, Rust unit tests
+test:           ## UI typecheck + build, Rust unit tests, key script syntax
+	sh -n scripts/ow-dictate
 	cd frontend && ([ -d node_modules ] || npm ci) && npm run build
 	cd desktop/src-tauri && $(CARGO) test --lib
 

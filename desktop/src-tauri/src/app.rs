@@ -101,13 +101,11 @@ impl App {
             })
             .collect();
         json!({
-            "desktop": true,
             "device": self.engines.hw.gpu.clone().map(|g| format!("GPU ({g})")).unwrap_or_else(|| "CPU".into()),
             "gpu": self.engines.hw.gpu.is_some(),
             "default_model": current,
             "auto_model": models::auto_model(&self.engines.hw),
             "models": list,
-            "max_upload_bytes": crate::audio::MAX_FILE_BYTES,
             "options": { "model": cfg.model, "language": cfg.language, "idle_unload_minutes": cfg.idle_unload_minutes, "live_preview": cfg.live_preview },
             "preview": self.preview.status(),
             "hotkey": *self.hotkey_text.lock(),
@@ -298,6 +296,10 @@ fn transcribe_path(app: State<'_, AppRef>, path: String, language: String, model
     let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| path.clone());
     if !p.is_file() {
         return Err(format!("{name}: file not found."));
+    }
+    // Before the queue: a file that is too large never waits behind another job.
+    if std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0) > crate::audio::MAX_FILE_BYTES {
+        return Err(format!("{name} is larger than 2 GB."));
     }
     let model = if models::spec(&model).is_some() { model } else { app.current_model() };
     let language = (language != "auto" && !language.is_empty()).then_some(language);

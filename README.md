@@ -75,7 +75,9 @@ config file is changed. To keep the key after a logout (and to start the closed 
 your config: `open-whisper --print-snippet lua` prints the lines; add them to
 `~/.config/hypr/bindings.lua` between `-- BEGIN open-whisper.dictation` and
 `-- END open-whisper.dictation`. A block that runs `scripts/ow-dictate` (from earlier versions)
-keeps working: the script hands the key to the app. When the key is in your config, the app
+keeps working: the script hands the key to the app, or starts `~/.local/bin/open-whisper`
+(else this folder's build; `OPENWHISPER_DESKTOP_BIN` overrides) with its output in
+`$XDG_RUNTIME_DIR/open-whisper/app.log`. When the key is in your config, the app
 sees it and does not add it again. Classic `hyprland.conf`: `--print-snippet conf`.
 
 - Another key: `open-whisper --hotkey "SUPER + ALT + D"` or `hotkey = "…"` in the settings.
@@ -101,14 +103,15 @@ Details and measurements: [docs/live-preview.md](docs/live-preview.md).
 Options in the window saves them to `~/.config/open-whisper/config.toml`:
 
 ```toml
-model = "large-v3-turbo-q5_0"   # empty or missing: the default
+model = "large-v3-turbo-q5_0"   # empty or missing: the default for this machine
 language = "auto"
 idle_unload_minutes = 15        # free the model's memory after 15 idle minutes; 0 = never
 hotkey = "SUPER + CTRL + X"
 live_preview = true             # words in the overlay while you talk (Whistle, 17 MB, CPU)
 ```
 
-Command line: `--model <id>` (overrides the file), `--language <code>`, `--hotkey "…"`,
+A model that the app no longer has (the faster-whisper `fw:` models) falls back to the
+default. Command line: `--model <id>` (overrides the file), `--language <code>`, `--hotkey "…"`,
 `--no-hotkey`, `--background`, `--transcribe <file>` (prints JSON, no window),
 `--print-snippet [lua|conf]`, `--remove-hotkey`, `--dictate press|release|toggle|cancel|quit`.
 
@@ -119,10 +122,10 @@ Radeon 780M; [docs/tauri-desktop-options.md](docs/tauri-desktop-options.md)):
 
 | Model | Download | GPU (Vulkan) | CPU only | WER | Notes |
 |---|---|---|---|---|---|
-| large-v3-turbo-q5_0 | 0.55 GB | 10.9× real time | 1.4× | 3.2% | **default** |
+| large-v3-turbo-q5_0 | 0.55 GB | 10.9× real time | 1.4× | 3.2% | **default with a GPU** |
 | large-v3-turbo | 1.6 GB | 8.9× | 1.3× | 3.9% | |
 | medium | 1.5 GB | 6.6× | 1.7× | 3.2% | |
-| small | 0.47 GB | 17.6× | 5.6× | 12.7% | fastest; the choice for a slow CPU without a GPU |
+| small | 0.47 GB | 17.6× | 5.6× | 12.7% | fastest; **default without a GPU** |
 
 A model that is not on disk downloads the first time you use it, into
 `~/.local/share/open-whisper/models`. Silero VAD drops silence, so silent audio gives no text.

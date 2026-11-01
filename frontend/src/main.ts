@@ -301,13 +301,8 @@ function handleRef(file: FileRef): void {
     showError("Finish the dictation first (Space or the mic button), or press Esc to cancel it.");
     return;
   }
-  const type = file.type ?? "";
-  const looksLikeMedia = type.startsWith("audio/") || type.startsWith("video/") || MEDIA_EXT.test(file.name);
-  if (status && file.size !== undefined && file.size > status.max_upload_bytes) {
-    showError(`“${file.name}” is ${fmtMB(file.size)}. The limit is ${fmtMB(status.max_upload_bytes)}.`);
-    return;
-  }
-  if (!looksLikeMedia) {
+  // The app checks the size and the content; this only catches an obviously wrong file early.
+  if (!MEDIA_EXT.test(file.name)) {
     showError(`“${file.name}” is not an audio or video file. Try MP3, WAV, M4A, OGG, FLAC, WEBM or a video with sound.`);
     return;
   }

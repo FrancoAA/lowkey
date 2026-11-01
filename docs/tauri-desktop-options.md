@@ -7,7 +7,7 @@ native"**, packaging **Linux first** with Rust from rustup in the home folder.
 
 **Update 2026-11-01:** after parity was verified, Franco chose to remove Python completely:
 the Python web app and the optional faster-whisper engine are gone. The app is whisper.cpp
-only; without a GPU it runs on the CPU (`small` is the fast choice there). The live preview
+only; without a GPU it runs on the CPU with `small` as the default. The live preview
 (Cactus Whistle) was added: [live-preview.md](live-preview.md).
 
 What the first version does differently from the recommendation below: the global key on

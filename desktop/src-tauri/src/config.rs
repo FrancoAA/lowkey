@@ -77,13 +77,19 @@ impl Config {
     }
 
     pub fn load_from(path: &std::path::Path) -> Self {
-        match std::fs::read_to_string(path) {
+        let mut cfg: Self = match std::fs::read_to_string(path) {
             Ok(text) => toml::from_str(&text).unwrap_or_else(|err| {
                 eprintln!("  Ignoring {}: {err}", path.display());
                 Self::default()
             }),
             Err(_) => Self::default(),
+        };
+        // A model that is gone (e.g. the faster-whisper "fw:" models): back to the default.
+        if !cfg.model.is_empty() && crate::models::spec(&cfg.model).is_none() {
+            eprintln!("  The model {:?} in {} is not available any more; using the default.", cfg.model, path.display());
+            cfg.model.clear();
         }
+        cfg
     }
 
     pub fn save(&self) -> anyhow::Result<()> {
@@ -191,6 +197,16 @@ mod tests {
         assert_eq!(c.hotkey, DEFAULT_HOTKEY);
         std::fs::write(&p, "model = [broken").unwrap();
         assert_eq!(Config::load_from(&p), Config::default());
+    }
+
+    #[test]
+    fn a_removed_model_falls_back_to_the_default() {
+        let f = std::env::temp_dir().join(format!("ow-cfg-fw-{}.toml", std::process::id()));
+        std::fs::write(&f, "model = \"fw:large-v3-turbo\"\nidle_unload_minutes = 7\n").unwrap();
+        let c = Config::load_from(&f);
+        assert_eq!(c.model, "");
+        assert_eq!(c.idle_unload_minutes, 7);
+        let _ = std::fs::remove_file(f);
     }
 
     #[test]

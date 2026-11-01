@@ -65,7 +65,7 @@ worker process. Load = model load time.
 Whisper always encodes a full 30 s window, so short clips cost almost the same as 30 s.
 With auto-detect, stock faster-whisper also runs the encoder twice: once to detect the
 language and once to transcribe. open-whisper detects the language from the exact window it
-transcribes first and keeps that encoder output (`openwhisper/fastlang.py`), so the encoder
+transcribes first and keeps that encoder output (`openwhisper/fastlang.py`, removed with the Python app), so the encoder
 runs once. Same run, same machine, app settings, `large-v3-turbo`:
 
 | clip | stock faster-whisper | open-whisper (encoder once) | same text and language |
@@ -110,7 +110,7 @@ it is off to avoid repetition loops on long recordings. Speed was the same in al
   translation (98–104% WER) and its language ID failed on 2 of 5 clips.
 - **Engine:** on this CPU, faster-whisper (CTranslate2 int8) is 3× faster than
   whisper.cpp for the same model (turbo: 4.0× vs 1.3× real time) with the same accuracy.
-  So the app keeps faster-whisper. whisper.cpp q5_0 uses much less RAM (0.8 GB), which can
+  So the app kept faster-whisper at the time (now replaced by whisper.cpp on the GPU; see the history note at the top). whisper.cpp q5_0 uses much less RAM (0.8 GB), which can
   help small machines.
 
 ## Limits of this benchmark
@@ -159,5 +159,5 @@ Reproduce:
 
 ```sh
 OW_WCPP_BIN=bench/.work/whisper.cpp/build-vk/bin/whisper-cli OW_WCPP_LABEL=wcpp-vulkan \
-  uv run --group bench python bench/benchmark.py --only wcpp:large-v3-turbo-q5_0 wcpp:large-v3-turbo wcpp:medium wcpp:small
+  uv run bench/benchmark.py --only wcpp:large-v3-turbo-q5_0 wcpp:large-v3-turbo wcpp:medium wcpp:small
 ```

@@ -18,6 +18,8 @@ export class Dictation {
   private level = 0;
   private startedAt = 0;
   private timer = 0;
+  /** A stop or cancel that came while the microphone was still opening. */
+  private pending: "stop" | "cancel" | null = null;
   private invoke!: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
 
   constructor(private waveform: Waveform, private cb: DictationCallbacks) {
@@ -43,12 +45,21 @@ export class Dictation {
 
   async start(): Promise<void> {
     if (this.state !== "idle") return;
+    this.pending = null;
     this.set("starting");
     try {
       await this.invoke("window_dictation", { action: "start" });
     } catch (err) {
+      this.pending = null;
       this.set("idle");
       this.cb.onError(String(err));
+      return;
+    }
+    const pending = this.pending;
+    this.pending = null;
+    if (pending === "cancel") {
+      this.set("idle");
+      void this.invoke("window_dictation", { action: "cancel" });
       return;
     }
     this.level = 0;
@@ -56,9 +67,14 @@ export class Dictation {
     this.startedAt = performance.now();
     this.set("listening");
     this.timer = window.setInterval(() => this.cb.onTick(this.elapsed()), 200);
+    if (pending === "stop") void this.stop(); // released before the mic was open
   }
 
   async stop(): Promise<void> {
+    if (this.state === "starting") {
+      this.pending ??= "stop";
+      return;
+    }
     if (this.state !== "listening") return;
     this.reset();
     try {
@@ -71,6 +87,10 @@ export class Dictation {
 
   cancel(): void {
     if (this.state === "idle") return;
+    if (this.state === "starting") {
+      this.pending = "cancel"; // done when the start returns (the app must have opened the mic first)
+      return;
+    }
     this.reset();
     void this.invoke("window_dictation", { action: "cancel" });
   }

@@ -50,10 +50,15 @@ pub struct Hardware {
     pub gpu: Option<String>,
 }
 
-/// Benchmark-picked default: large-v3-turbo-q5_0 (best WER on the test clips; 10.9× real time
-/// on the test machine's GPU, 1.4× on its CPU). "small" is the fast choice for slow CPUs.
-pub fn auto_model(_hw: &Hardware) -> &'static str {
-    "large-v3-turbo-q5_0"
+/// Benchmark-picked default: large-v3-turbo-q5_0 on a GPU (best WER on the test clips, 10.9×
+/// real time on the test machine). Without a GPU it runs at only 1.4×, so "small" (5.6× on the
+/// CPU, WER 12.7%) is the default there; Options can still pick the accurate one.
+pub fn auto_model(hw: &Hardware) -> &'static str {
+    if hw.gpu.is_some() {
+        "large-v3-turbo-q5_0"
+    } else {
+        "small"
+    }
 }
 
 pub fn is_software_gpu(name: &str) -> bool {
@@ -180,7 +185,7 @@ mod tests {
     #[test]
     fn auto_choice_follows_the_benchmark() {
         assert_eq!(auto_model(&Hardware { gpu: Some("AMD Radeon 780M".into()) }), "large-v3-turbo-q5_0");
-        assert_eq!(auto_model(&Hardware { gpu: None }), "large-v3-turbo-q5_0");
+        assert_eq!(auto_model(&Hardware { gpu: None }), "small");
         assert!(CATALOG.iter().all(|m| !m.id.starts_with("fw:")), "no Python engine any more");
     }
 

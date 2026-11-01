@@ -32,11 +32,14 @@ case "$action" in
   *) exit 0 ;; # release/cancel/quit with no app running: nothing to do
 esac
 
-# Not running: start the installed app; it begins the dictation when it is ready.
-bin="${OPENWHISPER_DESKTOP_BIN:-$HOME/.local/bin/open-whisper}"
-if [ -x "$bin" ]; then
-  exec setsid -f "$bin" --dictate "$action" </dev/null >/dev/null 2>&1
-fi
+# Not running: start the app; it begins the dictation when it is ready. The installed app
+# first ($OPENWHISPER_DESKTOP_BIN overrides), else this folder's build (make desktop).
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-note "open-whisper is not installed. Run 'make install-desktop' in $root."
-exit 1
+bin="${OPENWHISPER_DESKTOP_BIN:-$HOME/.local/bin/open-whisper}"
+[ -x "$bin" ] || bin="$root/desktop/src-tauri/target/release/open-whisper"
+if [ ! -x "$bin" ]; then
+  note "open-whisper is not installed. Run 'make install-desktop' in $root."
+  exit 1
+fi
+mkdir -p "$dir" && chmod 700 "$dir" || exit 1
+exec setsid -f "$bin" --dictate "$action" </dev/null >"$dir/app.log" 2>&1
