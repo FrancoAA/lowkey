@@ -34,7 +34,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 WORK = ROOT / ".work"
 SAMPLES = WORK / "samples"
-WCPP = WORK / "whisper.cpp" / "build" / "bin" / "whisper-cli"
+# OW_WCPP_BIN / OW_WCPP_LABEL: benchmark another whisper.cpp build, e.g. a Vulkan one:
+#   OW_WCPP_BIN=bench/.work/whisper.cpp/build-vk/bin/whisper-cli OW_WCPP_LABEL=wcpp-vulkan
+WCPP = Path(os.environ.get("OW_WCPP_BIN") or WORK / "whisper.cpp" / "build" / "bin" / "whisper-cli").resolve()
+WCPP_LABEL = os.environ.get("OW_WCPP_LABEL", "wcpp")
 GGML = WORK / "ggml"
 THREADS = max(1, (os.cpu_count() or 2) // 2)  # physical cores on SMT machines
 BEAM = 5
@@ -142,6 +145,8 @@ def measure(cand: str, samples: list[str]) -> dict:
                 raise RuntimeError(err[-2000:])
             peak_kb = max(peak_kb, ru.ru_maxrss)
             rows.append(json.loads(out.strip().splitlines()[-1]))
+    if engine == "wcpp":
+        cand = f"{WCPP_LABEL}:{model}"
     return {"candidate": cand, "peak_rss_mb": peak_kb / 1024, "rows": rows}
 
 

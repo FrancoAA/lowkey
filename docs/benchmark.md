@@ -128,3 +128,29 @@ cd ../.. && make bench    # samples + all candidates; writes bench/.work/results
 ```
 
 The whisper.cpp candidates are skipped when the binary or models are missing.
+
+## whisper.cpp with Vulkan on the Radeon 780M (2026-11-01)
+
+Measured for the Tauri desktop decision (`docs/tauri-desktop-options.md`). Same clips, same
+settings (8 threads, beam 5, auto language, no VAD); whisper.cpp 482279b built with
+`GGML_VULKAN=ON` (Vulkan-Headers and SPIRV-Headers fetched into `bench/.work`, no system
+package installed). The log confirms the device "AMD Radeon 780M Graphics".
+
+| Candidate | RTF | x real-time | WER all | WER EN noisy | WER ES noisy | 11 s JFK clip |
+|---|---|---|---|---|---|---|
+| wcpp-vulkan:large-v3-turbo-q5_0 | 0.092 | 10.9x | 3.2% | 5.5% | 5.7% | 1.6 s |
+| wcpp-vulkan:large-v3-turbo | 0.112 | 8.9x | 3.9% | 6.8% | 5.7% | 1.8 s |
+| wcpp-vulkan:medium | 0.152 | 6.6x | 3.2% | 6.8% | 5.7% | 1.7 s |
+| wcpp-vulkan:small | 0.057 | 17.6x | 12.7% | 30.1% | 14.3% | 0.6 s |
+
+For comparison, faster-whisper large-v3-turbo on the CPU: 4.0x, WER 4.2% (3.9% with the
+app's VAD), 3.4 s for the JFK clip with the encoder reuse. "Peak RAM" is not comparable here:
+whisper.cpp keeps the model in GPU memory, which the process RSS (120-210 MB) does not include;
+on an iGPU that memory is shared system RAM.
+
+Reproduce:
+
+```sh
+OW_WCPP_BIN=bench/.work/whisper.cpp/build-vk/bin/whisper-cli OW_WCPP_LABEL=wcpp-vulkan \
+  uv run --group bench python bench/benchmark.py --only wcpp:large-v3-turbo-q5_0 wcpp:large-v3-turbo wcpp:medium wcpp:small
+```
