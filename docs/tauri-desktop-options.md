@@ -1,8 +1,16 @@
-# open-whisper as a Tauri v2 desktop app — decisions before building
+# open-whisper as a Tauri v2 desktop app — decisions
 
-Status: **waiting for Franco's decisions.** Nothing is built yet. Branch `feat/tauri-desktop`
-(from `c8b4ee2`); the Python app on `feat/open-whisper-app` stays as it is until the new app
-reaches parity.
+Status: **decided by Franco on 2026-11-01 and built** on branch `feat/tauri-desktop`:
+engine **C** (whisper.cpp in Rust by default, faster-whisper as an optional engine through the
+Python helper, picked automatically without a GPU), hotkey **"Hyprland as today + per-OS
+native"**, packaging **Linux first** with Rust from rustup in the home folder.
+
+What the first version does differently from the recommendation below: the global key on
+X11, macOS and Windows uses the Tauri global-shortcut plugin (as recommended), but the GNOME/KDE
+Wayland portal path (GlobalShortcuts + RemoteDesktop typing) is **not built**: on those desktops
+the app tells the user to bind `open-whisper --dictate …` in the keyboard settings. macOS,
+Windows and X11 code paths are written but not built or tested on the development machine.
+The text below is the decision document as it was presented.
 
 What does not need a decision (it will be done in any option): the current web UI becomes the
 Tauri webview UI; one app instance per user; first-run model download with progress; the

@@ -38,6 +38,7 @@ const MEDIA_EXT = /\.(mp3|wav|wave|m4a|aac|ogg|oga|opus|flac|webm|weba|wma|aiff?
 const langNames = new Intl.DisplayNames(["en"], { type: "language" });
 
 let backend!: Backend;
+let jobState = ""; // state of the job shown in the result card
 let status: Status | null = null;
 let busy = false;
 let current: { result: JobResult | null; segments: Segment[]; baseName: string } = { result: null, segments: [], baseName: "transcript" };
@@ -151,6 +152,12 @@ async function refreshStatus(): Promise<void> {
 
 function applyStatus(next: Status): void {
   status = next;
+  // Desktop: model download progress arrives as status events, not job events.
+  if (jobState === "preparing" && busy) {
+    const m = selectedModel();
+    if (m?.state === "downloading") setProgress(m.progress, `First run: ${modelPhrase(m).replace("Downloading model…", "downloading the model…")}`);
+    else if (m?.state === "loading") setProgress(null, "Loading model…");
+  }
   if (!modelSelect.options.length) {
     for (const m of status.models) modelSelect.add(new Option(m.label, m.name));
     const saved = backend.desktop ? status.default_model : localStorage.getItem("ow.model");
@@ -194,6 +201,7 @@ function setProgress(fraction: number | null, text: string): void {
 }
 
 function onJobEvent(ev: JobEvent): void {
+  jobState = ev.state;
   if (ev.new_segments && ev.segment_count !== undefined) {
     // Idempotent merge: a reconnecting EventSource resends from the start.
     current.segments = current.segments.slice(0, ev.segment_count - ev.new_segments.length).concat(ev.new_segments);

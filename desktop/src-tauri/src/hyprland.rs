@@ -4,7 +4,9 @@
 //! `hl.window_rule` + `set_enabled`. (`Keybind:remove()` aborts Hyprland 0.56.2.) Nothing edits
 //! config files: binds are added to the running Hyprland and re-added after a config reload.
 
+#[cfg(unix)]
 use std::io::{BufRead, BufReader};
+#[cfg(unix)]
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -243,7 +245,11 @@ impl Hotkey {
         self.state.lock().rule
     }
 
+    #[cfg(not(unix))]
+    pub fn watch_reloads(self: &Arc<Self>) {}
+
     /// Re-install after `configreloaded` events from Hyprland's event socket.
+    #[cfg(unix)]
     pub fn watch_reloads(self: &Arc<Self>) {
         let Some(sock) = event_socket() else { return };
         let me = Arc::clone(self);
@@ -288,6 +294,7 @@ impl Hotkey {
     }
 }
 
+#[cfg(unix)]
 fn event_socket() -> Option<PathBuf> {
     let sig = std::env::var("HYPRLAND_INSTANCE_SIGNATURE").ok()?;
     let base = std::env::var("XDG_RUNTIME_DIR").ok()?;

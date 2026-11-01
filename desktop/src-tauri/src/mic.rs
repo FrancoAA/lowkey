@@ -137,10 +137,20 @@ impl Recorder for CpalMic {
                 }
             }
         });
-        ready_rx.recv_timeout(Duration::from_secs(5)).unwrap_or_else(|_| Err(anyhow::anyhow!("the microphone did not start")))?;
-        self.stop_tx = Some(stop_tx);
-        self.thread = Some(thread);
-        Ok(())
+        match ready_rx.recv_timeout(Duration::from_secs(5)) {
+            Ok(Ok(())) => {
+                self.stop_tx = Some(stop_tx);
+                self.thread = Some(thread);
+                Ok(())
+            }
+            Ok(Err(e)) => Err(e),
+            Err(_) => {
+                // Too slow: tell the thread to drop the stream if it opens later.
+                self.shared.stopping.store(true, Ordering::Relaxed);
+                let _ = stop_tx.send(());
+                Err(anyhow::anyhow!("the microphone did not start"))
+            }
+        }
     }
 
     fn stop(&mut self) -> Vec<f32> {

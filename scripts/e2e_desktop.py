@@ -199,7 +199,12 @@ def main() -> None:
         (tmp / "config" / "open-whisper" / "config.toml").write_text('idle_unload_minutes = 5\n')
         app = subprocess.Popen([APP], env=env, stdout=open(tmp / "app.log", "w"), stderr=subprocess.STDOUT)
         main_win = wait(lambda: win("open-whisper"), 30, "main window")
-        check(True, "main window opened")
+        print("  ok  main window opened")
+        if first_run:  # empty model folder: the pill shows the download
+            wait(lambda: any(m["state"] == "downloading" and m["progress"] >= 0.1
+                             for st in events("status")[-3:] for m in st["models"]), 300, "first-run download in the window")
+            time.sleep(0.8)
+            shot("17-desktop-first-run-download.png")
         status = wait(lambda: next((s for s in reversed(events("status"))
                                     if any(m["name"] == s["default_model"] and m["state"] == "ready" for m in s["models"])), None),
                       600 if first_run else 120, "model ready")
@@ -323,6 +328,9 @@ def main() -> None:
         check(len(x_binds()) == 2, "the key stays after quitting")
         check(not (runtime / "open-whisper" / "desktop.json").exists(), "runtime file removed on quit")
 
+        if first_run:  # make the key-started app download again, to show it in the overlay
+            for f in models.glob("ggml-large-v3-turbo-q5_0*"):
+                f.unlink()
         n_before = len(events("dictation"))
         key("press")
         wait(lambda: any(d["state"] == "starting" for d in events("dictation")[n_before:]), 60, "starting state")
@@ -330,7 +338,13 @@ def main() -> None:
         starting = [d for d in events("dictation")[n_before:] if d["state"] == "starting"]
         wait(lambda: win("open-whisper-overlay"), 30, "overlay during start-up")
         if first_run:
-            wait(lambda: any("%" in d["detail"] for d in events("dictation")[n_before:]), 300, "download progress")
+            def pct(d):
+                try:
+                    return int(d["detail"].rstrip("%").rsplit(" ", 1)[-1]) if d["detail"].endswith("%") else -1
+                except ValueError:
+                    return -1
+
+            wait(lambda: any(pct(d) >= 10 for d in events("dictation")[n_before:]), 300, "download progress")
             time.sleep(1.0)
         shot("15-desktop-key-starting.png")
         check(any(d["detail"] for d in starting), f"start-up detail shown: {starting[-1]['detail']!r}")

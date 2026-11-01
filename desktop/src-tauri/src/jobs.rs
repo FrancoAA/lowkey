@@ -53,7 +53,11 @@ struct Job {
     snap: JobSnapshot,
     input: Option<Input>,
     priority: u8,
+    finished: Option<std::time::Instant>,
 }
+
+/// Finished jobs stay readable this long (the page may re-read them), then they are dropped.
+pub const KEEP_FINISHED: std::time::Duration = std::time::Duration::from_secs(3600);
 
 pub type EmitFn = Arc<dyn Fn(&JobSnapshot) + Send + Sync>;
 
@@ -109,7 +113,11 @@ impl Jobs {
             error: None,
         };
         (self.emit)(&snap);
-        self.jobs.lock().insert(id.clone(), Job { snap, input: Some(input), priority });
+        {
+            let mut jobs = self.jobs.lock();
+            jobs.retain(|_, j| j.finished.map(|t| t.elapsed() < KEEP_FINISHED).unwrap_or(true));
+            jobs.insert(id.clone(), Job { snap, input: Some(input), priority, finished: None });
+        }
         self.queue.lock().push(Reverse((priority, *seq, id.clone())));
         self.wake.notify_one();
         Ok(id)
@@ -183,6 +191,9 @@ impl Jobs {
                 })
             });
             let out = engine.transcribe(&model, input, sink);
+            if let Some(job) = self.jobs.lock().get_mut(&id) {
+                job.finished = Some(std::time::Instant::now());
+            }
             self.update(&id, |s| match out {
                 Ok(out) => {
                     s.state = "done".into();

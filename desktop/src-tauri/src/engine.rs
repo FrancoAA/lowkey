@@ -69,8 +69,12 @@ pub struct Engines {
     states: Mutex<HashMap<String, ModelState>>,
     loaded: Mutex<Option<(String, Arc<WhisperContext>)>>,
     sidecar: Mutex<Option<Sidecar>>,
+    /// The helper process, killable without the sidecar lock (held during long requests).
+    sidecar_child: Mutex<Option<Arc<Mutex<Child>>>>,
     last_used: Mutex<Instant>,
     pub idle_minutes: AtomicU64,
+    /// Transcriptions running now: never unload under a running job.
+    busy: AtomicU64,
     on_change: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
     py_root: Option<PathBuf>,
     me: std::sync::Weak<Engines>,
@@ -80,9 +84,20 @@ pub fn detect_hardware(py_root: Option<&Path>) -> Hardware {
     let gpu = if std::env::var_os("OPENWHISPER_NO_GPU").is_some() {
         None
     } else {
-        whisper_rs::vulkan::list_devices().into_iter().map(|d| d.name).find(|n| !models::is_software_gpu(n))
+        gpu_name()
     };
     Hardware { gpu, faster_whisper: py_root.is_some() && audio::which("uv") }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn gpu_name() -> Option<String> {
+    whisper_rs::vulkan::list_devices().into_iter().map(|d| d.name).find(|n| !models::is_software_gpu(n))
+}
+
+/// Apple Silicon always has a Metal GPU; Intel Macs run on the CPU.
+#[cfg(target_os = "macos")]
+fn gpu_name() -> Option<String> {
+    cfg!(target_arch = "aarch64").then(|| "Apple GPU (Metal)".to_string())
 }
 
 /// The Python project (pyproject.toml + openwhisper/) for the faster-whisper helper.
@@ -113,8 +128,10 @@ impl Engines {
             states: Mutex::new(states),
             loaded: Mutex::new(None),
             sidecar: Mutex::new(None),
+            sidecar_child: Mutex::new(None),
             last_used: Mutex::new(Instant::now()),
             idle_minutes: AtomicU64::new(idle_minutes),
+            busy: AtomicU64::new(0),
             on_change: Mutex::new(None),
             py_root,
             me: weak.clone(),
@@ -157,7 +174,7 @@ impl Engines {
 
     fn unload_if_idle(&self) {
         let minutes = self.idle_minutes.load(Ordering::Relaxed);
-        if !idle_expired(minutes, self.last_used.lock().elapsed()) {
+        if self.busy.load(Ordering::SeqCst) > 0 || !idle_expired(minutes, self.last_used.lock().elapsed()) {
             return;
         }
         if let Some((id, _)) = self.loaded.lock().take() {
@@ -243,11 +260,13 @@ impl Engines {
         if guard.as_mut().map(|s| !s.alive()).unwrap_or(true) {
             let root = self.py_root.clone().ok_or_else(|| anyhow::anyhow!("faster-whisper needs uv and the open-whisper Python project"))?;
             let weak = self.me.clone();
-            *guard = Some(Sidecar::start(&root, Arc::new(move |model: String, st: Value| {
+            let sc = Sidecar::start(&root, Arc::new(move |model: String, st: Value| {
                 if let Some(me) = weak.upgrade() {
                     me.apply_fw_state(&model, &st);
                 }
-            }))?);
+            }))?;
+            *self.sidecar_child.lock() = Some(sc.child.clone());
+            *guard = Some(sc);
         }
         f(guard.as_mut().unwrap())
     }
@@ -268,6 +287,14 @@ impl Engines {
     pub fn transcribe(&self, id: &str, input: Input, sink: Sink) -> anyhow::Result<Output> {
         let spec = models::spec(id).ok_or_else(|| anyhow::anyhow!("Unknown model {id:?}"))?;
         *self.last_used.lock() = Instant::now();
+        self.busy.fetch_add(1, Ordering::SeqCst);
+        let out = self.transcribe_inner(id, spec, input, sink);
+        self.busy.fetch_sub(1, Ordering::SeqCst);
+        *self.last_used.lock() = Instant::now();
+        out
+    }
+
+    fn transcribe_inner(&self, id: &str, spec: &ModelSpec, input: Input, sink: Sink) -> anyhow::Result<Output> {
         sink(EngineEvent::Preparing("Preparing model".into()));
         let out = match spec.engine {
             EngineKind::WhisperCpp => {
@@ -288,8 +315,7 @@ impl Engines {
                 let (path, tmp) = match (&input.path, &input.pcm) {
                     (Some(p), _) => (p.clone(), None),
                     (None, Some(pcm)) => {
-                        let tmp = std::env::temp_dir().join(format!("openwhisper-dictation-{}.wav", std::process::id()));
-                        audio::write_wav(&tmp, pcm)?;
+                        let tmp = audio::private_wav(pcm)?; // 0600, unpredictable name
                         (tmp.clone(), Some(tmp))
                     }
                     _ => anyhow::bail!("nothing to transcribe"),
@@ -301,13 +327,15 @@ impl Engines {
                 result
             }
         };
-        *self.last_used.lock() = Instant::now();
         out
     }
 
     pub fn shutdown(&self) {
-        if let Some(mut sc) = self.sidecar.lock().take() {
-            sc.stop();
+        // Do not wait for the sidecar lock: a transcription may hold it for minutes.
+        if let Some(child) = self.sidecar_child.lock().take() {
+            let mut c = child.lock();
+            let _ = c.kill();
+            let _ = c.wait();
         }
     }
 }
@@ -412,7 +440,7 @@ fn run_whisper_cpp(ctx: &WhisperContext, pcm: &[f32], language: Option<&str>, si
 type StateFn = Arc<dyn Fn(String, Value) + Send + Sync>;
 
 struct Sidecar {
-    child: Child,
+    child: Arc<Mutex<Child>>,
     stdin: ChildStdin,
     pending: Arc<Mutex<HashMap<u64, mpsc::Sender<Value>>>>,
     next: AtomicU64,
@@ -452,11 +480,11 @@ impl Sidecar {
                 let _ = tx.send(json!({"event": "error", "error": "the faster-whisper helper stopped"}));
             }
         });
-        Ok(Self { child, stdin, pending, next: AtomicU64::new(1) })
+        Ok(Self { child: Arc::new(Mutex::new(child)), stdin, pending, next: AtomicU64::new(1) })
     }
 
     fn alive(&mut self) -> bool {
-        matches!(self.child.try_wait(), Ok(None))
+        matches!(self.child.lock().try_wait(), Ok(None))
     }
 
     fn request(&mut self, mut msg: Value) -> anyhow::Result<(u64, mpsc::Receiver<Value>)> {
@@ -500,8 +528,9 @@ impl Sidecar {
     }
 
     fn stop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        let mut c = self.child.lock();
+        let _ = c.kill();
+        let _ = c.wait();
     }
 }
 

@@ -39,6 +39,10 @@ pub struct App {
 
 type AppRef = Arc<App>;
 
+/// Hand-offs from other launches that arrive before setup has finished (e.g. a key release
+/// right after the key started the app). Replayed once the app is ready.
+static EARLY_ARGS: Mutex<Vec<Vec<String>>> = Mutex::new(Vec::new());
+
 /// Test seam: OPENWHISPER_TEST_LOG=<file> appends every UI event as a JSON line, so automated
 /// tests can follow the app without a WebDriver. No effect when unset.
 fn emit_logged<S: serde::Serialize + Clone>(handle: &AppHandle, event: &str, payload: S) {
@@ -89,7 +93,7 @@ impl App {
             "default_model": current,
             "auto_model": models::auto_model(&self.engines.hw),
             "models": list,
-            "max_upload_bytes": u64::MAX,
+            "max_upload_bytes": crate::audio::MAX_FILE_BYTES,
             "options": { "model": cfg.model, "language": cfg.language, "idle_unload_minutes": cfg.idle_unload_minutes },
             "hotkey": *self.hotkey_text.lock(),
         })
@@ -145,12 +149,8 @@ impl App {
             return;
         }
         let files: Vec<PathBuf> = cli.files.iter().filter(|p| p.is_file()).cloned().collect();
-        if !files.is_empty() {
-            if first {
-                self.open_files.lock().extend(files); // the page asks for them when it loads
-            } else {
-                let _ = self.handle.emit("open-files", files);
-            }
+        if !files.is_empty() && !first {
+            let _ = self.handle.emit("open-files", files);
         }
         if !first || !cli.background {
             self.show_main();
@@ -261,8 +261,15 @@ fn get_languages() -> Value {
     Value::Object(map)
 }
 
+fn valid_language(code: &str) -> bool {
+    code == "auto" || (0..=whisper_rs::get_lang_max_id()).any(|i| whisper_rs::get_lang_str(i) == Some(code))
+}
+
 #[tauri::command]
 fn transcribe_path(app: State<'_, AppRef>, path: String, language: String, model: String) -> Result<String, String> {
+    if !language.is_empty() && !valid_language(&language) {
+        return Err(format!("Unknown language code {language:?}."));
+    }
     let p = PathBuf::from(&path);
     let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| path.clone());
     if !p.is_file() {
@@ -292,9 +299,19 @@ fn copy_text(text: String) -> Result<(), String> {
     }
 }
 
+/// Save an export where the user chooses in a native dialog opened here, so the page never
+/// names a path itself. Returns false when the user cancels.
 #[tauri::command]
-fn save_text(path: String, content: String) -> Result<(), String> {
-    std::fs::write(&path, content).map_err(|e| format!("Could not save {path}: {e}"))
+async fn save_export(app: tauri::AppHandle, file_name: String, content: String) -> Result<bool, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let name = std::path::Path::new(&file_name).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "transcript.txt".into());
+    let ext = name.rsplit('.').next().unwrap_or("txt").to_string();
+    let Some(target) = app.dialog().file().set_file_name(&name).add_filter(ext.to_uppercase(), &[ext.as_str()]).blocking_save_file() else {
+        return Ok(false);
+    };
+    let path = target.into_path().map_err(|e| e.to_string())?;
+    std::fs::write(&path, content).map_err(|e| format!("Could not save {}: {e}", path.display()))?;
+    Ok(true)
 }
 
 #[derive(Deserialize)]
@@ -317,6 +334,9 @@ fn set_options(app: State<'_, AppRef>, options: OptionsIn) -> Result<Value, Stri
             cfg.model = m;
         }
         if let Some(l) = options.language {
+            if !valid_language(&l) {
+                return Err(format!("Unknown language code {l:?}."));
+            }
             cfg.language = l;
         }
         if let Some(n) = options.idle_unload_minutes {
@@ -364,7 +384,7 @@ fn window_dictation_inner(app: &AppRef, action: &str) -> Result<Option<String>, 
         "start" => {
             let mut slot = app.window_rec.lock();
             if slot.is_some() {
-                return Ok(None);
+                return Err("Already recording.".into());
             }
             let h = app.handle.clone();
             let on_level: LevelFn = Arc::new(move |lv| {
@@ -486,9 +506,9 @@ pub fn run() {
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|handle, argv, _cwd| {
             // Another launch (the key bind, a file opened with the app, the menu entry): hand it over.
-            let cli = Cli::parse(argv);
-            if let Some(app) = handle.try_state::<AppRef>() {
-                app.handle_cli(&cli, false);
+            match handle.try_state::<AppRef>() {
+                Some(app) => app.handle_cli(&Cli::parse(argv), false),
+                None => EARLY_ARGS.lock().push(argv),
             }
         }))
         .plugin(tauri_plugin_dialog::init())
@@ -500,7 +520,7 @@ pub fn run() {
             job_snapshot,
             take_open_files,
             copy_text,
-            save_text,
+            save_export,
             set_options,
             dictation_state,
             overlay_ready,
@@ -542,6 +562,8 @@ pub fn run() {
                     a.emit_status();
                 }
             }));
+            // Files from the command line: queued before the page exists, so it always finds them.
+            app.open_files.lock().extend(cli.files.iter().filter(|p| p.is_file()).cloned());
             tauri_app.manage(app.clone());
 
             // Windows: the main window, and the dictation overlay (hidden; never focused).
@@ -649,6 +671,9 @@ pub fn run() {
                 }
             });
             app.handle_cli(&cli, true);
+            for argv in std::mem::take(&mut *EARLY_ARGS.lock()) {
+                app.handle_cli(&Cli::parse(argv), false);
+            }
             Ok(())
         });
 

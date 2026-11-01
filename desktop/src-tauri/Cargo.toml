@@ -33,8 +33,14 @@ symphonia = { version = "0.5", features = ["all"] }
 cpal = "0.16"
 hound = "3"
 
-whisper-rs = { version = "0.16", features = ["vulkan", "openmp"] }
 log = "0.4"
+
+# GPU backend per OS: Vulkan (AMD/Intel/NVIDIA) on Linux and Windows, Metal on macOS.
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+whisper-rs = { version = "0.16", features = ["vulkan", "openmp"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+whisper-rs = { version = "0.16", features = ["metal"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # Same versions as wry/tauri use: only to set the overlay webview's GTK size request.

@@ -16,6 +16,11 @@ use symphonia::core::probe::Hint;
 
 pub const RATE: u32 = 16_000;
 
+/// Same limit as the web app's uploads: a bad drop cannot fill the memory.
+pub const MAX_FILE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+/// At most 4 hours of audio (~920 MB of samples in memory).
+pub const MAX_SECONDS: usize = 4 * 3600;
+
 pub const SUPPORTED_HINT: &str = "Try MP3, WAV, M4A, OGG, FLAC, WEBM or a video file with sound.";
 
 #[derive(Debug)]
@@ -36,8 +41,12 @@ impl std::fmt::Display for DecodeError {
 
 pub fn decode_file(path: &Path) -> Result<Vec<f32>, DecodeError> {
     let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    if std::fs::metadata(path).map(|m| m.len()).unwrap_or(0) == 0 {
+    let size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+    if size == 0 {
         return Err(DecodeError::Unsupported(format!("{name}: the file is empty.")));
+    }
+    if size > MAX_FILE_BYTES {
+        return Err(DecodeError::Unsupported(format!("{name} is larger than 2 GB.")));
     }
     match decode_symphonia(path) {
         Ok(Some(samples)) => Ok(samples),
@@ -101,6 +110,9 @@ fn decode_symphonia(path: &Path) -> anyhow::Result<Option<Vec<f32>>> {
         b.copy_interleaved_ref(decoded);
         let ch = spec.channels.count().max(1);
         mono.extend(b.samples().chunks(ch).map(|f| f.iter().sum::<f32>() / ch as f32));
+        if mono.len() > MAX_SECONDS * rate as usize {
+            anyhow::bail!("longer than 4 hours");
+        }
     }
     if mono.is_empty() {
         return Ok(None);
@@ -113,18 +125,47 @@ fn decode_ffmpeg(path: &Path) -> Option<Result<Vec<f32>, bool>> {
     if !which("ffmpeg") {
         return None;
     }
-    let out = Command::new("ffmpeg")
+    // Read the samples as they come (no second full copy of the audio in memory).
+    use std::io::Read;
+    let mut child = Command::new("ffmpeg")
         .args(["-nostdin", "-v", "error", "-i"])
         .arg(path)
         .args(["-vn", "-f", "f32le", "-ac", "1", "-ar", "16000", "-"])
         .stdin(Stdio::null())
-        .output()
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
         .ok()?;
-    if !out.status.success() || out.stdout.is_empty() {
-        let err = String::from_utf8_lossy(&out.stderr).to_lowercase();
+    let mut stdout = child.stdout.take()?;
+    let mut stderr = child.stderr.take()?;
+    let err_thread = std::thread::spawn(move || {
+        let mut e = String::new();
+        let _ = stderr.read_to_string(&mut e);
+        e
+    });
+    let mut samples = Vec::new();
+    let mut buf = vec![0u8; 1 << 16];
+    let mut carry: Vec<u8> = Vec::new();
+    loop {
+        let n = stdout.read(&mut buf).ok()?;
+        if n == 0 {
+            break;
+        }
+        carry.extend_from_slice(&buf[..n]);
+        let whole = carry.len() / 4 * 4;
+        samples.extend(carry[..whole].chunks_exact(4).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])));
+        carry.drain(..whole);
+        if samples.len() > MAX_SECONDS * RATE as usize {
+            let _ = child.kill();
+            return Some(Err(false));
+        }
+    }
+    let status = child.wait().ok()?;
+    let err = err_thread.join().unwrap_or_default().to_lowercase();
+    if !status.success() || samples.is_empty() {
         return Some(Err(err.contains("does not contain any stream") || err.contains("output file #0 does not contain")));
     }
-    Some(Ok(out.stdout.chunks_exact(4).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect()))
+    Some(Ok(samples))
 }
 
 pub fn which(cmd: &str) -> bool {
@@ -157,7 +198,26 @@ pub fn resample(input: &[f32], from: u32, to: u32) -> Vec<f32> {
         .collect()
 }
 
-/// Write 16 kHz mono f32 samples as 16-bit WAV (for the faster-whisper helper).
+/// A private temporary WAV (0600, unpredictable name, never an existing path or symlink).
+pub fn private_wav(samples: &[f32]) -> anyhow::Result<std::path::PathBuf> {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let nanos = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+    let path = std::env::temp_dir().join(format!("openwhisper-{}-{nanos:x}.wav", std::process::id()));
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create_new(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut opts, 0o600);
+    let file = opts.open(&path)?;
+    let spec = hound::WavSpec { channels: 1, sample_rate: RATE, bits_per_sample: 16, sample_format: hound::SampleFormat::Int };
+    let mut w = hound::WavWriter::new(std::io::BufWriter::new(file), spec)?;
+    for s in samples {
+        w.write_sample((s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16)?;
+    }
+    w.finalize()?;
+    Ok(path)
+}
+
+/// Write 16 kHz mono f32 samples as 16-bit WAV.
 pub fn write_wav(path: &Path, samples: &[f32]) -> anyhow::Result<()> {
     let spec = hound::WavSpec { channels: 1, sample_rate: RATE, bits_per_sample: 16, sample_format: hound::SampleFormat::Int };
     let mut w = hound::WavWriter::create(path, spec)?;

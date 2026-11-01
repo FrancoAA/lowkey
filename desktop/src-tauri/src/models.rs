@@ -95,9 +95,26 @@ pub fn model_url(spec: &ModelSpec) -> String {
 /// Download `url` to `dest` with resume, retries for network errors, and byte progress.
 /// `progress(done, total)`. The file appears under its final name only when complete.
 pub fn download(url: &str, dest: &Path, mut progress: impl FnMut(u64, u64)) -> anyhow::Result<()> {
-    if dest.exists() {
-        return Ok(());
+    // One download per file: the start-up preload and a first job can ask for the same model.
+    static ACTIVE: std::sync::Mutex<Vec<PathBuf>> = std::sync::Mutex::new(Vec::new());
+    static DONE: std::sync::Condvar = std::sync::Condvar::new();
+    {
+        let mut active = ACTIVE.lock().unwrap();
+        while active.contains(&dest.to_path_buf()) {
+            active = DONE.wait(active).unwrap();
+        }
+        if dest.exists() {
+            return Ok(());
+        }
+        active.push(dest.to_path_buf());
     }
+    let result = download_locked(url, dest, &mut progress);
+    ACTIVE.lock().unwrap().retain(|p| p != dest);
+    DONE.notify_all();
+    result
+}
+
+fn download_locked(url: &str, dest: &Path, progress: &mut impl FnMut(u64, u64)) -> anyhow::Result<()> {
     std::fs::create_dir_all(dest.parent().unwrap())?;
     let part = dest.with_extension("part");
     let client = reqwest::blocking::Client::builder()
@@ -107,7 +124,7 @@ pub fn download(url: &str, dest: &Path, mut progress: impl FnMut(u64, u64)) -> a
         .build()?;
     let mut last_err = None;
     for attempt in 1..=4u32 {
-        match download_once(&client, url, &part, &mut progress) {
+        match download_once(&client, url, &part, progress) {
             Ok(()) => {
                 std::fs::rename(&part, dest)?;
                 return Ok(());

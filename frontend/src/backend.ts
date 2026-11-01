@@ -114,13 +114,8 @@ async function desktopBackend(): Promise<Backend> {
       };
     },
     copy: (text) => invoke("copy_text", { text }),
-    async save(fileName, body) {
-      const ext = fileName.split(".").pop() ?? "txt";
-      const path = await dialog.save({ defaultPath: fileName, filters: [{ name: ext.toUpperCase(), extensions: [ext] }] });
-      if (!path) return false;
-      await invoke("save_text", { path, content: body });
-      return true;
-    },
+    // The app opens the save dialog and writes the file; the page never names a path.
+    save: (fileName, body) => invoke<boolean>("save_export", { fileName, content: body }),
     async saveOptions(o) {
       await invoke("set_options", { options: o });
     },
