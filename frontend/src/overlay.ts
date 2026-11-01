@@ -7,6 +7,7 @@ interface DictationState {
   level: number;
   text: string;
   error: string | null;
+  detail: string;
   delivered: string[];
   elapsed: number;
 }
@@ -49,11 +50,11 @@ function render(d: DictationState): void {
       break;
     case "transcribing":
       label.textContent = "Transcribing…";
-      detail.textContent = "";
+      detail.textContent = d.detail; // e.g. "Still transcribing the last one", download progress
       break;
     case "done":
-      label.textContent = d.delivered.includes("typed") ? "Typed" : d.delivered.includes("copied") ? "Copied" : "Done";
-      if (d.delivered.length === 2) label.textContent = "Typed · copied";
+      label.textContent =
+        d.delivered.length === 2 ? "Typed · copied" : d.delivered.includes("typed") ? "Typed" : "Copied";
       detail.textContent = d.text;
       break;
     case "error":

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import tempfile
 import time
 
 import pytest
@@ -13,8 +14,8 @@ from .conftest import FakeEngine
 
 
 class FakeRecorder:
-    def __init__(self, on_level, seconds: float = 1.0) -> None:
-        self.on_level, self.seconds, self.started, self.stopped = on_level, seconds, False, False
+    def __init__(self, on_level, on_end=None, seconds: float = 1.0) -> None:
+        self.on_level, self.on_end, self.seconds, self.started, self.stopped = on_level, on_end, seconds, False, False
 
     def start(self) -> None:
         self.started = True
@@ -33,20 +34,22 @@ class Clock:
         return self.t
 
 
-def make(seconds: float = 1.0, clock: Clock | None = None):
+def make(seconds: float = 1.0, clock: Clock | None = None, deliver_result=("copied", "typed"), engine=None):
     delivered: list[str] = []
     recorders: list[FakeRecorder] = []
+    notes: list[str] = []
 
-    def factory(on_level):
-        r = FakeRecorder(on_level, seconds)
+    def factory(on_level, on_end=None):
+        r = FakeRecorder(on_level, on_end, seconds)
         recorders.append(r)
         return r
 
     d = hk.GlobalDictation(
-        JobManager(FakeEngine()), model=lambda: "large-v3-turbo",
-        deliver=lambda text: delivered.append(text) or ["copied", "typed"],
-        recorder_factory=factory, clock=clock or Clock(),
+        JobManager(engine or FakeEngine()), model=lambda: "large-v3-turbo",
+        deliver=lambda text: delivered.append(text) or list(deliver_result),
+        recorder_factory=factory, clock=clock or Clock(), notifier=notes.append,
     )
+    d.notes = notes
     return d, delivered, recorders
 
 
@@ -110,10 +113,11 @@ def test_toggle_action():
 
 
 def test_mic_failure_is_reported():
-    def broken(_):
+    def broken(*_):
         raise FileNotFoundError("pw-record")
 
-    d = hk.GlobalDictation(JobManager(FakeEngine()), model=lambda: "small", deliver=lambda t: [], recorder_factory=broken)
+    d = hk.GlobalDictation(JobManager(FakeEngine()), model=lambda: "small", deliver=lambda t: [], recorder_factory=broken,
+                           notifier=lambda m: None)
     assert d.press()["state"] == "error"
     assert "microphone" in d.error
 
@@ -128,8 +132,11 @@ def test_api_routes(client):
     assert client.get("/api/dictation").json()["state"] == "idle"
     assert client.post("/api/dictation/nope").status_code == 404
     # A web page cannot trigger dictation (it would type into the focused app).
-    res = client.post("/api/dictation/toggle", headers={"Origin": "https://evil.example"})
-    assert res.status_code == 403
+    for origin in ("https://evil.example", "http://localhost:3000", "http://127.0.0.1:8000"):
+        res = client.post("/api/dictation/toggle", headers={"Origin": origin})
+        assert res.status_code == 403, origin
+    assert client.post("/api/dictation/toggle", headers={"Sec-Fetch-Site": "same-origin"}).status_code == 403
+    assert client.get("/api/dictation").json()["state"] == "idle"  # none of those started the mic
 
 
 def test_lua_snippets_are_well_formed():
@@ -144,3 +151,111 @@ def test_lua_snippets_are_well_formed():
 @pytest.mark.parametrize("key,mask,k", [("SUPER + CTRL + D", 68, "D"), ("SUPER + SHIFT + SPACE", 65, "SPACE"), ("ALT + F9", 8, "F9")])
 def test_key_parsing(key, mask, k):
     assert hk._mods_mask(key) == (mask, k)
+
+
+def test_lua_strings_escape_quotes_and_keep_utf8(tmp_path):
+    assert hk.lua_str('a"b\\c') == '"a\\"b\\\\c"'
+    assert hk.lua_str("Año/ñ") == '"Año/ñ"'  # Lua has no \uXXXX escape; UTF-8 bytes are fine
+    assert hk.lua_str("x\ny") == '"x\\010y"'
+
+
+class SlowEngine(FakeEngine):
+    def __init__(self) -> None:
+        super().__init__()
+        import threading
+
+        self.gate = threading.Event()
+
+    def transcribe(self, path, language, model, on_update):
+        self.gate.wait(5)
+        return super().transcribe(path, language, model, on_update)
+
+
+def test_press_while_transcribing_says_busy():
+    engine = SlowEngine()
+    d, delivered, _ = make(engine=engine)
+    d.toggle()
+    d.toggle()
+    assert d.state == "transcribing"
+    snap = d.press()
+    assert snap["state"] == "transcribing" and "Still transcribing" in snap["detail"]
+    engine.gate.set()
+    wait_state(d, "done")
+    assert len(delivered) == 1
+
+
+def test_cancel_while_transcribing_drops_the_text():
+    engine = SlowEngine()
+    d, delivered, _ = make(engine=engine)
+    d.toggle()
+    d.toggle()
+    assert d.cancel()["state"] == "idle"
+    engine.gate.set()
+    time.sleep(0.3)
+    assert delivered == [] and d.state == "idle"  # nothing typed into whatever has focus
+
+
+def test_nothing_delivered_is_an_error_that_keeps_the_text():
+    d, delivered, _ = make(deliver_result=())
+    d.toggle()
+    d.toggle()
+    wait_state(d, "error")
+    assert "wtype" in d.error and d.text == "Hello there. General test."
+    assert d.notes and "wtype" in d.notes[-1]
+
+
+def test_recorder_failure_and_limit():
+    d, delivered, recs = make()
+    d.toggle()
+    recs[0].on_end("failed: no source")
+    assert d.state == "error" and "microphone stopped" in d.error and "no source" in d.error
+    d.toggle()
+    recs[1].on_end("limit")  # the cap stops and transcribes instead of silently dropping audio
+    assert d.state == "transcribing"
+    wait_state(d, "done")
+    assert len(delivered) == 1
+
+
+def test_stale_end_event_is_ignored():
+    d, _, recs = make()
+    d.toggle()
+    d.toggle()
+    wait_state(d, "done")
+    d.toggle()  # a new recording
+    recs[0].on_end("failed: old recorder")  # late event from the first one
+    assert d.state == "listening"
+
+
+def test_dictation_jobs_go_ahead_of_uploads():
+    order = []
+
+    class Recording(FakeEngine):
+        def transcribe(self, path, language, model, on_update):
+            order.append(model)
+            return super().transcribe(path, language, model, on_update)
+
+    from .conftest import tone_wav
+
+    gate = SlowEngine()
+    jm = JobManager(gate)
+    files = []
+    for _ in range(3):
+        p = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+        p.write(tone_wav())
+        p.close()
+        files.append(p.name)
+    jm.submit("busy.wav", files[0], None, "busy")  # occupies the worker
+    time.sleep(0.1)
+    jm.engine = Recording()
+    jm.submit("upload.wav", files[1], None, "upload")
+    jm.submit("dictation.wav", files[2], None, "dictation", priority=0)
+    gate.gate.set()
+    end = time.time() + 5
+    while len(order) < 2 and time.time() < end:
+        time.sleep(0.02)
+    assert order == ["dictation", "upload"]
+
+
+def test_conf_snippet_for_classic_config():
+    text = hk.conf_snippet("SUPER + CTRL + X", hk.CLI)
+    assert "bind = SUPER CTRL, X, exec," in text and "bindr = SUPER CTRL, X, exec," in text

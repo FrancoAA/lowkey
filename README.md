@@ -59,14 +59,18 @@ On Hyprland, open-whisper also adds a **global key: <kbd>Super</kbd>+<kbd>Ctrl</
 ![Global dictation overlay](docs/screenshots/06-hotkey-overlay-listening.png)
 ![Text typed into the focused app](docs/screenshots/07-hotkey-text-pasted.png)
 
-**Setup: none.** `./run` adds the key and the overlay window rule to the running Hyprland
-with `hyprctl eval`, and removes the key when open-whisper stops. No config file is changed.
+**Setup: none** on Hyprland 0.56+ with a Lua config (as Omarchy has). `./run` adds the key
+and the overlay window rule to the running Hyprland with `hyprctl eval`, adds them again if
+Hyprland reloads its config, and removes them when open-whisper stops. No config file is
+changed.
 The terminal shows the result, for example:
 
 ```
   Global dictation key: SUPER + CTRL + X — hold to talk, tap to start/stop (active while open-whisper runs)
 ```
 
+- While a dictation is still being transcribed, a new press shows "Still transcribing" in the
+  overlay. Dictation goes ahead of file uploads in the queue.
 - If the key is already in use, open-whisper does not take it and tells you. Choose another
   key: `./run --hotkey "SUPER + ALT + D"`. Turn the key off with `./run --no-hotkey`.
 - It needs PipeWire (`pw-record`), `wl-copy`, `wtype` and Chromium (or Chrome/Brave) for the
@@ -85,6 +89,11 @@ uv run python -m openwhisper.hotkey      # prints the Lua lines to add
 
 It is two binds (press and release) that run `scripts/ow-dictate`, plus the overlay window
 rule. When the key is in your config, open-whisper sees it and does not add it again.
+
+**Classic `hyprland.conf` (no Lua):** open-whisper cannot add the key itself. Print the two
+bind lines with `uv run python -m openwhisper.hotkey --conf` and add them to your config.
+Typing and the clipboard work; the overlay window stays off, because without its window rule
+it could take the keyboard focus (you get desktop notifications for errors instead).
 
 **Other desktops** (sway, GNOME, KDE…): bind `scripts/ow-dictate toggle` to a key (one press
 starts, the next stops), or `ow-dictate press` / `ow-dictate release` if your desktop has

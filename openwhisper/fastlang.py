@@ -6,7 +6,11 @@ for a short clip, so a dictation took ~2x longer with auto-detect.
 
 This subclass (1) detects the language from exactly the window that transcription encodes
 first, and (2) keeps the last encoder output, so the second encode of that window is a cache
-hit. The result is the same; only the duplicate encoder pass goes away.
+hit. The transcript is the same. Language probabilities can differ in the last digits: stock
+detection encodes one more 10 ms feature frame than the first transcription window does.
+
+Memory: the cache holds one encoder output (about 4-8 MB; on a GPU, in VRAM) for the life of
+the model. It is replaced by the next encode and freed with the model.
 """
 
 from __future__ import annotations
@@ -38,8 +42,8 @@ class FastLangWhisperModel(WhisperModel):
             if self._enc_cache and self._enc_cache[0] == key:
                 return self._enc_cache[1]
         out = super().encode(features)
-        self.encode_calls += 1
         with self._enc_lock:
+            self.encode_calls += 1
             self._enc_cache = (key, out)
         return out
 

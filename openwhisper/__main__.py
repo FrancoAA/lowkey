@@ -73,9 +73,12 @@ def setup_global_dictation(app, url: str, args) -> object | None:
 
     from . import hotkey as hk
 
-    rd = hk.runtime_dir()
-    rd.mkdir(parents=True, exist_ok=True)
-    (rd / "server.json").write_text(json.dumps({"url": url, "pid": os.getpid()}))
+    try:
+        rd = hk.runtime_dir()
+        rd.mkdir(mode=0o700, parents=True, exist_ok=True)
+        (rd / "server.json").write_text(json.dumps({"url": url, "pid": os.getpid()}))
+    except OSError as exc:  # the web app must start anyway
+        print(f"  Global dictation: cannot write {hk.runtime_dir()} ({exc}); the key will not reach this app.")
     app.state.dictation.overlay = hk.Overlay(url)
 
     if args.no_hotkey:
@@ -91,6 +94,11 @@ def setup_global_dictation(app, url: str, args) -> object | None:
     except Exception as exc:  # never block the web app on the desktop integration
         print(f"  Global dictation key: could not add it ({exc}). See README for the config snippet.")
         return None
+    binding.watch_reloads()
+    overlay = app.state.dictation.overlay
+    overlay.enabled = binding.rule  # without our window rule the overlay could take focus
+    if overlay.available():
+        overlay.start()  # starts hidden, so the first press shows it at once
     if missing:
         print(f"  Note: install {', '.join(missing)} for the global key to record/copy/type.")
     return binding
@@ -102,6 +110,9 @@ def teardown_global_dictation(app, binding) -> None:
 
     from . import hotkey as hk
 
+    if getattr(app.state, "torn_down", False):
+        return
+    app.state.torn_down = True
     try:
         if binding:
             binding.uninstall()
@@ -153,7 +164,12 @@ def main() -> None:
             webbrowser.open(url)
 
         threading.Thread(target=open_when_ready, daemon=True).start()
-    server.run()
+    try:
+        server.run()
+    finally:
+        # Normally the lifespan hook already ran (Ctrl+C, SIGTERM). This covers a failed start,
+        # e.g. the port taken between the check and the bind.
+        teardown_global_dictation(app, hotkey)
 
 
 if __name__ == "__main__":

@@ -98,6 +98,13 @@ def create_app(engine: Any = None, preload: bool = True, allowed_hosts: list[str
         if request.url.path.startswith("/api/") and request.method not in ("GET", "HEAD"):
             # Compare host names only: the Vite dev proxy rewrites Host to the backend port.
             origin = request.headers.get("origin")
+            if request.url.path.startswith("/api/dictation/") and (
+                origin is not None or request.headers.get("sec-fetch-site") not in (None, "none")
+            ):
+                # Only scripts/ow-dictate (curl, no Origin) may start the mic and type into the
+                # focused app. Browsers always send Origin on POST, so no web page can, not even
+                # one on another localhost port.
+                return JSONResponse({"detail": "Dictation is controlled by the desktop key only."}, status_code=403)
             if origin and urlsplit(origin).hostname not in hosts:
                 return JSONResponse({"detail": "Cross-origin requests are not allowed."}, status_code=403)
             if request.url.path == "/api/transcribe":

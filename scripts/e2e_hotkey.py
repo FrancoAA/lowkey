@@ -136,6 +136,14 @@ def main() -> None:
         binds = wait(lambda: [b for b in hj("binds") if b.get("modmask") == 68 and b.get("key", "").upper() == "X"] or None,
                      10, "binds")
         check(len(binds) == 2 and any(b["release"] for b in binds), "SUPER+CTRL+X press and release binds added at runtime")
+        check(any(b.get("description") == "Dictate (open-whisper, while running)" for b in binds), "bind is marked as a runtime bind")
+
+        print("config reload drops runtime binds; the app adds them again")
+        run(["hyprctl", "reload"], env)
+        time.sleep(0.5)
+        binds = wait(lambda: [b for b in hj("binds") if b.get("modmask") == 68 and b.get("key", "").upper() == "X"] or None,
+                     10, "binds after reload")
+        check(len(binds) == 2, "binds back after `hyprctl reload`")
 
         # ---- a target app with keyboard focus
         subprocess.Popen(

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import itertools
 import logging
 import os
 import queue
@@ -72,12 +73,14 @@ class JobManager:
     def __init__(self, engine: Transcriber) -> None:
         self.engine = engine
         self.jobs: dict[str, Job] = {}
-        self._queue: queue.Queue[str] = queue.Queue()
+        # (priority, seq, job id): dictation (0) goes ahead of file uploads (1); FIFO within each.
+        self._queue: queue.PriorityQueue[tuple[int, int, str]] = queue.PriorityQueue()
+        self._seq = itertools.count()
         self._lock = threading.Lock()
         self._worker = threading.Thread(target=self._run, name="transcriber", daemon=True)
         self._worker.start()
 
-    def submit(self, filename: str, path: str, language: str | None, model: str) -> Job:
+    def submit(self, filename: str, path: str, language: str | None, model: str, priority: int = 1) -> Job:
         job = Job(id=uuid.uuid4().hex, filename=filename, path=path, language=language, model=model)
         with self._lock:
             self._gc()
@@ -85,7 +88,7 @@ class JobManager:
             if pending >= MAX_PENDING:
                 raise QueueFull(f"{pending} transcriptions are already waiting. Try again when they finish.")
             self.jobs[job.id] = job
-        self._queue.put(job.id)
+        self._queue.put((priority, next(self._seq), job.id))
         return job
 
     def pending(self) -> int:
@@ -118,7 +121,7 @@ class JobManager:
 
     def _run(self) -> None:
         while True:
-            job = self.jobs.get(self._queue.get())
+            job = self.jobs.get(self._queue.get()[2])
             if job is None:
                 continue
             try:
