@@ -21,6 +21,7 @@ from . import config
 log = logging.getLogger("openwhisper")
 
 UpdateFn = Callable[[dict[str, Any]], None]
+DOWNLOAD_ATTEMPTS = 4
 
 
 class UnsupportedMedia(ValueError):
@@ -146,6 +147,9 @@ class Engine:
             def __init__(self, *args: Any, **kwargs: Any) -> None:
                 kwargs["disable"] = True
                 super().__init__(*args, **kwargs)
+                # A resumed download starts at the size of the partial file.
+                written[0] = max(written[0], int(kwargs.get("initial") or 0))
+                publish()
 
             # With hf_xet the hub would otherwise open a second "transfer" bar of this class and
             # count every byte twice. With update_transfer it reports both on this one bar.
@@ -166,7 +170,16 @@ class Engine:
         for fname, size in files:
             written[0] = received[0] = 0
             file_size[0] = size
-            path = hf_hub_download(spec.repo, fname, tqdm_class=Progress)
+            for attempt in range(1, DOWNLOAD_ATTEMPTS + 1):
+                try:
+                    path = hf_hub_download(spec.repo, fname, tqdm_class=Progress)
+                    break
+                except Exception as exc:  # network hiccup: the next attempt resumes the partial file
+                    if attempt == DOWNLOAD_ATTEMPTS:
+                        raise
+                    log.warning("download of %s failed (%s); retrying (%d/%d)", fname, exc, attempt, DOWNLOAD_ATTEMPTS)
+                    written[0] = received[0] = 0
+                    time.sleep(2 * attempt)
             done_before += size
             st.downloaded = max(st.downloaded, done_before)
         if path is None:
