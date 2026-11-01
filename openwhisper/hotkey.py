@@ -319,15 +319,25 @@ class HyprlandHotkey:
 
 
 def remove_app_binds() -> list[str]:
-    """Remove binds that the app added (any key), e.g. for --no-hotkey. Config binds stay."""
+    """Remove binds that the app added (any key), e.g. for --no-hotkey.
+
+    Hyprland can only unbind a whole key (hl.unbind), and Keybind:remove() crashed Hyprland
+    0.56.2, so a key that also has a bind from the user's config is left alone: unbinding it
+    would remove the config bind too. That case does not occur after a config reload (which
+    drops app-added binds)."""
     try:
         binds = json.loads(hyprctl("binds", "-j") or "[]")
     except (json.JSONDecodeError, subprocess.SubprocessError, OSError):
         return []
-    masks = {1: "SHIFT", 4: "CTRL", 8: "ALT", 64: "SUPER"}
+    masks = {64: "SUPER", 4: "CTRL", 8: "ALT", 1: "SHIFT"}
+
+    def combo(b: dict) -> tuple[int, str]:
+        return b.get("modmask", 0), str(b.get("key", "")).upper()
+
+    config_keys = {combo(b) for b in binds if b.get("description") == CONFIG_DESC}
     removed = []
     for b in binds:
-        if b.get("description") == RUNTIME_DESC:
+        if b.get("description") == RUNTIME_DESC and combo(b) not in config_keys and not b.get("submap"):
             key = " + ".join([v for m, v in masks.items() if b["modmask"] & m] + [b["key"]])
             hyprctl("eval", f"hl.unbind({lua_str(key)})")
             removed.append(key)
@@ -431,15 +441,41 @@ class Overlay:
 
 
 # --------------------------------------------------------------------------- output
-def deliver_text(text: str) -> list[str]:
+# Two dictations within this many seconds, into the same window, are one flow of text: the
+# second is typed with a leading space so "…test." + "Hello" does not become "test.Hello".
+JOIN_WINDOW_S = 15.0
+# No leading space before text that starts with punctuation or a closing bracket/quote.
+NO_SPACE_BEFORE = tuple(".,;:!?)]}…%'\"»”’-")
+
+
+def joining_space(text: str, now: float, last_at: float | None, same_window: bool) -> str:
+    if last_at is None or now - last_at > JOIN_WINDOW_S or not same_window:
+        return ""
+    if not text or text[0].isspace() or text.startswith(NO_SPACE_BEFORE):
+        return ""
+    return " "
+
+
+def focused_window() -> str | None:
+    """Address of the focused window on Hyprland (None elsewhere or on error)."""
+    if not hyprland_running():
+        return None
+    try:
+        return json.loads(hyprctl("activewindow", "-j") or "{}").get("address")
+    except (json.JSONDecodeError, subprocess.SubprocessError, OSError):
+        return None
+
+
+def deliver_text(text: str, typed_prefix: str = "") -> list[str]:
     """Clipboard + type into the focused window. Text goes over stdin, not argv, so other
-    users and processes cannot read it in the process list."""
+    users and processes cannot read it in the process list. The clipboard gets the text
+    alone; `typed_prefix` (a joining space) is only typed."""
     done = []
     if shutil.which("wl-copy"):
         if subprocess.run(["wl-copy"], input=text.encode(), timeout=5).returncode == 0:
             done.append("copied")
     if shutil.which("wtype"):
-        if subprocess.run(["wtype", "-"], input=text.encode(), timeout=60).returncode == 0:
+        if subprocess.run(["wtype", "-"], input=(typed_prefix + text).encode(), timeout=60).returncode == 0:
             done.append("typed")
     return done
 
@@ -462,11 +498,15 @@ class GlobalDictation:
     """
 
     def __init__(self, jobs: Any, model: Callable[[], str], overlay: Overlay | None = None,
-                 deliver: Callable[[str], list[str]] = deliver_text,
+                 deliver: Callable[..., list[str]] = deliver_text,
+                 window: Callable[[], str | None] = focused_window,
                  recorder_factory: Callable[..., Any] = MicRecorder, clock: Callable[[], float] = time.monotonic,
                  notifier: Callable[[str], None] = notify) -> None:
         self.jobs, self.model, self.overlay, self.deliver = jobs, model, overlay, deliver
         self.recorder_factory, self.clock, self.notifier = recorder_factory, clock, notifier
+        self.window = window
+        self.last_typed_at: float | None = None  # end of the last typed dictation
+        self.last_typed_window: str | None = None
         self.state = "idle"
         self.level = 0.0
         self.text = ""
@@ -654,8 +694,13 @@ class GlobalDictation:
             if not text:
                 self._fail("No speech was heard.")
                 return
-        delivered = self.deliver(text)
+        win = self.window()
+        same_window = win is None or win == self.last_typed_window  # unknown window: time alone decides
+        prefix = joining_space(text, self.clock(), self.last_typed_at, same_window)
+        delivered = self.deliver(text, prefix)
         with self._lock:
+            if "typed" in delivered:
+                self.last_typed_at, self.last_typed_window = self.clock(), win
             if epoch != self.epoch:
                 return
             if not delivered:

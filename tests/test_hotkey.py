@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import tempfile
 import time
 
@@ -46,8 +47,8 @@ def make(seconds: float = 1.0, clock: Clock | None = None, deliver_result=("copi
 
     d = hk.GlobalDictation(
         JobManager(engine or FakeEngine()), model=lambda: "large-v3-turbo",
-        deliver=lambda text: delivered.append(text) or list(deliver_result),
-        recorder_factory=factory, clock=clock or Clock(), notifier=notes.append,
+        deliver=lambda text, prefix="": delivered.append(prefix + text) or list(deliver_result),
+        recorder_factory=factory, clock=clock or Clock(), notifier=notes.append, window=lambda: "0xwin",
     )
     d.notes = notes
     return d, delivered, recorders
@@ -116,7 +117,7 @@ def test_mic_failure_is_reported():
     def broken(*_):
         raise FileNotFoundError("pw-record")
 
-    d = hk.GlobalDictation(JobManager(FakeEngine()), model=lambda: "small", deliver=lambda t: [], recorder_factory=broken,
+    d = hk.GlobalDictation(JobManager(FakeEngine()), model=lambda: "small", deliver=lambda t, p="": [], recorder_factory=broken,
                            notifier=lambda m: None)
     assert d.press()["state"] == "error"
     assert "microphone" in d.error
@@ -363,3 +364,71 @@ def test_transient_download_errors():
 
     assert transient(HTTPErr(503)) and transient(HTTPErr(429)) and transient(TimeoutError())
     assert not transient(HTTPErr(404)) and not transient(OSError(errno.ENOSPC, "disk full"))
+
+
+@pytest.mark.parametrize("text,gap,same,expected", [
+    ("Hello", 5.0, True, " "),        # a quick follow-up in the same window joins with a space
+    ("Hello", 16.0, True, ""),        # after the window: a new start, no space
+    ("Hello", 5.0, False, ""),        # another window (new field): no space
+    (", and more", 5.0, True, ""),    # punctuation first: no space
+    ("? Really", 5.0, True, ""),
+    ("…well", 5.0, True, ""),
+    (" Hello", 5.0, True, ""),        # already has one
+])
+def test_joining_space(text, gap, same, expected):
+    assert hk.joining_space(text, 100.0 + gap, 100.0, same) == expected
+    assert hk.joining_space(text, 100.0, None, same) == ""  # first dictation ever
+
+
+def test_second_dictation_soon_after_is_typed_with_a_space():
+    clock = Clock()
+    d, delivered, _ = make(clock=clock)
+    for _ in range(2):
+        d.toggle()
+        d.toggle()
+        wait_state(d, "done")
+        clock.t += 4.0
+    assert delivered == ["Hello there. General test.", " Hello there. General test."]
+    clock.t += 30.0
+    d.toggle()
+    d.toggle()
+    wait_state(d, "done")
+    assert delivered[-1] == "Hello there. General test."  # long pause: no space
+
+
+def test_remove_app_binds_never_touches_a_config_key(monkeypatch):
+    binds = [
+        {"modmask": 68, "key": "X", "description": hk.CONFIG_DESC, "release": False},
+        {"modmask": 68, "key": "X", "description": hk.RUNTIME_DESC, "release": False},
+        {"modmask": 72, "key": "D", "description": hk.RUNTIME_DESC, "release": False},
+    ]
+    calls = []
+
+    def fake_hyprctl(*args, check=False):
+        if args[:2] == ("binds", "-j"):
+            return json.dumps(binds)
+        calls.append(args)
+        return "ok"
+
+    monkeypatch.setattr(hk, "hyprctl", fake_hyprctl)
+    assert hk.remove_app_binds() == ["SUPER + ALT + D"]
+    assert calls == [("eval", 'hl.unbind("SUPER + ALT + D")')]  # SUPER+CTRL+X is in the config: kept
+
+
+def test_config_bind_means_the_app_adds_nothing(monkeypatch):
+    calls = []
+
+    def fake_hyprctl(*args, check=False):
+        if args[:2] == ("binds", "-j"):
+            return json.dumps([{"modmask": 68, "key": "x", "description": hk.CONFIG_DESC},
+                               {"modmask": 68, "key": "x", "description": "", "release": True}])
+        calls.append(args)
+        return "ok"
+
+    monkeypatch.setattr(hk, "hyprctl", fake_hyprctl)
+    monkeypatch.setattr(hk, "lua_config", lambda: True)
+    h = hk.HyprlandHotkey("SUPER + CTRL + X")
+    assert "from your Hyprland config" in h.install()
+    assert not h.added and not any("hl.bind(" in a[1] for a in calls if a[0] == "eval")
+    h.uninstall(keep_bind=False)
+    assert not any("hl.unbind" in a[1] for a in calls if a[0] == "eval")

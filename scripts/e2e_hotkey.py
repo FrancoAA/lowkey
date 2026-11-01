@@ -17,8 +17,10 @@ Hyprland ignores binds from virtual keyboards (wtype), so a physical key press c
 simulated: the test checks the binds exist and runs the bound command through Hyprland's own
 exec dispatcher, exactly as a key press/release would.
 
-Usage: uv run python scripts/e2e_hotkey.py [--first-run]
-  --first-run  part B uses an empty model cache (downloads ~1.5 GB) to show download progress
+Usage: uv run python scripts/e2e_hotkey.py [--first-run] [--config-bind]
+  --first-run    part B uses an empty model cache (downloads ~1.5 GB) to show download progress
+  --config-bind  the nested config contains the permanent bindings.lua snippet; checks that the
+                 app uses it and never adds a duplicate bind
 """
 
 from __future__ import annotations
@@ -91,6 +93,7 @@ def free_port() -> int:
 
 def main() -> None:
     first_run = "--first-run" in sys.argv
+    config_bind = "--config-bind" in sys.argv  # the key comes from the config snippet, as in Franco's setup
     for tool in ("hyprctl", "Hyprland", "wtype", "wl-paste", "grim", "foot", "ffmpeg"):
         if not shutil.which(tool):
             sys.exit(f"needs {tool}")
@@ -102,7 +105,11 @@ def main() -> None:
     tmp = Path(tempfile.mkdtemp(prefix="ow-hotkey-e2e-"))
     # Short path: Hyprland's sockets live under it and Unix socket paths max out at 108 bytes.
     runtime = Path(tempfile.mkdtemp(prefix="ow", dir="/tmp"))
-    (tmp / "hyprland.lua").write_text(NESTED_CONFIG)
+    snippet = ""
+    if config_bind:
+        snippet = subprocess.run([sys.executable, "-m", "openwhisper.hotkey"], cwd=ROOT, capture_output=True,
+                                 text=True, check=True).stdout
+    (tmp / "hyprland.lua").write_text(NESTED_CONFIG + snippet)
     mic = tmp / "mic.wav"  # speech + 4 s of silence, so the loop does not repeat inside one take
     run(["ffmpeg", "-loglevel", "error", "-y", "-i", str(SPEECH), "-af", "apad=pad_dur=4", "-ar", "16000", "-ac", "1", str(mic)])
     typed = tmp / "typed.txt"
@@ -164,7 +171,7 @@ def main() -> None:
         # ================= part A: app running
         port = free_port()
         url = f"http://127.0.0.1:{port}"
-        app_env = {**env, "HF_HOME": os.environ.get("HF_HOME", str(Path.home() / ".cache" / "huggingface"))}
+        app_env = {**env, "PYTHONUNBUFFERED": "1", "HF_HOME": os.environ.get("HF_HOME", str(Path.home() / ".cache" / "huggingface"))}
         server = subprocess.Popen([sys.executable, "-m", "openwhisper", "--no-browser", "--port", str(port)],
                                   cwd=ROOT, env=app_env, stdout=open(tmp / "server-a.log", "w"), stderr=subprocess.STDOUT)
         wait(lambda: up(url), 60, "server")
@@ -172,7 +179,13 @@ def main() -> None:
              180, "model ready")
         binds = wait(lambda: x_binds() or None, 10, "binds")
         check(len(binds) == 2 and any(b["release"] for b in binds), "SUPER+CTRL+X press and release binds added at runtime")
-        check(any(b.get("description") == "Dictate (open-whisper, added by the app)" for b in binds), "bind is marked as added by the app")
+        if config_bind:
+            check(len(binds) == 2 and any(b.get("description") == "Dictate (open-whisper)" for b in binds),
+                  "the key comes from the config; the app added no duplicate")
+            check("from your Hyprland config" in (tmp / "server-a.log").read_text(), "the app reports the config key")
+        else:
+            check(any(b.get("description") == "Dictate (open-whisper, added by the app)" for b in binds),
+                  "bind is marked as added by the app")
 
         run(["hyprctl", "reload"], env)
         time.sleep(0.5)
@@ -221,13 +234,15 @@ def main() -> None:
         key("release")
         done2 = wait(lambda: (s := get(url + "/api/dictation"))["state"] in ("done", "error") and s, 60, "tap transcript")
         check(done2["state"] == "done", f"tap-mode transcript: {done2['text']!r}")
-        wait(lambda: typed.read_text().count(done2["text"]) == 2, 10, "second typed text")
+        # Within 15 s, same window: the second dictation is joined with one space.
+        wait(lambda: typed.read_text().strip() == f"{done['text']} {done2['text']}", 10, "second typed text")
+        check(True, "second dictation within 15 s joined with a space")
 
         print("A3: stop the app; the key stays")
         server.send_signal(signal.SIGTERM)
         server.wait(15)
         server = None
-        check(len(x_binds()) == 2, "binds stay after the app stops (the key can start it again)")
+        check(len(x_binds()) == 2, "exactly two binds remain after the app stops (the key can start it again)")
         check(not (runtime / "open-whisper" / "server.json").exists(), "runtime file removed on exit")
         wait(lambda: not any("open-whisper-overlay" in c["class"] for c in hj("clients")), 10, "overlay browser closed")
 
@@ -261,6 +276,7 @@ def main() -> None:
         done3 = wait(lambda: (s := get(url_b + "/api/dictation"))["state"] in ("done", "error") and s, 60, "transcript B")
         check(done3["state"] == "done" and "typed" in done3["delivered"], f"typed after a cold start: {done3['text']!r}")
         wait(lambda: typed.read_text().count(done3["text"]) == 3, 10, "third typed text")
+        check(len(x_binds()) == 2, "still exactly two binds after the key started the app")
         check(not (runtime / "open-whisper" / "starting").exists(), "start lock removed once the app answered")
         info = json.loads((runtime / "open-whisper" / "server.json").read_text())
         check(oct((runtime / "open-whisper").stat().st_mode & 0o777) == "0o700" and len(info.get("token", "")) > 20,

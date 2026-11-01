@@ -55,6 +55,10 @@ On Hyprland, open-whisper also adds a **global key: <kbd>Super</kbd>+<kbd>Ctrl</
 - A small window at the bottom of the screen shows a live waveform while it listens. It never
   takes the keyboard focus.
 - The text is **typed into the app that has focus** and is also **copied to the clipboard**.
+- Dictations follow on: if you dictate again within **15 seconds** into the same window, the
+  new text is typed with a space in front ("…a test. And then…"), unless it starts with
+  punctuation. After a longer pause, or in another window, no space is added. The clipboard
+  always gets the text alone.
 
 ![Global dictation overlay](docs/screenshots/06-hotkey-overlay-listening.png)
 ![Text typed into the focused app](docs/screenshots/07-hotkey-text-pasted.png)
@@ -107,7 +111,8 @@ uv run python -m openwhisper.hotkey      # prints the Lua lines to add
 ```
 
 It is two binds (press and release) that run `scripts/ow-dictate`, plus the overlay window
-rule. When the key is in your config, open-whisper sees it and does not add it again.
+rule. When the key is in your config, open-whisper sees it and does not add it again, and
+`--no-hotkey` / `--remove` leave it alone (they only remove keys that the app added).
 
 **Classic `hyprland.conf` (no Lua):** open-whisper cannot add the key itself. Print the two
 bind lines with `uv run python -m openwhisper.hotkey --conf` and add them to your config.
@@ -183,7 +188,8 @@ make e2e       # headless Chromium with a fake microphone: file, error and dicta
                # `uv run playwright install chromium` once
 make e2e-hotkey  # global key in a nested Hyprland (your session is not touched): overlay,
                  # typing, clipboard, hold and tap, key starts the closed app; screenshots 06-08.
-                 # `uv run python scripts/e2e_hotkey.py --first-run` also shows the download
+                 # Options: --first-run (empty model cache: shows the download),
+                 # --config-bind (key from the bindings.lua snippet: no duplicate binds)
 make bench     # model benchmark on this machine -> bench/.work/results.md
 ```
 
