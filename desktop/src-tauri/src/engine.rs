@@ -1,27 +1,23 @@
-//! Speech engines and model lifecycle (download, load, idle unload).
+//! Speech engine and model lifecycle (download, load, idle unload).
 //!
-//! whisper.cpp runs inside this process (GPU through Vulkan/Metal when present). faster-whisper
-//! runs in a Python helper (`python -m openwhisper.worker`, started with uv) when such a model is
-//! chosen or picked automatically on machines without a GPU.
+//! whisper.cpp runs inside this process: on the GPU through Vulkan/Metal when there is one,
+//! else on the CPU.
 
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{mpsc, Arc};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
 use serde::Serialize;
-use serde_json::{json, Value};
 use whisper_rs::{
     FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters, WhisperVadContext, WhisperVadContextParams, WhisperVadParams,
 };
 
 use crate::audio;
 use crate::formats::Segment;
-use crate::models::{self, EngineKind, Hardware, ModelSpec};
+use crate::models::{self, Hardware, ModelSpec};
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct ModelState {
@@ -68,25 +64,20 @@ pub struct Engines {
     pub hw: Hardware,
     states: Mutex<HashMap<String, ModelState>>,
     loaded: Mutex<Option<(String, Arc<WhisperContext>)>>,
-    sidecar: Mutex<Option<Sidecar>>,
-    /// The helper process, killable without the sidecar lock (held during long requests).
-    sidecar_child: Mutex<Option<Arc<Mutex<Child>>>>,
     last_used: Mutex<Instant>,
     pub idle_minutes: AtomicU64,
     /// Transcriptions running now: never unload under a running job.
     busy: AtomicU64,
     on_change: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
-    py_root: Option<PathBuf>,
-    me: std::sync::Weak<Engines>,
 }
 
-pub fn detect_hardware(py_root: Option<&Path>) -> Hardware {
+pub fn detect_hardware() -> Hardware {
     let gpu = if std::env::var_os("OPENWHISPER_NO_GPU").is_some() {
         None
     } else {
         gpu_name()
     };
-    Hardware { gpu, faster_whisper: py_root.is_some() && audio::which("uv") }
+    Hardware { gpu }
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -100,41 +91,21 @@ fn gpu_name() -> Option<String> {
     cfg!(target_arch = "aarch64").then(|| "Apple GPU (Metal)".to_string())
 }
 
-/// The Python project (pyproject.toml + openwhisper/) for the faster-whisper helper.
-pub fn find_py_root() -> Option<PathBuf> {
-    if let Some(p) = std::env::var_os("OPENWHISPER_PY_ROOT") {
-        return Some(PathBuf::from(p));
-    }
-    let exe = std::env::current_exe().ok()?;
-    exe.ancestors().skip(1).find(|d| d.join("pyproject.toml").is_file() && d.join("openwhisper").join("worker.py").is_file()).map(Path::to_path_buf)
-}
-
 impl Engines {
     pub fn new(idle_minutes: u64) -> Arc<Self> {
-        let py_root = find_py_root();
-        let hw = detect_hardware(py_root.as_deref());
+        let hw = detect_hardware();
         let states = models::CATALOG
             .iter()
-            .map(|m| {
-                let present = match m.engine {
-                    EngineKind::WhisperCpp => models::local_path(m.source).exists(),
-                    EngineKind::FasterWhisper => fw_cached(m.source),
-                };
-                (m.id.to_string(), ModelState::new(if present { "downloaded" } else { "missing" }))
-            })
+            .map(|m| (m.id.to_string(), ModelState::new(if models::local_path(m.source).exists() { "downloaded" } else { "missing" })))
             .collect();
-        let me = Arc::new_cyclic(|weak| Self {
+        let me = Arc::new(Self {
             hw,
             states: Mutex::new(states),
             loaded: Mutex::new(None),
-            sidecar: Mutex::new(None),
-            sidecar_child: Mutex::new(None),
             last_used: Mutex::new(Instant::now()),
             idle_minutes: AtomicU64::new(idle_minutes),
             busy: AtomicU64::new(0),
             on_change: Mutex::new(None),
-            py_root,
-            me: weak.clone(),
         });
         let weak = Arc::downgrade(&me);
         std::thread::spawn(move || loop {
@@ -168,10 +139,6 @@ impl Engines {
         self.states.lock().get(id).cloned().unwrap_or_else(|| ModelState::new("missing"))
     }
 
-    pub fn available(&self, spec: &ModelSpec) -> bool {
-        spec.engine == EngineKind::WhisperCpp || self.hw.faster_whisper
-    }
-
     fn unload_if_idle(&self) {
         let minutes = self.idle_minutes.load(Ordering::Relaxed);
         if self.busy.load(Ordering::SeqCst) > 0 || !idle_expired(minutes, self.last_used.lock().elapsed()) {
@@ -181,25 +148,13 @@ impl Engines {
             eprintln!("  Unloaded {id} after {minutes} idle minutes (it loads again on the next use).");
             self.set_state(&id, |s| *s = ModelState::new("downloaded"));
         }
-        if let Some(mut sc) = self.sidecar.lock().take() {
-            sc.stop();
-            for m in models::CATALOG.iter().filter(|m| m.engine == EngineKind::FasterWhisper) {
-                if self.state(m.id).state == "ready" {
-                    self.set_state(m.id, |s| *s = ModelState::new("downloaded"));
-                }
-            }
-        }
     }
 
     /// Download (if needed) and load `id`. Blocking.
     pub fn prepare(&self, id: &str) -> anyhow::Result<()> {
         let spec = models::spec(id).ok_or_else(|| anyhow::anyhow!("Unknown model {id:?}"))?;
         *self.last_used.lock() = Instant::now();
-        match spec.engine {
-            EngineKind::WhisperCpp => self.prepare_wc(spec).map(|_| ()),
-            EngineKind::FasterWhisper => self.with_sidecar(|sc| sc.prepare(spec.source)).map(|_| ()),
-        }
-        .inspect_err(|e| {
+        self.prepare_wc(spec).map(|_| ()).inspect_err(|e| {
             let msg = friendly(e);
             self.set_state(id, |s| {
                 s.state = "error".into();
@@ -255,35 +210,6 @@ impl Engines {
         Ok(ctx)
     }
 
-    fn with_sidecar<T>(&self, f: impl FnOnce(&mut Sidecar) -> anyhow::Result<T>) -> anyhow::Result<T> {
-        let mut guard = self.sidecar.lock();
-        if guard.as_mut().map(|s| !s.alive()).unwrap_or(true) {
-            let root = self.py_root.clone().ok_or_else(|| anyhow::anyhow!("faster-whisper needs uv and the open-whisper Python project"))?;
-            let weak = self.me.clone();
-            let sc = Sidecar::start(&root, Arc::new(move |model: String, st: Value| {
-                if let Some(me) = weak.upgrade() {
-                    me.apply_fw_state(&model, &st);
-                }
-            }))?;
-            *self.sidecar_child.lock() = Some(sc.child.clone());
-            *guard = Some(sc);
-        }
-        f(guard.as_mut().unwrap())
-    }
-
-    /// Model-state events from the helper (download progress, loading, ready, error).
-    fn apply_fw_state(&self, model: &str, st: &Value) {
-        if let Some(spec) = models::CATALOG.iter().find(|m| m.engine == EngineKind::FasterWhisper && m.source == model) {
-            self.set_state(spec.id, |s| {
-                s.state = st["state"].as_str().unwrap_or("loading").into();
-                s.downloaded = st["downloaded"].as_u64().unwrap_or(0);
-                s.total = st["total"].as_u64().unwrap_or(0);
-                s.progress = st["progress"].as_f64().unwrap_or(0.0);
-                s.error = st["error"].as_str().map(String::from);
-            });
-        }
-    }
-
     pub fn transcribe(&self, id: &str, input: Input, sink: Sink) -> anyhow::Result<Output> {
         let spec = models::spec(id).ok_or_else(|| anyhow::anyhow!("Unknown model {id:?}"))?;
         *self.last_used.lock() = Instant::now();
@@ -296,48 +222,20 @@ impl Engines {
 
     fn transcribe_inner(&self, id: &str, spec: &ModelSpec, input: Input, sink: Sink) -> anyhow::Result<Output> {
         sink(EngineEvent::Preparing("Preparing model".into()));
-        let out = match spec.engine {
-            EngineKind::WhisperCpp => {
-                let ctx = self.prepare_wc(spec).inspect_err(|e| {
-                    let msg = friendly(e);
-                    self.set_state(id, |s| {
-                        s.state = "error".into();
-                        s.error = Some(msg.clone());
-                    })
-                })?;
-                let pcm = match input.pcm {
-                    Some(p) => p,
-                    None => audio::decode_file(input.path.as_deref().unwrap()).map_err(|e| anyhow::anyhow!("{e}"))?,
-                };
-                run_whisper_cpp(&ctx, &pcm, input.language.as_deref(), &sink)
-            }
-            EngineKind::FasterWhisper => {
-                let (path, tmp) = match (&input.path, &input.pcm) {
-                    (Some(p), _) => (p.clone(), None),
-                    (None, Some(pcm)) => {
-                        let tmp = audio::private_wav(pcm)?; // 0600, unpredictable name
-                        (tmp.clone(), Some(tmp))
-                    }
-                    _ => anyhow::bail!("nothing to transcribe"),
-                };
-                let result = self.with_sidecar(|sc| sc.transcribe(spec.source, &path, input.language.as_deref(), &sink));
-                if let Some(t) = tmp {
-                    let _ = std::fs::remove_file(t);
-                }
-                result
-            }
+        let ctx = self.prepare_wc(spec).inspect_err(|e| {
+            let msg = friendly(e);
+            self.set_state(id, |s| {
+                s.state = "error".into();
+                s.error = Some(msg.clone());
+            })
+        })?;
+        let pcm = match input.pcm {
+            Some(p) => p,
+            None => audio::decode_file(input.path.as_deref().ok_or_else(|| anyhow::anyhow!("nothing to transcribe"))?).map_err(|e| anyhow::anyhow!("{e}"))?,
         };
-        out
+        run_whisper_cpp(&ctx, &pcm, input.language.as_deref(), &sink)
     }
 
-    pub fn shutdown(&self) {
-        // Do not wait for the sidecar lock: a transcription may hold it for minutes.
-        if let Some(child) = self.sidecar_child.lock().take() {
-            let mut c = child.lock();
-            let _ = c.kill();
-            let _ = c.wait();
-        }
-    }
 }
 
 /// 0 minutes = keep the model loaded.
@@ -352,18 +250,6 @@ fn friendly(e: &anyhow::Error) -> String {
     } else {
         format!("{e:#}")
     }
-}
-
-fn fw_cached(name: &str) -> bool {
-    let repo = match name {
-        "large-v3-turbo" => "mobiuslabsgmbh--faster-whisper-large-v3-turbo".to_string(),
-        other => format!("Systran--faster-whisper-{other}"),
-    };
-    let hub = std::env::var_os("HF_HOME").map(PathBuf::from).unwrap_or_else(|| dirs::cache_dir().unwrap_or_default().join("huggingface")).join("hub");
-    let snaps = hub.join(format!("models--{repo}")).join("snapshots");
-    std::fs::read_dir(snaps)
-        .map(|it| it.flatten().any(|d| d.path().join("model.bin").exists()))
-        .unwrap_or(false)
 }
 
 fn physical_threads() -> i32 {
@@ -434,115 +320,6 @@ fn run_whisper_cpp(ctx: &WhisperContext, pcm: &[f32], language: Option<&str>, si
         .filter(|s| !s.text.is_empty())
         .collect();
     Ok(Output { language: lang, duration, segments })
-}
-
-// ------------------------------------------------------------------ faster-whisper helper
-type StateFn = Arc<dyn Fn(String, Value) + Send + Sync>;
-
-struct Sidecar {
-    child: Arc<Mutex<Child>>,
-    stdin: ChildStdin,
-    pending: Arc<Mutex<HashMap<u64, mpsc::Sender<Value>>>>,
-    next: AtomicU64,
-}
-
-impl Sidecar {
-    fn start(root: &Path, on_state: StateFn) -> anyhow::Result<Self> {
-        let mut child = Command::new("uv")
-            .args(["run", "--frozen", "--no-dev", "--project"])
-            .arg(root)
-            .args(["python", "-m", "openwhisper.worker"])
-            .current_dir(root)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
-            .spawn()
-            .map_err(|e| anyhow::anyhow!("could not start the faster-whisper helper (uv): {e}"))?;
-        let stdin = child.stdin.take().unwrap();
-        let stdout = child.stdout.take().unwrap();
-        let pending: Arc<Mutex<HashMap<u64, mpsc::Sender<Value>>>> = Arc::default();
-        let p2 = pending.clone();
-        std::thread::spawn(move || {
-            for line in BufReader::new(stdout).lines().map_while(Result::ok) {
-                let Ok(v) = serde_json::from_str::<Value>(&line) else { continue };
-                if v["event"] == "model_state" {
-                    on_state(v["model"].as_str().unwrap_or("").into(), v["state"].clone());
-                    continue;
-                }
-                if let Some(id) = v["id"].as_u64() {
-                    if let Some(tx) = p2.lock().get(&id) {
-                        let _ = tx.send(v);
-                    }
-                }
-            }
-            // Helper exited: wake every waiter.
-            for (_, tx) in p2.lock().drain() {
-                let _ = tx.send(json!({"event": "error", "error": "the faster-whisper helper stopped"}));
-            }
-        });
-        Ok(Self { child: Arc::new(Mutex::new(child)), stdin, pending, next: AtomicU64::new(1) })
-    }
-
-    fn alive(&mut self) -> bool {
-        matches!(self.child.lock().try_wait(), Ok(None))
-    }
-
-    fn request(&mut self, mut msg: Value) -> anyhow::Result<(u64, mpsc::Receiver<Value>)> {
-        let id = self.next.fetch_add(1, Ordering::Relaxed);
-        msg["id"] = json!(id);
-        let (tx, rx) = mpsc::channel();
-        self.pending.lock().insert(id, tx);
-        writeln!(self.stdin, "{msg}")?;
-        self.stdin.flush()?;
-        Ok((id, rx))
-    }
-
-    fn prepare(&mut self, model: &str) -> anyhow::Result<()> {
-        let (id, rx) = self.request(json!({"cmd": "prepare", "model": model}))?;
-        let res = wait_done(&rx, |_| {});
-        self.pending.lock().remove(&id);
-        res.map(|_| ())
-    }
-
-    fn transcribe(&mut self, model: &str, path: &Path, language: Option<&str>, sink: &Sink) -> anyhow::Result<Output> {
-        let (id, rx) = self.request(json!({"cmd": "transcribe", "model": model, "path": path, "language": language}))?;
-        let res = wait_done(&rx, |v| match v["event"].as_str() {
-            Some("state") if v["state"] == "transcribing" => sink(EngineEvent::Transcribing),
-            Some("state") => sink(EngineEvent::Preparing(v["message"].as_str().unwrap_or("Preparing").into())),
-            Some("progress") => sink(EngineEvent::Progress(v["progress"].as_f64().unwrap_or(0.0))),
-            Some("language") => sink(EngineEvent::Language(v["language"].as_str().unwrap_or("").into(), v["probability"].as_f64())),
-            Some("segment") => {
-                if let Ok(seg) = serde_json::from_value::<Segment>(v["segment"].clone()) {
-                    sink(EngineEvent::Segment(seg))
-                }
-            }
-            _ => {}
-        });
-        self.pending.lock().remove(&id);
-        let done = res?;
-        Ok(Output {
-            language: done["language"].as_str().map(String::from),
-            duration: done["duration"].as_f64().unwrap_or(0.0),
-            segments: serde_json::from_value(done["segments"].clone()).unwrap_or_default(),
-        })
-    }
-
-    fn stop(&mut self) {
-        let mut c = self.child.lock();
-        let _ = c.kill();
-        let _ = c.wait();
-    }
-}
-
-fn wait_done(rx: &mpsc::Receiver<Value>, mut each: impl FnMut(&Value)) -> anyhow::Result<Value> {
-    loop {
-        let v = rx.recv().map_err(|_| anyhow::anyhow!("the faster-whisper helper stopped"))?;
-        match v["event"].as_str() {
-            Some("done") => return Ok(v),
-            Some("error") => anyhow::bail!("{}", v["error"].as_str().unwrap_or("faster-whisper failed")),
-            _ => each(&v),
-        }
-    }
 }
 
 #[cfg(test)]

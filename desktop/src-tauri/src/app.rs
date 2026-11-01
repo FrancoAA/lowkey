@@ -64,10 +64,8 @@ impl App {
     pub fn current_model(&self) -> String {
         let cfg = self.config.lock().model.clone();
         for id in [self.cli.model.clone().unwrap_or_default(), cfg] {
-            if let Some(spec) = models::spec(&id) {
-                if self.engines.available(spec) {
-                    return id;
-                }
+            if models::spec(&id).is_some() {
+                return id;
             }
         }
         models::auto_model(&self.engines.hw).to_string()
@@ -96,10 +94,9 @@ impl App {
             .map(|m| {
                 let st = self.engines.state(m.id);
                 json!({
-                    "name": m.id, "label": m.label, "engine": m.engine, "approx_mb": m.download_mb,
+                    "name": m.id, "label": m.label, "approx_mb": m.download_mb,
                     "ram_mb": m.ram_mb, "speed_gpu": m.speed_gpu, "speed_cpu": m.speed_cpu, "wer": m.wer,
-                    "available": self.engines.available(m),
-                    "state": st.state, "downloaded": st.downloaded, "total": st.total, "progress": st.progress, "error": st.error,
+                                        "state": st.state, "downloaded": st.downloaded, "total": st.total, "progress": st.progress, "error": st.error,
                 })
             })
             .collect();
@@ -187,7 +184,6 @@ impl App {
         if let Some(h) = self.hotkey.lock().take() {
             h.uninstall();
         }
-        self.engines.shutdown();
         let f = runtime_dir().join("desktop.json");
         if std::fs::read_to_string(&f).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()).and_then(|v| v["pid"].as_u64())
             == Some(std::process::id() as u64)
@@ -525,7 +521,6 @@ pub fn headless(cli: &Cli) -> bool {
                 std::process::exit(1);
             }
         }
-        engines.shutdown();
         return true;
     }
     false

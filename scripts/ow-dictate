@@ -1,15 +1,14 @@
 #!/bin/sh
-# Global dictation control for open-whisper. The key bind runs it:
+# Global dictation key for open-whisper (the desktop app). The key bind runs it:
 #   ow-dictate press    on key press      (hold = push-to-talk, tap = start/stop)
 #   ow-dictate release  on key release
 #   ow-dictate toggle   one key, no hold detection
 #   ow-dictate cancel   stop without transcribing
-#   ow-dictate quit     stop open-whisper (for example one that the key started)
-# If open-whisper is not running, a press (or toggle) starts it in the background, without
-# the browser tab, and the dictation begins as soon as it is ready. The overlay shows the
-# start-up and first-run download progress.
+#   ow-dictate quit     stop open-whisper
+# The app does the work: a running app gets the action; with the app closed, a press (or
+# toggle) starts it in the background and the dictation begins as soon as it is ready.
+# This script only finds the app, so the bindings.lua block can keep pointing here.
 action=${1:-toggle}
-root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 dir="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/open-whisper"
 note() { command -v notify-send >/dev/null 2>&1 && notify-send -a open-whisper "open-whisper" "$1"; }
 
@@ -19,64 +18,25 @@ if [ -e "$dir" ] && { [ ! -O "$dir" ] || [ -L "$dir" ]; }; then
   exit 1
 fi
 
-field() { sed -n "s/.*\"$1\": *\"\{0,1\}\([^\",}]*\).*/\1/p" "${2:-$dir/server.json}" 2>/dev/null; }
+field() { sed -n "s/.*\"$1\": *\"\{0,1\}\([^\",}]*\).*/\1/p" "$2" 2>/dev/null; }
 
-# The desktop app (Tauri) is preferred: when it runs, hand the action to it (its single
-# instance forwards it privately; no token or HTTP needed).
-dexe=$(field exe "$dir/desktop.json")
-dpid=$(field pid "$dir/desktop.json")
-if [ -n "$dexe" ] && [ -x "$dexe" ] && [ -n "$dpid" ] && kill -0 "$dpid" 2>/dev/null; then
-  exec "$dexe" --dictate "$action"
-fi
-url=$(field url)
-token=$(field token)
-pid=$(field pid)
-
-if [ -n "$url" ] && curl -fsS -m 3 -X POST -H "X-OpenWhisper-Token: $token" "$url/api/dictation/$action" >/dev/null 2>&1; then
-  exit 0
+# A running app (installed, or a development build) writes desktop.json: hand the action to it.
+exe=$(field exe "$dir/desktop.json")
+pid=$(field pid "$dir/desktop.json")
+if [ -n "$exe" ] && [ -x "$exe" ] && [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+  exec "$exe" --dictate "$action"
 fi
 
 case "$action" in
   press | toggle) ;;
-  *) exit 0 ;; # release/cancel/quit with no app answering: nothing to do
+  *) exit 0 ;; # release/cancel/quit with no app running: nothing to do
 esac
 
-# Nothing running: start the installed desktop app if there is one (it begins the dictation
-# when ready); otherwise the Python app below.
-desktop_bin="${OPENWHISPER_DESKTOP_BIN:-$HOME/.local/bin/open-whisper}"
-if [ -x "$desktop_bin" ] && ! { [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; }; then
-  exec setsid -f "$desktop_bin" --dictate "$action" </dev/null >/dev/null 2>&1
+# Not running: start the installed app; it begins the dictation when it is ready.
+bin="${OPENWHISPER_DESKTOP_BIN:-$HOME/.local/bin/open-whisper}"
+if [ -x "$bin" ]; then
+  exec setsid -f "$bin" --dictate "$action" </dev/null >/dev/null 2>&1
 fi
-
-if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-  note "open-whisper is running but not responding. Restart it with ./run."
-  exit 1
-fi
-
-mkdir -p "$dir" && chmod 700 "$dir" || exit 1
-# One start at a time. The lock holds the starter's pid; the app removes the lock when it
-# answers, the starter removes it if the app fails, and a lock whose pid is gone is stale.
-lock="$dir/starting"
-if ! mkdir "$lock" 2>/dev/null; then
-  holder=$(cat "$lock/pid" 2>/dev/null)
-  if [ -n "$holder" ] && kill -0 "$holder" 2>/dev/null; then
-    exit 0 # already starting; the overlay will show it
-  fi
-  rm -rf "$lock"
-  mkdir "$lock" 2>/dev/null || exit 0
-fi
-
-# ./run checks the install and the UI build, then starts the app (fast when nothing changed).
-cd "$root" || exit 1
-setsid -f sh -c '
-  lock=$1 log=$2; shift 2
-  echo $$ >"$lock/pid"
-  "$@" >"$log" 2>&1 </dev/null
-  rc=$?
-  if [ -d "$lock" ]; then
-    rm -rf "$lock"
-    command -v notify-send >/dev/null 2>&1 &&
-      notify-send -a open-whisper "open-whisper could not start" "See $log"
-  fi
-  exit $rc
-' ow-dictate-start "$lock" "$dir/app.log" ./run --no-browser --dictate-on-start
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+note "open-whisper is not installed. Run 'make install-desktop' in $root."
+exit 1

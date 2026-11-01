@@ -11,25 +11,15 @@ use serde::Serialize;
 
 use crate::config::data_dir;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum EngineKind {
-    /// whisper.cpp inside this app (GPU through Vulkan/Metal, else CPU).
-    WhisperCpp,
-    /// faster-whisper (CTranslate2) in a Python helper process run with uv.
-    FasterWhisper,
-}
-
 #[derive(Debug, Clone, Serialize)]
 pub struct ModelSpec {
     pub id: &'static str,
-    pub engine: EngineKind,
     pub label: &'static str,
-    /// whisper.cpp: file in ggerganov/whisper.cpp. faster-whisper: model name.
+    /// The file in ggerganov/whisper.cpp on Hugging Face.
     pub source: &'static str,
     pub download_mb: u32,
     pub ram_mb: u32,
-    /// × real time on the test machine's GPU (None: no GPU path).
+    /// × real time on the test machine's GPU.
     pub speed_gpu: Option<f32>,
     /// × real time on the test machine's CPU.
     pub speed_cpu: f32,
@@ -38,13 +28,10 @@ pub struct ModelSpec {
 }
 
 pub const CATALOG: &[ModelSpec] = &[
-    ModelSpec { id: "large-v3-turbo-q5_0", engine: EngineKind::WhisperCpp, label: "Large v3 Turbo (q5)", source: "ggml-large-v3-turbo-q5_0.bin", download_mb: 547, ram_mb: 900, speed_gpu: Some(10.9), speed_cpu: 1.4, wer: 3.2 },
-    ModelSpec { id: "large-v3-turbo", engine: EngineKind::WhisperCpp, label: "Large v3 Turbo", source: "ggml-large-v3-turbo.bin", download_mb: 1549, ram_mb: 1800, speed_gpu: Some(8.9), speed_cpu: 1.3, wer: 3.9 },
-    ModelSpec { id: "medium", engine: EngineKind::WhisperCpp, label: "Medium", source: "ggml-medium.bin", download_mb: 1463, ram_mb: 2100, speed_gpu: Some(6.6), speed_cpu: 1.7, wer: 3.2 },
-    ModelSpec { id: "small", engine: EngineKind::WhisperCpp, label: "Small · fastest", source: "ggml-small.bin", download_mb: 466, ram_mb: 760, speed_gpu: Some(17.6), speed_cpu: 5.6, wer: 12.7 },
-    ModelSpec { id: "fw:large-v3-turbo", engine: EngineKind::FasterWhisper, label: "Large v3 Turbo · faster-whisper", source: "large-v3-turbo", download_mb: 1546, ram_mb: 1700, speed_gpu: None, speed_cpu: 4.0, wer: 3.9 },
-    ModelSpec { id: "fw:large-v3", engine: EngineKind::FasterWhisper, label: "Large v3 · faster-whisper (most accurate)", source: "large-v3", download_mb: 2947, ram_mb: 3100, speed_gpu: None, speed_cpu: 2.2, wer: 2.3 },
-    ModelSpec { id: "fw:small", engine: EngineKind::FasterWhisper, label: "Small · faster-whisper", source: "small", download_mb: 464, ram_mb: 670, speed_gpu: None, speed_cpu: 8.9, wer: 13.6 },
+    ModelSpec { id: "large-v3-turbo-q5_0", label: "Large v3 Turbo (q5)", source: "ggml-large-v3-turbo-q5_0.bin", download_mb: 547, ram_mb: 900, speed_gpu: Some(10.9), speed_cpu: 1.4, wer: 3.2 },
+    ModelSpec { id: "large-v3-turbo", label: "Large v3 Turbo", source: "ggml-large-v3-turbo.bin", download_mb: 1549, ram_mb: 1800, speed_gpu: Some(8.9), speed_cpu: 1.3, wer: 3.9 },
+    ModelSpec { id: "medium", label: "Medium", source: "ggml-medium.bin", download_mb: 1463, ram_mb: 2100, speed_gpu: Some(6.6), speed_cpu: 1.7, wer: 3.2 },
+    ModelSpec { id: "small", label: "Small · fastest", source: "ggml-small.bin", download_mb: 466, ram_mb: 760, speed_gpu: Some(17.6), speed_cpu: 5.6, wer: 12.7 },
 ];
 
 /// Silero VAD for whisper.cpp (drops silence, avoids "Thank you." on silent audio).
@@ -61,18 +48,12 @@ pub fn spec(id: &str) -> Option<&'static ModelSpec> {
 pub struct Hardware {
     /// Usable GPU for whisper.cpp (name), if any. Software renderers do not count.
     pub gpu: Option<String>,
-    /// faster-whisper helper can run (uv + the Python project are present).
-    pub faster_whisper: bool,
 }
 
-/// Benchmark-picked default: whisper.cpp large-v3-turbo-q5_0 on a GPU; without a GPU the
-/// faster-whisper turbo model (4.0× vs 1.4× on CPU) when the helper can run.
-pub fn auto_model(hw: &Hardware) -> &'static str {
-    if hw.gpu.is_none() && hw.faster_whisper {
-        "fw:large-v3-turbo"
-    } else {
-        "large-v3-turbo-q5_0"
-    }
+/// Benchmark-picked default: large-v3-turbo-q5_0 (best WER on the test clips; 10.9× real time
+/// on the test machine's GPU, 1.4× on its CPU). "small" is the fast choice for slow CPUs.
+pub fn auto_model(_hw: &Hardware) -> &'static str {
+    "large-v3-turbo-q5_0"
 }
 
 pub fn is_software_gpu(name: &str) -> bool {
@@ -198,12 +179,9 @@ mod tests {
 
     #[test]
     fn auto_choice_follows_the_benchmark() {
-        let gpu = Hardware { gpu: Some("AMD Radeon 780M".into()), faster_whisper: true };
-        assert_eq!(auto_model(&gpu), "large-v3-turbo-q5_0");
-        let cpu_fw = Hardware { gpu: None, faster_whisper: true };
-        assert_eq!(auto_model(&cpu_fw), "fw:large-v3-turbo");
-        let cpu_only = Hardware { gpu: None, faster_whisper: false };
-        assert_eq!(auto_model(&cpu_only), "large-v3-turbo-q5_0");
+        assert_eq!(auto_model(&Hardware { gpu: Some("AMD Radeon 780M".into()) }), "large-v3-turbo-q5_0");
+        assert_eq!(auto_model(&Hardware { gpu: None }), "large-v3-turbo-q5_0");
+        assert!(CATALOG.iter().all(|m| !m.id.starts_with("fw:")), "no Python engine any more");
     }
 
     #[test]

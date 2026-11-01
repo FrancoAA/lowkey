@@ -1,11 +1,11 @@
 import { resolve } from "node:path";
 import { defineConfig } from "vite";
 
-// In development the Vite server proxies API calls to the Python backend.
+// The page of the desktop app (Tauri). `tauri dev` uses the dev server on port 5173.
 export default defineConfig({
   server: {
     port: 5173,
-    proxy: { "/api": "http://127.0.0.1:8000" },
+    strictPort: true,
   },
   build: {
     outDir: "dist",

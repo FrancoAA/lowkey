@@ -2,177 +2,106 @@
 
 # open-whisper
 
-Local speech to text in your browser. Drop an audio or video file and get the text,
-or hold <kbd>Space</kbd> and talk. Everything runs on your computer with open-source
-software and open model weights. No account, no API key, no cloud.
+Local speech to text as a desktop app. Drop an audio or video file and get the text, or hold
+a key and talk into any app. Everything runs on your computer with open-source software and
+open model weights. No account, no API key, no cloud.
 
-![Home](docs/screenshots/01-home.png)
+It is one native program (Rust + Tauri v2) with whisper.cpp inside: on the GPU through Vulkan
+(Linux, Windows) or Metal (macOS), else on the CPU.
 
-## Start
+![Desktop app](docs/screenshots/10-desktop-transcript.png)
+
+## Install
+
+**You need** Rust (`rustup`), Node.js 20+, and on Linux the WebKitGTK 4.1, GTK 3,
+libappindicator, Vulkan loader and `glslc` packages (Omarchy has them). `make desktop` fetches
+the Vulkan and SPIR-V headers into `desktop/.deps` if your system does not have them.
 
 ```sh
-./run
+make install-desktop     # builds the app and copies it to ~/.local/bin/open-whisper
+open-whisper             # start it
 ```
 
-That is all. The first run:
+The first start downloads the speech model (0.55 GB) and the live preview model (17 MB), once.
+The window shows the progress. Other builds:
 
-1. installs the Python dependencies (uv also fetches Python 3.12 if needed),
-2. builds the web UI,
-3. opens <http://127.0.0.1:8000> in your browser (the next free port if 8000 is taken),
-4. downloads the speech model (about 1.5 GB, once). You see the progress in the terminal
-   and at the top of the page.
-
-Later runs start in a few seconds. Stop with <kbd>Ctrl</kbd>+<kbd>C</kbd>.
-`make run` does the same.
-
-**You need:** [uv](https://docs.astral.sh/uv/getting-started/installation/),
-Node.js 20+ (only when the UI needs building: the first run, or after its sources change), and an internet connection for the
-first model download. You do not need ffmpeg: audio is decoded with PyAV, which bundles
-the ffmpeg libraries.
+```sh
+make desktop             # only build: desktop/src-tauri/target/release/open-whisper
+make desktop-bundle      # AppImage / .deb / .rpm in desktop/src-tauri/target/release/bundle/
+```
 
 ## Use
 
-- **File:** drop a file on the page, or click to choose one. It starts at once.
-  MP3, WAV, M4A, OGG, FLAC, WEBM, MP4, MOV, MKV and most other audio/video formats work.
-  Other files get a clear error message.
-- **Dictation:** hold <kbd>Space</kbd> while you talk, then release. Or tap
+- **File:** drop a file on the window, or click to choose one. It starts at once. MP3, WAV,
+  M4A, OGG, FLAC, WEBM, MP4, MOV, MKV and most other audio/video formats work (with `ffmpeg`
+  installed for Opus, WebM and most video). Other files get a clear error message.
+- **Dictation in the window:** hold <kbd>Space</kbd> while you talk, then release. Or tap
   <kbd>Space</kbd> once to start and again to stop. The mic button does the same.
   <kbd>Esc</kbd> cancels. A live waveform shows that the app is listening.
-  The browser asks for microphone permission the first time.
-- **Result:** the text appears while it is transcribed. **Copy** puts it on the
-  clipboard. **.txt**, **.srt** and **.vtt** download the transcript or subtitles.
-- **Options** (collapsed, never required): force a language instead of auto-detect,
-  or pick another model. Your choice is remembered in the browser.
+- **Result:** the text appears while it is transcribed. **Copy** puts it on the clipboard.
+  **.txt**, **.srt** and **.vtt** save the transcript or subtitles.
+- **Options** (collapsed, never required): force a language instead of auto-detect, pick
+  another model, free the model's memory when idle, turn the live preview off.
+- Files given on the command line open in the app. **Closing the window keeps the app
+  running** in the tray, so the dictation key stays instant. Quit from the tray or with
+  `open-whisper --dictate quit`.
 
-![Dictation](docs/screenshots/03-dictation-listening.png)
+## Dictate into any app
 
-## Dictate into any app (Hyprland)
-
-On Hyprland, open-whisper also adds a **global key: <kbd>Super</kbd>+<kbd>Ctrl</kbd>+<kbd>X</kbd>**
-(Omarchy's dictation key). It works in every app, not only in the browser:
+The global key is **<kbd>Super</kbd>+<kbd>Ctrl</kbd>+<kbd>X</kbd>** on Linux and
+**<kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Space</kbd>** on macOS and Windows.
 
 - **Hold** the key while you talk, then release. Or **tap** it to start and tap again to stop.
-- A small window at the bottom of the screen shows a live waveform while it listens. It never
-  takes the keyboard focus.
+- A small window at the bottom of the screen shows a live waveform and, while you talk, the
+  words it hears (**live preview**). It never takes the keyboard focus.
 - The text is **typed into the app that has focus** and is also **copied to the clipboard**.
 - Dictations follow on: if you start talking again soon after the last text was typed (the
   new recording ends at most **15 seconds** after it) and the same window has focus, the new
   text is typed with a space in front ("…a test. And then…"), unless it starts with `.`, `,`,
   `;`, `:`, `!`, `?`, `…`, `%` or a closing bracket or quote. After a longer pause, or in
   another window, no space is added. The clipboard always gets the text alone.
-  Limits: the check is per window, not per text field (a new field in the same window within
-  15 s still gets the space), and on desktops other than Hyprland only the time is checked.
+- **The key also works when the app is closed:** it starts the app in the background (no
+  window), the overlay shows "Getting ready…", and the dictation begins when the model is
+  ready. Keep holding the key for push-to-talk, or let go and tap it again to finish.
+- While a dictation is still being transcribed, a new press shows "Still transcribing".
+  Dictation goes ahead of files in the queue.
 
-![Global dictation overlay](docs/screenshots/06-hotkey-overlay-listening.png)
-![Text typed into the focused app](docs/screenshots/07-hotkey-text-pasted.png)
+![Overlay with live preview](docs/screenshots/18-desktop-overlay-live-preview.png)
+![Text typed into the focused app](docs/screenshots/14-desktop-text-typed.png)
 
-**Setup: none** on Hyprland 0.56+ with a Lua config (as Omarchy has). `./run` adds the key
-and the overlay window rule to the running Hyprland with `hyprctl eval`, and adds them again if
-Hyprland reloads its config while open-whisper runs. No config file is changed.
+**Hyprland (0.56+, Lua config): no setup.** The app adds the key and the overlay window rule
+to the running Hyprland with `hyprctl eval`, and again when Hyprland reloads its config. No
+config file is changed. To keep the key after a logout (and to start the closed app), put it in
+your config: `open-whisper --print-snippet lua` prints the lines; add them to
+`~/.config/hypr/bindings.lua` between `-- BEGIN open-whisper.dictation` and
+`-- END open-whisper.dictation`. A block that runs `scripts/ow-dictate` (from earlier versions)
+keeps working: the script hands the key to the app. When the key is in your config, the app
+sees it and does not add it again. Classic `hyprland.conf`: `--print-snippet conf`.
 
-**The key also works when open-whisper is closed.** The key stays after open-whisper stops.
-Press it, and open-whisper starts in the background (no browser tab); the overlay shows
-"Getting ready…" with the start-up or first-run download progress, and the dictation begins
-as soon as the model is ready. Keep holding the key for push-to-talk, or let go and tap it
-again to finish. The first press after open-whisper was closed takes a few seconds (no
-window shows until the app can draw the overlay); later presses are instant, because the app
-keeps running in the background. Stop it with `scripts/ow-dictate quit` (running `./run`
-while it runs just opens it in the browser).
+- Another key: `open-whisper --hotkey "SUPER + ALT + D"` or `hotkey = "…"` in the settings.
+  `--no-hotkey` adds none; `--remove-hotkey` removes a key that the app added (never yours).
+- It needs `wl-copy` and `wtype` (typing on Wayland). The microphone is recorded by the app
+  itself, and only while the overlay shows "Listening".
+- **X11, macOS, Windows:** the app registers the key while it runs. Typing uses xdotool (X11)
+  or the system API (macOS asks once for Accessibility permission). Not tested on this
+  machine.
+- **GNOME, KDE, sway (Wayland):** apps cannot add keys there. Bind `open-whisper --dictate
+  press` / `--dictate release` (or `--dictate toggle`) in the desktop's keyboard settings.
 
-The key lasts until you log out, or until Hyprland reloads its config while open-whisper is
-not running (an Omarchy theme or settings change does that). After that, start `./run` once,
-or keep the key in your config (below). If you move or delete this folder, the old key points
-nowhere; remove it with `hyprctl eval 'hl.unbind("SUPER + CTRL + X")'`.
+### Live preview
 
-The terminal shows the result, for example:
+While you hold the key, the overlay shows the words as you say them. A small second model
+([Cactus Whistle](https://huggingface.co/Cactus-Compute/whistle), 17 MB, on the CPU) makes
+the preview; the main model still writes the text that is typed. It covers English, German,
+French, Spanish, Italian, Dutch and Polish. Turn it off in Options (`live_preview = false`).
+Details and measurements: [docs/live-preview.md](docs/live-preview.md).
 
-```
-  Global dictation key: SUPER + CTRL + X — hold to talk, tap to start/stop (also starts open-whisper when it is closed)
-```
+## Settings (all optional)
 
-- While a dictation is still being transcribed, a new press shows "Still transcribing" in the
-  overlay. Dictation goes ahead of file uploads in the queue.
-- If the key is already in use, open-whisper does not take it and tells you. Choose another
-  key: `./run --hotkey "SUPER + ALT + D"`. Turn the key off with `./run --no-hotkey`, or remove
-  it at once with `uv run python -m openwhisper.hotkey --remove`.
-- It needs PipeWire (`pw-record`), `wl-copy`, `wtype` and Chromium (or Chrome/Brave) for the
-  overlay. Omarchy has all of them.
-- The overlay is a separate browser profile in `~/.local/state/open-whisper/overlay-browser`
-  that only opens this local page. The microphone is recorded by open-whisper itself, and
-  only while the overlay shows "Listening".
-- Only `scripts/ow-dictate` can start a dictation: it sends a random token that open-whisper
-  writes to your private runtime folder. Web pages and other users on the computer cannot.
-- If a start fails, a desktop notification points to the log
-  (`$XDG_RUNTIME_DIR/open-whisper/app.log`).
-
-**Optional: keep the key in your Hyprland config.** Then the key is there after every login
-and config reload, and it starts open-whisper when it is not running.
-Print the snippet for this folder and add it to `~/.config/hypr/bindings.lua` yourself:
-
-```sh
-uv run python -m openwhisper.hotkey      # prints the Lua lines to add
-```
-
-It is two binds (press and release) that run `scripts/ow-dictate`, plus the overlay window
-rule. Put it between `-- BEGIN open-whisper.dictation` and `-- END open-whisper.dictation`
-lines, so it is easy to find and delete. When the key is in your config, open-whisper sees it
-and does not add it again, and `--no-hotkey` / `--remove` leave it alone (they only remove
-keys that the app added). To turn the key off, delete that block. The block contains the
-full path of this folder: if you move the folder, print the snippet again and replace the
-block. If you install voxtype, Omarchy also binds Super+Ctrl+X to it; then pick another key
-for one of the two (`--hotkey`, and the same key in the block).
-
-**Classic `hyprland.conf` (no Lua):** open-whisper cannot add the key itself. Print the two
-bind lines with `uv run python -m openwhisper.hotkey --conf` and add them to your config.
-Typing and the clipboard work; the overlay window stays off, because without its window rule
-it could take the keyboard focus (you get desktop notifications for errors instead).
-
-**Other desktops** (sway, GNOME, KDE…): bind `scripts/ow-dictate toggle` to a key (one press
-starts, the next stops), or `ow-dictate press` / `ow-dictate release` if your desktop has
-release binds. Text output works on any Wayland desktop with `wl-copy` and `wtype`; the
-overlay window placement is Hyprland-only.
-
-## Desktop app (Tauri, Linux first) — beta
-
-`desktop/` is the same app as a native desktop program (Rust + Tauri v2), with the same page
-as its window. It does everything the web app does, plus:
-
-- **GPU on every OS that has one.** The engine is whisper.cpp inside the app: Vulkan on
-  Linux/Windows (AMD, Intel, NVIDIA), Metal on macOS, the CPU otherwise. On the Radeon 780M
-  of the test machine: large-v3-turbo-q5_0 at 10.9× real time, WER 3.2%, a 0.55 GB download
-  (see [docs/tauri-desktop-options.md](docs/tauri-desktop-options.md)).
-- **faster-whisper is still there.** Pick a "· faster-whisper" model in Options, or run on a
-  machine without a GPU: the app then uses the Python engine of this repo through `uv`.
-- **No server and no token.** The global key runs the app itself (`open-whisper --dictate
-  press|release`); a second launch hands its command or file to the running app.
-- **Closing the window keeps it running** in the tray, so the key stays instant. Quit from
-  the tray or with `open-whisper --dictate quit`.
-- **Live preview.** While you hold the key, the overlay shows the words as you say them. A
-  small second model ([Cactus Whistle](https://huggingface.co/Cactus-Compute/whistle), 17 MB,
-  on the CPU) makes the preview; the main model still writes the text that is typed. It
-  covers English, German, French, Spanish, Italian, Dutch and Polish. It is on by default and
-  is downloaded once at start; turn it off in Options (`live_preview = false`). Details and
-  measurements: [docs/live-preview.md](docs/live-preview.md).
-
-![Desktop app](docs/screenshots/10-desktop-transcript.png)
-![Desktop overlay with live preview](docs/screenshots/18-desktop-overlay-live-preview.png)
-
-**Build and run** (needs Rust: `rustup`, Node.js 20+, and on Linux the WebKitGTK 4.1, GTK 3,
-libappindicator, Vulkan loader and `glslc` packages; `make desktop` fetches the Vulkan and
-SPIR-V headers into `desktop/.deps` if your system does not have them):
-
-```sh
-make desktop                                      # builds desktop/src-tauri/target/release/open-whisper
-desktop/src-tauri/target/release/open-whisper     # start it
-make desktop-bundle                               # AppImage / .deb / .rpm
-make install-desktop                              # ~/.local/bin/open-whisper (see below)
-```
-
-**Settings (all optional).** Choose the model and the idle unload in Options; the app saves
-them to `~/.config/open-whisper/config.toml`:
+Options in the window saves them to `~/.config/open-whisper/config.toml`:
 
 ```toml
-model = "large-v3-turbo-q5_0"   # empty or missing: picked for this machine
+model = "large-v3-turbo-q5_0"   # empty or missing: the default
 language = "auto"
 idle_unload_minutes = 15        # free the model's memory after 15 idle minutes; 0 = never
 hotkey = "SUPER + CTRL + X"
@@ -181,110 +110,65 @@ live_preview = true             # words in the overlay while you talk (Whistle, 
 
 Command line: `--model <id>` (overrides the file), `--language <code>`, `--hotkey "…"`,
 `--no-hotkey`, `--background`, `--transcribe <file>` (prints JSON, no window),
-`--print-snippet [lua|conf]`, `--remove-hotkey`. Files given on the command line open in the
-app. Models: `large-v3-turbo-q5_0` (default on a GPU), `large-v3-turbo`, `medium`, `small`,
-`fw:large-v3-turbo` (default without a GPU), `fw:large-v3`, `fw:small`.
-
-**The global key** works as described above, with the desktop app:
-- Hyprland: the app adds Super+Ctrl+X at runtime (or uses your `bindings.lua` block). Your
-  existing block runs `scripts/ow-dictate`, which now hands the key to the desktop app when
-  it runs. With the app closed, the key starts the desktop app only after `make
-  install-desktop`; until then it starts the Python app as before.
-- X11, macOS, Windows: the app registers the key while it runs (default Ctrl+Alt+Space on
-  macOS/Windows). Typing uses xdotool (X11) or the system API (macOS asks once for
-  Accessibility permission).
-- GNOME, KDE, sway (Wayland): apps cannot add keys there. Bind `open-whisper --dictate
-  press` / `--dictate release` (or `--dictate toggle`) in the desktop's keyboard settings.
-
-Status: built and tested on Linux/Hyprland (`make e2e-desktop`, in a nested Hyprland). The
-macOS, Windows and X11 code paths are written but not tested on this machine.
+`--print-snippet [lua|conf]`, `--remove-hotkey`, `--dictate press|release|toggle|cancel|quit`.
 
 ## Models
 
-The default is **large-v3-turbo** (int8 on CPU). It was the best quality for its
-speed in a benchmark on the development machine (Ryzen 7 H 255, no GPU); see
-[docs/benchmark.md](docs/benchmark.md). Other models are in **Options**:
+All models run in whisper.cpp. Numbers are from the development machine (Ryzen 7 H 255,
+Radeon 780M; [docs/tauri-desktop-options.md](docs/tauri-desktop-options.md)):
 
-| Model | Download | Speed here | WER here | Notes |
-|---|---|---|---|---|
-| small | ~0.5 GB | 8.9× real time | 13.6% | fastest; weak on noisy audio |
-| medium | ~1.5 GB | 3.3× | 4.2% | |
-| large-v3-turbo | ~1.5 GB | 4.0× | 4.2% | **default** |
-| large-v3 | ~3 GB | 2.2× | 2.3% | most accurate, needs ~3 GB RAM |
+| Model | Download | GPU (Vulkan) | CPU only | WER | Notes |
+|---|---|---|---|---|---|
+| large-v3-turbo-q5_0 | 0.55 GB | 10.9× real time | 1.4× | 3.2% | **default** |
+| large-v3-turbo | 1.6 GB | 8.9× | 1.3× | 3.9% | |
+| medium | 1.5 GB | 6.6× | 1.7× | 3.2% | |
+| small | 0.47 GB | 17.6× | 5.6× | 12.7% | fastest; the choice for a slow CPU without a GPU |
 
-On a CPU, a short dictation takes about 3.5 s to transcribe with auto-detect. open-whisper
-runs the Whisper encoder once for both language detection and transcription (stock
-faster-whisper runs it twice; see [docs/benchmark.md](docs/benchmark.md)).
-
-A model that is not on disk downloads the first time you use it.
-Models are stored in the normal Hugging Face cache (`~/.cache/huggingface/hub`).
-
-**Hardware:** with an NVIDIA GPU and CUDA libraries, the app uses the GPU (float16)
-automatically. Otherwise it uses the CPU with int8 quantization.
-
-To change the built-in default for everyone, edit `DEFAULT_MODEL` in
-[`openwhisper/config.py`](openwhisper/config.py).
+A model that is not on disk downloads the first time you use it, into
+`~/.local/share/open-whisper/models`. Silero VAD drops silence, so silent audio gives no text.
 
 ## How it works
 
-```
-browser (Vite + TypeScript)          Python (FastAPI, 127.0.0.1 only)
-  drop file / MediaRecorder  --POST /api/transcribe-->  probe with PyAV, queue job
-  EventSource  <--SSE /api/jobs/{id}/events--  one worker thread runs faster-whisper,
-  live text + progress                         streams segments as they are decoded
-```
+`desktop/src-tauri/src/` (Rust):
 
-- `openwhisper/engine.py` downloads models with byte progress, loads one model at a time,
-  runs faster-whisper with VAD (threshold 0.3, tuned in the benchmark) and beam size 5.
-- `openwhisper/jobs.py` is an in-memory queue with one worker, so jobs do not fight
-  for the CPU. Uploads are temporary files, deleted after the job.
-- `openwhisper/server.py` has the API and serves `frontend/dist`.
-- `frontend/src/` has the page: `main.ts` (UI), `dictation.ts` (microphone),
-  `waveform.ts` (live waveform).
+- `engine.rs` loads one model at a time (download with progress, idle unload) and runs
+  whisper.cpp with VAD (threshold 0.3) and beam size 5. `jobs.rs` is a queue with one worker;
+  dictation goes first.
+- `mic.rs` records the microphone (cpal); `dictation.rs` is the global key's state machine;
+  `output.rs` types and copies the text; `hyprland.rs` adds the key and the overlay rule.
+- `preview.rs` runs the live preview (Whistle) on its own thread.
+- `app.rs` has the windows, the tray, the commands for the page and the single instance (a
+  second launch hands its command or file to the running app).
 
-### API
-
-| Method | Path | |
-|---|---|---|
-| GET | `/api/status` | device, default model, per-model download state and progress |
-| GET | `/api/languages` | language codes |
-| POST | `/api/transcribe` | multipart `file`, optional `language` (`auto`), optional `model`. Returns `job_id` |
-| GET | `/api/jobs/{id}` | job state, progress, `new_segments` (all so far) + `segment_count`, `result` (`text`, `segments`, `srt`, `vtt`) when done |
-| GET | `/api/jobs/{id}/events` | the same as Server-Sent Events |
+`frontend/` (Vite + TypeScript) has the window's page (`index.html`, `src/main.ts`) and the
+overlay (`overlay.html`, `src/overlay.ts`).
 
 ## Develop
 
 ```sh
-make dev       # backend with reload on :8000 + Vite dev server on :5173
-make test      # backend tests (fake engine, generated audio) + frontend typecheck/build
-make test-all  # + a real-model test on a 3-second TTS clip
-make e2e       # headless Chromium with a fake microphone: file, error and dictation flows,
-               # writes docs/screenshots/. Uses the system chromium; without one, run
-               # `uv run playwright install chromium` once
-make e2e-hotkey  # global key in a nested Hyprland (your session is not touched): overlay,
-                 # typing, clipboard, hold and tap, key starts the closed app; screenshots 06-08.
-                 # Options: --first-run (empty model cache: shows the download),
-                 # --config-bind (key from the bindings.lua snippet: no duplicate binds)
-make bench     # model benchmark on this machine -> bench/.work/results.md
-make test-desktop / make e2e-desktop   # desktop app: Rust tests / nested-Hyprland e2e
+make desktop-dev   # the app with hot reload (Vite + tauri dev)
+make test          # UI typecheck + build, Rust unit tests
+make e2e-desktop   # the app in a nested Hyprland (your session is not touched): files,
+                   # errors, dictation, the global key, live preview, Options; screenshots 09-18.
+                   # python3 scripts/e2e_desktop.py --first-run: empty model folder
+make bench         # research only: the model benchmark (docs/benchmark.md), Python via uv
 ```
 
-Dependencies are pinned in `uv.lock` and `frontend/package-lock.json`.
+The real preview engine test: `cd desktop/src-tauri && cargo test --lib real_whistle -- --ignored`.
+Dependencies are pinned in `desktop/src-tauri/Cargo.lock` and `frontend/package-lock.json`.
 
 ## Privacy
 
-Audio and transcripts stay on your computer. The only network access is the one-time
-model download from Hugging Face (the desktop app also downloads the live preview engine and
-model once, from pinned revisions checked with SHA-256; that engine has no network code).
+Audio and transcripts stay on your computer. The only network access is the one-time model
+download from Hugging Face (the live preview engine and model come from pinned revisions,
+checked with SHA-256; that engine has no network code).
 
 ## Licenses
 
-- [faster-whisper](https://github.com/SYSTRAN/faster-whisper) (MIT),
-  [CTranslate2](https://github.com/OpenNMT/CTranslate2) (MIT),
-  Whisper model weights by OpenAI (MIT).
-- FastAPI, Uvicorn, PyAV, Vite and TypeScript are open source (MIT/BSD/Apache).
-- Desktop app: [whisper.cpp](https://github.com/ggml-org/whisper.cpp) (MIT); live preview
-  with [Cactus Whistle and the needle engine](https://huggingface.co/Cactus-Compute/whistle)
+- [whisper.cpp](https://github.com/ggml-org/whisper.cpp) (MIT), Whisper model weights by
+  OpenAI (MIT), Silero VAD (MIT).
+- Live preview: [Cactus Whistle and the needle engine](https://huggingface.co/Cactus-Compute/whistle)
   (Apache-2.0).
-- Benchmark only: [Piper](https://github.com/rhasspy/piper) TTS (MIT) and
-  [whisper.cpp](https://github.com/ggml-org/whisper.cpp) (MIT).
+- Tauri, Vite and TypeScript are open source (MIT/Apache).
+- Benchmark only: [faster-whisper](https://github.com/SYSTRAN/faster-whisper) (MIT) and
+  [Piper](https://github.com/rhasspy/piper) TTS (MIT).

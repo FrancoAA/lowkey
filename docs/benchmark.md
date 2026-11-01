@@ -1,5 +1,12 @@
 # Speech-to-text benchmark on this machine
 
+> **History.** This benchmark chose the default of the first version (a Python web app with
+> faster-whisper, CPU only). The app is now a Rust desktop app with whisper.cpp only; its
+> default (`large-v3-turbo-q5_0`, Vulkan GPU) and the whisper.cpp numbers are in the
+> section "whisper.cpp with Vulkan on the Radeon 780M" below and in [tauri-desktop-options.md](tauri-desktop-options.md).
+> faster-whisper was removed from the app on 2026-11-01. `make bench` still runs this
+> benchmark (Python via uv) as a research tool.
+
 Goal: choose the default model for open-whisper on the machine it runs on, with no GPU.
 
 **Result: `large-v3-turbo` on faster-whisper, CPU int8.** It has the best accuracy for

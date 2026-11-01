@@ -9,9 +9,9 @@ OPENWHISPER_TEST_LOG (UI events appended to a file, because the webview has no W
 Hyprland ignores binds from virtual keyboards, so the key bind's command is run through
 Hyprland's own exec dispatcher, exactly as a key press/release would.
 
-Usage: uv run python scripts/e2e_desktop.py [--first-run] [--config-bind]
+Usage: python3 scripts/e2e_desktop.py [--first-run] [--config-bind]   (standard library only)
   --first-run    empty model folder: the key-started app downloads the model (~550 MB)
-  --config-bind  the nested config has the bindings.lua block from the Python era (it runs
+  --config-bind  the nested config has Franco's bindings.lua block (it runs
                  scripts/ow-dictate): the shim must hand the key to the desktop app, and the
                  app must not add a second bind
 """
@@ -97,8 +97,9 @@ def main() -> None:
     runtime = Path(tempfile.mkdtemp(prefix="ow", dir="/tmp"))  # short: socket paths max 108 bytes
     snippet = ""
     if config_bind:  # exactly what Franco's bindings.lua block contains
-        snippet = subprocess.run([sys.executable, "-m", "openwhisper.hotkey"], cwd=ROOT, capture_output=True,
-                                 text=True, check=True).stdout
+        shim = ROOT / "scripts" / "ow-dictate"
+        snippet = (f'hl.bind("SUPER + CTRL + X", hl.dsp.exec_cmd("{shim} press"), {{ description = "Dictate (open-whisper)" }})\n'
+                   f'hl.bind("SUPER + CTRL + X", hl.dsp.exec_cmd("{shim} release"), {{ release = true }})\n')
     (tmp / "hyprland.lua").write_text(NESTED_CONFIG + snippet)
     models = tmp / "models"
     models.mkdir()
@@ -335,9 +336,9 @@ def main() -> None:
         press_key("Return")
         for _ in range(2):
             press_key("Tab")  # language, model
-        press_key("End")  # last model in the list: faster-whisper Small
-        wait(lambda: cfg_file.exists() and 'model = "fw:small"' in cfg_file.read_text(), 15, "model saved to config.toml")
-        wait(lambda: any(s["default_model"] == "fw:small" for s in events("status")[-5:]), 15, "status follows the choice")
+        press_key("End")  # last model in the list: Small
+        wait(lambda: cfg_file.exists() and 'model = "small"' in cfg_file.read_text(), 15, "model saved to config.toml")
+        wait(lambda: any(s["default_model"] == "small" for s in events("status")[-5:]), 15, "status follows the choice")
         check(True, "Options: choosing a model saves it to config.toml and the app switches to it")
         time.sleep(1.0)
         shot("16-desktop-options.png")

@@ -1,14 +1,12 @@
 import "./style.css";
 import type { JobEvent, JobResult, ModelInfo, Segment, Status } from "./api";
-import { getBackend, isDesktop, type Backend, type FileRef } from "./backend";
-import { DesktopDictation } from "./desktopDictation";
+import { getBackend, type Backend, type FileRef } from "./backend";
 import { Dictation, type DictationState } from "./dictation";
 import { Waveform } from "./waveform";
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
-const dropzone = $<HTMLLabelElement>("dropzone");
-const fileInput = $<HTMLInputElement>("file-input");
+const dropzone = $<HTMLDivElement>("dropzone");
 const languageSelect = $<HTMLSelectElement>("language-select");
 const modelSelect = $<HTMLSelectElement>("model-select");
 const errorBox = $<HTMLDivElement>("error");
@@ -31,8 +29,6 @@ const dictationLabel = $<HTMLSpanElement>("dictation-label");
 const dictationHint = $<HTMLSpanElement>("dictation-hint");
 const dictationTimer = $<HTMLSpanElement>("dictation-timer");
 const modelDetails = $<HTMLParagraphElement>("model-details");
-const idleRow = $<HTMLLabelElement>("idle-row");
-const previewRow = $<HTMLLabelElement>("preview-row");
 const previewCheck = $<HTMLInputElement>("preview-check");
 const previewNote = $<HTMLElement>("preview-note");
 const idleSelect = $<HTMLSelectElement>("idle-select");
@@ -119,21 +115,18 @@ function renderStatus(): void {
   for (const opt of modelSelect.options) {
     const info = status!.models.find((x) => x.name === opt.value)!;
     const here = info.state === "missing" ? ` (download ~${info.approx_mb} MB)` : "";
-    const unavailable = info.available === false ? " — needs uv" : "";
-    opt.disabled = info.available === false;
-    opt.textContent = `${info.label}${info.name === auto ? " — recommended here" : ""}${here}${unavailable}`;
+    opt.textContent = `${info.label}${info.name === auto ? " — recommended here" : ""}${here}`;
   }
   modelDetails.textContent = details(m);
 }
 
-/** "0.5 GB download · ~0.9 GB RAM · 10.9× real time on GPU · WER 3.2%" (desktop catalog only). */
+/** "0.5 GB download · ~0.9 GB RAM · 10.9× real time on GPU · WER 3.2%". */
 function details(m: ModelInfo): string {
   if (m.ram_mb === undefined) return "";
   const gb = (mb: number) => `${(mb / 1024).toFixed(1)} GB`;
   const one = (x: number | null | undefined) => Number((x ?? 0).toFixed(1)); // f32 from Rust: 8.8999996 → 8.9
   const speed = status?.gpu && m.speed_gpu ? `${one(m.speed_gpu)}× real time on GPU` : `${one(m.speed_cpu)}× real time on CPU`;
-  const engine = m.engine === "faster-whisper" ? "faster-whisper" : "whisper.cpp";
-  return `${engine} · ${gb(m.approx_mb)} download · ~${gb(m.ram_mb)} memory · ${speed} · WER ${one(m.wer)}% (measured on the test machine)`;
+  return `${gb(m.approx_mb)} download · ~${gb(m.ram_mb)} memory · ${speed} · WER ${one(m.wer)}% (measured on the test machine)`;
 }
 
 /** The live preview's note: what it is, and whether it can run here. */
@@ -159,7 +152,7 @@ async function refreshStatus(): Promise<void> {
     applyStatus(await backend.getStatus());
   } catch {
     modelStatus.dataset.state = "error";
-    modelStatusText.textContent = backend.desktop ? "Engine not ready" : "Server not reachable";
+    modelStatusText.textContent = "Engine not ready";
   }
   const m = selectedModel();
   // Poll fast only while something is changing; a model that is merely not downloaded yet is idle.
@@ -178,8 +171,7 @@ function applyStatus(next: Status): void {
   }
   if (!modelSelect.options.length) {
     for (const m of status.models) modelSelect.add(new Option(m.label, m.name));
-    const saved = backend.desktop ? status.default_model : localStorage.getItem("ow.model");
-    modelSelect.value = saved && status.models.some((m) => m.name === saved) ? saved : status.default_model;
+    modelSelect.value = status.default_model;
     if (status.options) idleSelect.value = String(status.options.idle_unload_minutes);
     if (status.options?.live_preview !== undefined) previewCheck.checked = status.options.live_preview;
   }
@@ -194,7 +186,7 @@ async function loadLanguages(): Promise<void> {
       .map((code) => [code, langName(code)] as const)
       .sort((a, b) => a[1].localeCompare(b[1]));
     for (const [code, name] of entries) languageSelect.add(new Option(name, code));
-    const saved = backend.desktop ? (await backend.getStatus()).options?.language : localStorage.getItem("ow.language");
+    const saved = (await backend.getStatus()).options?.language;
     if (saved && langs[saved] !== undefined) languageSelect.value = saved;
   } catch {
     /* Auto-detect still works without the list */
@@ -223,7 +215,7 @@ function setProgress(fraction: number | null, text: string): void {
 function onJobEvent(ev: JobEvent): void {
   jobState = ev.state;
   if (ev.new_segments && ev.segment_count !== undefined) {
-    // Idempotent merge: a reconnecting EventSource resends from the start.
+    // Idempotent merge: a snapshot can repeat segments that an event already sent.
     current.segments = current.segments.slice(0, ev.segment_count - ev.new_segments.length).concat(ev.new_segments);
     renderTranscript();
   }
@@ -282,7 +274,7 @@ function follow(jobId: string): void {
   backend.follow(jobId, onJobEvent, () => {
     busy = false;
     progress.hidden = true;
-    showError("Lost the connection to the server. Is it still running?");
+    showError("Lost track of the transcription. Try again.");
   });
 }
 
@@ -292,7 +284,7 @@ async function transcribe(file: FileRef, title: string): Promise<void> {
     return;
   }
   beginResult(file.name, title);
-  setProgress(null, backend.desktop ? "Starting…" : "Uploading…");
+  setProgress(null, "Starting…");
   try {
     follow(await backend.start(file, languageSelect.value, modelSelect.value));
   } catch (err) {
@@ -301,11 +293,6 @@ async function transcribe(file: FileRef, title: string): Promise<void> {
     resultCard.hidden = !current.segments.length;
     showError(err instanceof Error ? err.message : String(err));
   }
-}
-
-function handleFile(file: File | undefined): void {
-  if (!file) return;
-  handleRef({ name: file.name, blob: file, size: file.size, type: file.type });
 }
 
 function handleRef(file: FileRef): void {
@@ -327,18 +314,12 @@ function handleRef(file: FileRef): void {
   void transcribe(file, file.name);
 }
 
-// ------------------------------------------------------------------ file input + drag and drop
-fileInput.addEventListener("change", () => {
-  handleFile(fileInput.files?.[0]);
-  fileInput.value = "";
-});
+// ------------------------------------------------------------------ choose a file (drops: see getBackend below)
 async function chooseFile(): Promise<void> {
-  if (!backend.desktop) return fileInput.click();
   const f = await backend.pickFile(); // native dialog: gives a path
   if (f) handleRef(f);
 }
 dropzone.addEventListener("click", (e) => {
-  if (!backend?.desktop) return; // the label opens the <input type=file>
   e.preventDefault();
   void chooseFile();
 });
@@ -348,20 +329,6 @@ dropzone.addEventListener("keydown", (e) => {
     e.preventDefault();
     void chooseFile();
   }
-});
-for (const type of ["dragenter", "dragover"]) {
-  document.addEventListener(type, (e) => {
-    e.preventDefault();
-    dropzone.classList.add("over");
-  });
-}
-document.addEventListener("dragleave", (e) => {
-  if (!(e as DragEvent).relatedTarget) dropzone.classList.remove("over");
-});
-document.addEventListener("drop", (e) => {
-  e.preventDefault();
-  dropzone.classList.remove("over");
-  handleFile((e as DragEvent).dataTransfer?.files[0]);
 });
 
 // ------------------------------------------------------------------ copy / download
@@ -412,7 +379,7 @@ const dictationUi = {
       dictationHint.innerHTML = "Hold <kbd>Space</kbd> to talk, or tap it to start and stop";
     } else if (state === "starting") {
       dictationLabel.textContent = "Opening microphone…";
-      dictationHint.textContent = "Allow microphone access if the browser asks";
+      dictationHint.textContent = "One moment";
     } else {
       dictationLabel.textContent = "Listening…";
       dictationHint.innerHTML = held || spaceDownAt ? HINT_HOLD : HINT_TOGGLE;
@@ -420,9 +387,6 @@ const dictationUi = {
   },
   onTick(elapsed: number) {
     dictationTimer.textContent = fmtClock(elapsed);
-  },
-  onAudio(blob: Blob, filename: string) {
-    void transcribe({ name: filename, blob }, "Dictation");
   },
   onJob(jobId: string) {
     beginResult("dictation", "Dictation");
@@ -433,8 +397,8 @@ const dictationUi = {
     showError(message);
   },
 };
-// Web: the browser records (MediaRecorder). Desktop: the app records (same UI and keys).
-const dictation: Dictation | DesktopDictation = isDesktop ? new DesktopDictation(waveform, dictationUi) : new Dictation(waveform, dictationUi);
+// The app records the microphone; the page shows the waveform and follows the job.
+const dictation = new Dictation(waveform, dictationUi);
 
 const HOLD_MS = 350;
 const HINT_HOLD = "Release <kbd>Space</kbd> to transcribe · <kbd>Esc</kbd> cancels";
@@ -458,7 +422,7 @@ function isTyping(target: EventTarget | null): boolean {
 /** Space should keep its normal meaning on a control that a keyboard user focused (Tab). */
 function keyboardFocusedControl(target: EventTarget | null): boolean {
   const el = target as HTMLElement | null;
-  if (!el || el === micButton || !el.matches?.("button, summary, a[href], [role=button], label[tabindex]")) return false;
+  if (!el || el === micButton || !el.matches?.("button, summary, a[href], [role=button]")) return false;
   return el.matches(":focus-visible");
 }
 
@@ -522,18 +486,8 @@ window.addEventListener("blur", () => {
 // Space is handled globally (and its default "click" is suppressed), so only real clicks/Enter land here.
 micButton.addEventListener("click", toggleDictation);
 
-// Expose a tiny hook for automated UI checks (no effect on normal use).
-(window as unknown as { __ow: unknown }).__ow = { dictation, waveform };
-
 void getBackend().then((b) => {
   backend = b;
-  document.documentElement.dataset.app = b.desktop ? "desktop" : "web";
-  idleRow.hidden = !b.desktop;
-  previewRow.hidden = !b.desktop;
-  if (b.desktop) {
-    $<HTMLSpanElement>("engine-credit").innerHTML =
-      '<a href="https://github.com/ggml-org/whisper.cpp">whisper.cpp</a> (and <a href="https://github.com/SYSTRAN/faster-whisper">faster-whisper</a>)';
-  }
   b.onStatus(applyStatus);
   b.onFileDrop(
     (over) => dropzone.classList.toggle("over", over),

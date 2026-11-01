@@ -1,3 +1,7 @@
+# /// script
+# requires-python = ">=3.12,<3.13"
+# dependencies = ["faster-whisper>=1.2.1", "jiwer>=4.0.0"]
+# ///
 """Benchmark open-source speech-to-text candidates on this machine.
 
 Measures, per (engine, model):
@@ -12,9 +16,12 @@ Engines:
 All runs use language auto-detection (the app default), beam size 5, no VAD.
 
 Usage:
-  uv run --group bench python bench/make_samples.py      # once
-  uv run --group bench python bench/benchmark.py         # all candidates
-  uv run --group bench python bench/benchmark.py --only fw:small fw:large-v3-turbo
+  uv run bench/make_samples.py      # once
+  uv run bench/benchmark.py         # all candidates
+  uv run bench/benchmark.py --only fw:small fw:large-v3-turbo
+
+A research tool, not part of the app (which uses only whisper.cpp). The faster-whisper rows are
+kept to show how the default was chosen (docs/benchmark.md).
 """
 
 from __future__ import annotations

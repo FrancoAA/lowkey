@@ -197,7 +197,7 @@ mod tests {
     fn save_writes_the_file_the_app_reads() {
         let dir = std::env::temp_dir().join(format!("ow-cfgsave-{}", std::process::id()));
         std::env::set_var("XDG_CONFIG_HOME", &dir);
-        let c = Config { model: "fw:large-v3-turbo".into(), idle_unload_minutes: 60, ..Config::default() };
+        let c = Config { model: "small".into(), idle_unload_minutes: 60, ..Config::default() };
         c.save().unwrap();
         let path = config_path();
         assert!(path.starts_with(&dir));

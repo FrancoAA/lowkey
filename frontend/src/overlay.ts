@@ -1,7 +1,7 @@
 import "./overlay.css";
 import { Waveform } from "./waveform";
 
-/** Global-hotkey overlay: shows what the server-side dictation is doing. Display only. */
+/** Global-key overlay: shows what the app's dictation is doing. Display only. */
 interface DictationState {
   state: "idle" | "starting" | "listening" | "transcribing" | "done" | "error";
   level: number;
@@ -10,7 +10,7 @@ interface DictationState {
   detail: string;
   delivered: string[];
   elapsed: number;
-  /** Live preview words (desktop app with Whistle); never what gets typed. */
+  /** Live preview words (Whistle); never what gets typed. */
   preview?: string;
 }
 
@@ -93,27 +93,14 @@ function render(d: DictationState): void {
   renderPreview(d);
 }
 
-function connect(): void {
-  const es = new EventSource("/api/dictation/events");
-  es.onmessage = (m) => render(JSON.parse(m.data) as DictationState);
-  es.onerror = () => {
-    es.close();
-    setTimeout(connect, 1000);
-  };
-}
-
-if ("__TAURI_INTERNALS__" in window) {
-  // Desktop app: the dictation state arrives as Tauri events.
-  void (async () => {
-    const { listen } = await import("@tauri-apps/api/event");
-    const { invoke } = await import("@tauri-apps/api/core");
-    await listen<DictationState>("dictation", (e) => render(e.payload));
-    const first = await invoke<DictationState | null>("dictation_state");
-    if (first) render(first);
-    // Let the app show this window only now that the page is loaded and rendered (no blank
-    // first frame). Not in requestAnimationFrame: a hidden page gets no animation frames.
-    await invoke("overlay_ready");
-  })();
-} else {
-  connect();
-}
+// The dictation state arrives as Tauri events.
+void (async () => {
+  const { listen } = await import("@tauri-apps/api/event");
+  const { invoke } = await import("@tauri-apps/api/core");
+  await listen<DictationState>("dictation", (e) => render(e.payload));
+  const first = await invoke<DictationState | null>("dictation_state");
+  if (first) render(first);
+  // Let the app show this window only now that the page is loaded and rendered (no blank
+  // first frame). Not in requestAnimationFrame: a hidden page gets no animation frames.
+  await invoke("overlay_ready");
+})();

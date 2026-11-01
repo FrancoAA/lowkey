@@ -198,25 +198,6 @@ pub fn resample(input: &[f32], from: u32, to: u32) -> Vec<f32> {
         .collect()
 }
 
-/// A private temporary WAV (0600, unpredictable name, never an existing path or symlink).
-pub fn private_wav(samples: &[f32]) -> anyhow::Result<std::path::PathBuf> {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let nanos = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
-    let path = std::env::temp_dir().join(format!("openwhisper-{}-{nanos:x}.wav", std::process::id()));
-    let mut opts = std::fs::OpenOptions::new();
-    opts.write(true).create_new(true);
-    #[cfg(unix)]
-    std::os::unix::fs::OpenOptionsExt::mode(&mut opts, 0o600);
-    let file = opts.open(&path)?;
-    let spec = hound::WavSpec { channels: 1, sample_rate: RATE, bits_per_sample: 16, sample_format: hound::SampleFormat::Int };
-    let mut w = hound::WavWriter::new(std::io::BufWriter::new(file), spec)?;
-    for s in samples {
-        w.write_sample((s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16)?;
-    }
-    w.finalize()?;
-    Ok(path)
-}
-
 /// Write 16 kHz mono f32 samples as 16-bit WAV.
 pub fn write_wav(path: &Path, samples: &[f32]) -> anyhow::Result<()> {
     let spec = hound::WavSpec { channels: 1, sample_rate: RATE, bits_per_sample: 16, sample_format: hound::SampleFormat::Int };
@@ -228,7 +209,7 @@ pub fn write_wav(path: &Path, samples: &[f32]) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// 0..1 level of a block of samples, same curve as the web waveform.
+/// 0..1 level of a block of samples (the waveform in the window and the overlay).
 pub fn level(block: &[f32]) -> f32 {
     if block.is_empty() {
         return 0.0;

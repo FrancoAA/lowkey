@@ -1,24 +1,10 @@
 /** A function that returns the current input level, 0..1. */
 export type LevelSource = () => number;
 
-/** Level from a Web Audio AnalyserNode (the in-page microphone). */
-export function analyserLevel(analyser: AnalyserNode): LevelSource {
-  const buf = new Float32Array(new ArrayBuffer(analyser.fftSize * 4));
-  return () => {
-    analyser.getFloatTimeDomainData(buf);
-    let sum = 0;
-    for (const v of buf) sum += v * v;
-    const rms = Math.sqrt(sum / buf.length);
-    // Speech RMS is roughly 0.01..0.3; map to 0..1 on a log-ish curve so quiet voices still move.
-    // The server uses the same curve for the global-hotkey overlay (openwhisper/hotkey.py).
-    return Math.min(1, Math.max(0, (20 * Math.log10(rms + 1e-6) + 55) / 45));
-  };
-}
-
 /**
  * Live "listening" waveform: rounded bars that scroll left, each bar the input level at one
- * moment. Used by the page (mic via Web Audio) and by the global-hotkey overlay (levels
- * streamed from the server).
+ * moment. Used by the page and by the global-key overlay (levels from the
+ * app's microphone recorder, src-tauri/src/audio.rs `level`).
  */
 export class Waveform {
   private ctx: CanvasRenderingContext2D;

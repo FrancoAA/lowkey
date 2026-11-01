@@ -1,3 +1,7 @@
+# /// script
+# requires-python = ">=3.12,<3.13"
+# dependencies = ["huggingface-hub>=2.4.0", "piper-tts>=1.8.0"]
+# ///
 """Generate benchmark audio samples with known reference text.
 
 Sources (all open):
@@ -8,7 +12,7 @@ Sources (all open):
   telephone quality (300-3400 Hz, 8 kHz), to separate models that only work on clean audio.
 
 Output: bench/.work/samples/<id>.wav (16 kHz mono) and bench/.work/samples/references.json.
-Usage: uv run --group bench python bench/make_samples.py
+Usage: uv run bench/make_samples.py   (a research tool, not part of the app)
 """
 
 from __future__ import annotations

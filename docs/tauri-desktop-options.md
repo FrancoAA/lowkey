@@ -5,6 +5,11 @@ engine **C** (whisper.cpp in Rust by default, faster-whisper as an optional engi
 Python helper, picked automatically without a GPU), hotkey **"Hyprland as today + per-OS
 native"**, packaging **Linux first** with Rust from rustup in the home folder.
 
+**Update 2026-11-01:** after parity was verified, Franco chose to remove Python completely:
+the Python web app and the optional faster-whisper engine are gone. The app is whisper.cpp
+only; without a GPU it runs on the CPU (`small` is the fast choice there). The live preview
+(Cactus Whistle) was added: [live-preview.md](live-preview.md).
+
 What the first version does differently from the recommendation below: the global key on
 X11, macOS and Windows uses the Tauri global-shortcut plugin (as recommended), but the GNOME/KDE
 Wayland portal path (GlobalShortcuts + RemoteDesktop typing) is **not built**: on those desktops
