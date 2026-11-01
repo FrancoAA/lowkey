@@ -129,13 +129,18 @@ def test_level_curve_matches_the_web_waveform():
 
 
 def test_api_routes(client):
+    token = {"X-OpenWhisper-Token": client.app.state.dictation_token}
     assert client.get("/api/dictation").json()["state"] == "idle"
-    assert client.post("/api/dictation/nope").status_code == 404
+    assert client.post("/api/dictation/nope", headers=token).status_code == 404
+    # Without the token from server.json (private runtime dir) nobody can start the mic.
+    assert client.post("/api/dictation/cancel").status_code == 403
+    assert client.post("/api/dictation/cancel", headers={"X-OpenWhisper-Token": "wrong"}).status_code == 403
+    assert client.post("/api/dictation/cancel", headers=token).json()["state"] == "idle"
     # A web page cannot trigger dictation (it would type into the focused app).
     for origin in ("https://evil.example", "http://localhost:3000", "http://127.0.0.1:8000"):
-        res = client.post("/api/dictation/toggle", headers={"Origin": origin})
+        res = client.post("/api/dictation/toggle", headers={"Origin": origin, **token})
         assert res.status_code == 403, origin
-    assert client.post("/api/dictation/toggle", headers={"Sec-Fetch-Site": "same-origin"}).status_code == 403
+    assert client.post("/api/dictation/toggle", headers={"Sec-Fetch-Site": "same-origin", **token}).status_code == 403
     assert client.get("/api/dictation").json()["state"] == "idle"  # none of those started the mic
 
 
@@ -324,3 +329,37 @@ def test_model_error_during_start_up_is_reported():
 def test_app_binds_are_marked():
     lua = hk.bind_lua("SUPER + CTRL + X", hk.CLI, hk.RUNTIME_DESC)
     assert "added by the app" in lua
+
+
+def test_start_when_ready_does_not_override_a_running_dictation():
+    d, _, recs = make()
+    d.toggle()  # a press reached the server before the start-up hook ran
+    d.start_when_ready(ModelStates(READY), poll_s=0.01)
+    time.sleep(0.1)
+    assert d.state == "listening" and len(recs) == 1  # no second recorder, no leaked mic
+
+
+def test_private_runtime_dir_refuses_foreign_owner(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    rd = hk.private_runtime_dir()
+    assert rd.stat().st_mode & 0o777 == 0o700
+    monkeypatch.setattr(hk.os, "getuid", lambda: 12345)
+    with pytest.raises(PermissionError):
+        hk.private_runtime_dir()
+
+
+def test_transient_download_errors():
+    import errno
+
+    from openwhisper.engine import transient
+
+    class Resp:
+        def __init__(self, code):
+            self.status_code = code
+
+    class HTTPErr(Exception):
+        def __init__(self, code):
+            self.response = Resp(code)
+
+    assert transient(HTTPErr(503)) and transient(HTTPErr(429)) and transient(TimeoutError())
+    assert not transient(HTTPErr(404)) and not transient(OSError(errno.ENOSPC, "disk full"))

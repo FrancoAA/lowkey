@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import shutil
 import socket
 import sys
@@ -75,15 +76,12 @@ def setup_global_dictation(app, url: str, args) -> object | None:
     from . import hotkey as hk
 
     try:
-        rd = hk.runtime_dir()
-        rd.mkdir(mode=0o700, parents=True, exist_ok=True)
-        (rd / "server.json").write_text(json.dumps({"url": url, "pid": os.getpid()}))
+        rd = hk.private_runtime_dir()
+        f = rd / "server.json"
+        f.write_text(json.dumps({"url": url, "pid": os.getpid(), "token": app.state.dictation_token}))
+        os.chmod(f, 0o600)
     except OSError as exc:  # the web app must start anyway
-        print(f"  Global dictation: cannot write {hk.runtime_dir()} ({exc}); the key will not reach this app.")
-    try:  # ow-dictate's "starting" lock: we are up now
-        (hk.runtime_dir() / "starting").rmdir()
-    except OSError:
-        pass
+        print(f"  Global dictation: cannot use {hk.runtime_dir()} ({exc}); the key will not reach this app.")
     app.state.dictation.overlay = hk.Overlay(url)
 
     if args.no_hotkey:
@@ -96,7 +94,7 @@ def setup_global_dictation(app, url: str, args) -> object | None:
     missing = [t for t in ("wl-copy", "wtype") if not shutil.which(t)] + ([] if hk.MicRecorder.available() else ["pw-record"])
     binding = hk.HyprlandHotkey(args.hotkey or hk.DEFAULT_KEY)
     try:
-        print(f"  Global dictation key: {binding.install()}")
+        print(f"  Global dictation key: {binding.install(keep_existing=args.dictate_on_start)}")
     except Exception as exc:  # never block the web app on the desktop integration
         print(f"  Global dictation key: could not add it ({exc}). See README for the config snippet.")
         return None
@@ -110,8 +108,13 @@ def setup_global_dictation(app, url: str, args) -> object | None:
 def after_start(app, args) -> None:
     """Runs once the server answers: start the overlay browser (hidden, so the first press
     shows it at once) and, if the key started us, begin that dictation when the model is ready."""
-    from . import config
+    import shutil as _shutil
 
+    from . import config
+    from . import hotkey as hk
+
+    # ow-dictate's start lock: the server answers now, so a key press reaches us.
+    _shutil.rmtree(hk.runtime_dir() / "starting", ignore_errors=True)
     dictation = app.state.dictation
     if dictation.overlay and dictation.overlay.available():
         dictation.overlay.start()
@@ -142,6 +145,22 @@ def teardown_global_dictation(app, binding) -> None:
         pass
 
 
+def running_instance() -> str | None:
+    """URL of an open-whisper that this user already runs and that answers, else None."""
+    import json
+    import urllib.request
+
+    from . import hotkey as hk
+
+    try:
+        info = json.loads((hk.runtime_dir() / "server.json").read_text())
+        os.kill(int(info["pid"]), 0)
+        with urllib.request.urlopen(info["url"] + "/api/status", timeout=2):
+            return info["url"]
+    except (OSError, ValueError, KeyError):
+        return None
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(prog="openwhisper", description="Local speech-to-text in your browser.")
     ap.add_argument("--port", type=int, default=None, help=f"default: first free port from {config.PORT}")
@@ -152,6 +171,12 @@ def main() -> None:
     args = ap.parse_args()
 
     quiet_logs()
+    if (running := running_instance()) and not args.port:
+        # One app per user: e.g. the dictation key already started one in the background.
+        print(f"\n  open-whisper is already running at {running}")
+        if not args.no_browser and not args.dictate_on_start:
+            webbrowser.open(running)
+        return
     port = args.port or free_port(config.HOST, config.PORT)
     url = f"http://{config.HOST}:{port}"
 
@@ -172,6 +197,11 @@ def main() -> None:
     server = uvicorn.Server(
         uvicorn.Config(app, host=config.HOST, port=port, log_level="warning", timeout_graceful_shutdown=2)
     )
+
+    def quit_server() -> None:
+        server.should_exit = True
+
+    app.state.quit = quit_server
 
     def when_started() -> None:
         while not server.started:

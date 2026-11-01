@@ -13,6 +13,7 @@ Usage: uv run python scripts/e2e_ui.py [--url http://127.0.0.1:8000] [--browser 
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import socket
 import subprocess
@@ -90,8 +91,11 @@ def main() -> None:
     if not url:
         port = free_port()
         url = f"http://127.0.0.1:{port}"
+        # Isolated from your desktop: no Hyprland, own runtime dir (no server.json, no key changes).
+        env = {k: v for k, v in os.environ.items() if k != "HYPRLAND_INSTANCE_SIGNATURE"}
+        env["XDG_RUNTIME_DIR"] = tempfile.mkdtemp(prefix="ow-ui-")
         server = subprocess.Popen(
-            [sys.executable, "-m", "openwhisper", "--no-browser", "--no-hotkey", "--port", str(port)], cwd=ROOT
+            [sys.executable, "-m", "openwhisper", "--no-browser", "--no-hotkey", "--port", str(port)], cwd=ROOT, env=env
         )
     try:
         wait_http(url + "/api/status")

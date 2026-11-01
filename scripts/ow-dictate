@@ -4,36 +4,64 @@
 #   ow-dictate release  on key release
 #   ow-dictate toggle   one key, no hold detection
 #   ow-dictate cancel   stop without transcribing
+#   ow-dictate quit     stop open-whisper (for example one that the key started)
 # If open-whisper is not running, a press (or toggle) starts it in the background, without
 # the browser tab, and the dictation begins as soon as it is ready. The overlay shows the
 # start-up and first-run download progress.
 action=${1:-toggle}
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 dir="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/open-whisper"
-url=$(sed -n 's/.*"url": *"\([^"]*\)".*/\1/p' "$dir/server.json" 2>/dev/null)
+note() { command -v notify-send >/dev/null 2>&1 && notify-send -a open-whisper "open-whisper" "$1"; }
 
-if [ -n "$url" ] && curl -fsS -m 3 -X POST "$url/api/dictation/$action" >/dev/null 2>&1; then
+# Our state must be private: refuse a directory that another user created (shared /tmp).
+if [ -e "$dir" ] && { [ ! -O "$dir" ] || [ -L "$dir" ]; }; then
+  note "Refusing $dir: it belongs to another user."
+  exit 1
+fi
+
+field() { sed -n "s/.*\"$1\": *\"\{0,1\}\([^\",}]*\).*/\1/p" "$dir/server.json" 2>/dev/null; }
+url=$(field url)
+token=$(field token)
+pid=$(field pid)
+
+if [ -n "$url" ] && curl -fsS -m 3 -X POST -H "X-OpenWhisper-Token: $token" "$url/api/dictation/$action" >/dev/null 2>&1; then
   exit 0
 fi
 
 case "$action" in
   press | toggle) ;;
-  *) exit 0 ;; # release/cancel with no app running: nothing to do
+  *) exit 0 ;; # release/cancel/quit with no app answering: nothing to do
 esac
 
-mkdir -p "$dir" && chmod 700 "$dir"
-# One start at a time: a second press while it starts is ignored (the lock is removed by the
-# app when it is up, or considered stale after 2 minutes).
+if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+  note "open-whisper is running but not responding. Restart it with ./run."
+  exit 1
+fi
+
+mkdir -p "$dir" && chmod 700 "$dir" || exit 1
+# One start at a time. The lock holds the starter's pid; the app removes the lock when it
+# answers, the starter removes it if the app fails, and a lock whose pid is gone is stale.
 lock="$dir/starting"
 if ! mkdir "$lock" 2>/dev/null; then
-  [ -n "$(find "$lock" -maxdepth 0 -mmin -2 2>/dev/null)" ] && exit 0
-  rmdir "$lock" 2>/dev/null
+  holder=$(cat "$lock/pid" 2>/dev/null)
+  if [ -n "$holder" ] && kill -0 "$holder" 2>/dev/null; then
+    exit 0 # already starting; the overlay will show it
+  fi
+  rm -rf "$lock"
   mkdir "$lock" 2>/dev/null || exit 0
 fi
 
-if [ -x "$root/.venv/bin/python" ] && [ -f "$root/frontend/dist/overlay.html" ]; then
-  set -- "$root/.venv/bin/python" -m openwhisper   # fast path: already installed and built
-else
-  set -- "$root/run"                                # first time: install + build, then start
-fi
-cd "$root" && setsid -f "$@" --no-browser --dictate-on-start >"$dir/app.log" 2>&1 </dev/null
+# ./run checks the install and the UI build, then starts the app (fast when nothing changed).
+cd "$root" || exit 1
+setsid -f sh -c '
+  lock=$1 log=$2; shift 2
+  echo $$ >"$lock/pid"
+  "$@" >"$log" 2>&1 </dev/null
+  rc=$?
+  if [ -d "$lock" ]; then
+    rm -rf "$lock"
+    command -v notify-send >/dev/null 2>&1 &&
+      notify-send -a open-whisper "open-whisper could not start" "See $log"
+  fi
+  exit $rc
+' ow-dictate-start "$lock" "$dir/app.log" ./run --no-browser --dictate-on-start

@@ -53,6 +53,17 @@ def runtime_dir() -> Path:
     return Path(base) / "open-whisper"
 
 
+def private_runtime_dir() -> Path:
+    """runtime_dir(), created 0700; refuses one that another user owns (shared /tmp)."""
+    rd = runtime_dir()
+    rd.mkdir(mode=0o700, parents=True, exist_ok=True)
+    st = rd.lstat()
+    if rd.is_symlink() or st.st_uid != os.getuid():
+        raise PermissionError(f"{rd} belongs to another user")
+    os.chmod(rd, 0o700)
+    return rd
+
+
 def level_from_pcm(chunk: bytes) -> float:
     """0..1 level from s16le samples, same curve as the web waveform."""
     n = len(chunk) // 2
@@ -241,7 +252,9 @@ class HyprlandHotkey:
         self.key, self.cli, self.added, self.rule = key, cli, False, False
         self._watch_stop = threading.Event()
 
-    def install(self) -> str:
+    def install(self, keep_existing: bool = False) -> str:
+        """keep_existing: the key just started us, so an app-added bind is known to work;
+        leave it alone (re-adding it could drop the release of a key that is still held)."""
         if not lua_config():
             return ("not added: this Hyprland has no Lua config (hyprctl eval). "
                     "Run `uv run python -m openwhisper.hotkey --conf` and add the lines to hyprland.conf.")
@@ -250,8 +263,11 @@ class HyprlandHotkey:
         owners = [b.get("description") or "" for b in key_binds(self.key)]
         if CONFIG_DESC in owners:
             return f"{self.key} (from your Hyprland config)"
+        if RUNTIME_DESC in owners and keep_existing:
+            self.added = True
+            return f"{self.key} — hold to talk, tap to start/stop (also starts open-whisper when it is closed)"
         if RUNTIME_DESC in owners:
-            hyprctl("eval", f"hl.unbind({lua_str(self.key)})")  # left by a run that was killed
+            hyprctl("eval", f"hl.unbind({lua_str(self.key)})")  # from an earlier run; may point elsewhere
         elif owners:
             return f"not added: {self.key} is already bound ({owners[0] or 'no description'}). Use --hotkey."
         hyprctl("eval", bind_lua(self.key, self.cli, RUNTIME_DESC), check=True)
@@ -285,7 +301,7 @@ class HyprlandHotkey:
                                 if self.added or self.rule:
                                     log.info("Hyprland config reloaded: adding the dictation key again")
                                     self.added = self.rule = False
-                                    self.install()
+                                    self.install(keep_existing=True)
                 except OSError:
                     self._watch_stop.wait(2)
 
@@ -503,6 +519,8 @@ class GlobalDictation:
         """The key started the app: show the overlay now, start listening when the model is
         ready. The key press happened about now, so a later release still counts as a hold."""
         with self._lock:
+            if self.state != "idle":
+                return  # a press reached us first and already started a dictation
             self.epoch += 1
             epoch = self.epoch
             self.pressed_at = self.clock()

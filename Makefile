@@ -22,8 +22,8 @@ e2e-hotkey:     ## global dictation key in a nested Hyprland; writes docs/screen
 	uv run python scripts/e2e_hotkey.py
 
 bench:          ## benchmark candidate models on this machine (see docs/benchmark.md)
-	uv run --group bench python bench/make_samples.py
-	uv run --group bench python bench/benchmark.py
+	HF_HUB_DISABLE_XET=1 uv run --group bench python bench/make_samples.py
+	HF_HUB_DISABLE_XET=1 uv run --group bench python bench/benchmark.py
 
 clean:
 	rm -rf frontend/dist frontend/node_modules .venv .pytest_cache

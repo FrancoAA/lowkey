@@ -261,9 +261,13 @@ def main() -> None:
         done3 = wait(lambda: (s := get(url_b + "/api/dictation"))["state"] in ("done", "error") and s, 60, "transcript B")
         check(done3["state"] == "done" and "typed" in done3["delivered"], f"typed after a cold start: {done3['text']!r}")
         wait(lambda: typed.read_text().count(done3["text"]) == 3, 10, "third typed text")
-        pid = json.loads((runtime / "open-whisper" / "server.json").read_text())["pid"]
-        os.kill(pid, signal.SIGTERM)
+        check(not (runtime / "open-whisper" / "starting").exists(), "start lock removed once the app answered")
+        info = json.loads((runtime / "open-whisper" / "server.json").read_text())
+        check(oct((runtime / "open-whisper").stat().st_mode & 0o777) == "0o700" and len(info.get("token", "")) > 20,
+              "runtime dir is private and holds the dictation token")
+        key("quit")
         wait(lambda: not (runtime / "open-whisper" / "server.json").exists(), 15, "auto-started app stopped")
+        check(True, "`ow-dictate quit` stopped the app that the key started")
         print("E2E HOTKEY OK")
     finally:
         if server:

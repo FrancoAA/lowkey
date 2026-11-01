@@ -67,12 +67,20 @@ Hyprland reloads its config while open-whisper runs. No config file is changed.
 Press it, and open-whisper starts in the background (no browser tab); the overlay shows
 "Getting ready…" with the start-up or first-run download progress, and the dictation begins
 as soon as the model is ready. Keep holding the key for push-to-talk, or let go and tap it
-again to finish. This lasts until you log out or Hyprland reloads its config without
-open-whisper running; after that, start `./run` once (or keep the key in your config, below).
+again to finish. The first press after open-whisper was closed takes a few seconds (no
+window shows until the app can draw the overlay); later presses are instant, because the app
+keeps running in the background. Stop it with `scripts/ow-dictate quit` (running `./run`
+while it runs just opens it in the browser).
+
+The key lasts until you log out, or until Hyprland reloads its config while open-whisper is
+not running (an Omarchy theme or settings change does that). After that, start `./run` once,
+or keep the key in your config (below). If you move or delete this folder, the old key points
+nowhere; remove it with `hyprctl eval 'hl.unbind("SUPER + CTRL + X")'`.
+
 The terminal shows the result, for example:
 
 ```
-  Global dictation key: SUPER + CTRL + X — hold to talk, tap to start/stop (active while open-whisper runs)
+  Global dictation key: SUPER + CTRL + X — hold to talk, tap to start/stop (also starts open-whisper when it is closed)
 ```
 
 - While a dictation is still being transcribed, a new press shows "Still transcribing" in the
@@ -85,9 +93,13 @@ The terminal shows the result, for example:
 - The overlay is a separate browser profile in `~/.local/state/open-whisper/overlay-browser`
   that only opens this local page. The microphone is recorded by open-whisper itself, and
   only while the overlay shows "Listening".
+- Only `scripts/ow-dictate` can start a dictation: it sends a random token that open-whisper
+  writes to your private runtime folder. Web pages and other users on the computer cannot.
+- If a start fails, a desktop notification points to the log
+  (`$XDG_RUNTIME_DIR/open-whisper/app.log`).
 
-**Optional: keep the key in your Hyprland config.** Then the key is there even before
-open-whisper starts (pressing it while open-whisper is not running shows a notification).
+**Optional: keep the key in your Hyprland config.** Then the key is there after every login
+and config reload, and it starts open-whisper when it is not running.
 Print the snippet for this folder and add it to `~/.config/hypr/bindings.lua` yourself:
 
 ```sh

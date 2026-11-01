@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import re
+import secrets
 import tempfile
 import threading
 import time
@@ -99,11 +100,13 @@ def create_app(engine: Any = None, preload: bool = True, allowed_hosts: list[str
             # Compare host names only: the Vite dev proxy rewrites Host to the backend port.
             origin = request.headers.get("origin")
             if request.url.path.startswith("/api/dictation/") and (
-                origin is not None or request.headers.get("sec-fetch-site") not in (None, "none")
+                origin is not None
+                or request.headers.get("sec-fetch-site") not in (None, "none")
+                or not secrets.compare_digest(request.headers.get("x-openwhisper-token", ""), app.state.dictation_token)
             ):
-                # Only scripts/ow-dictate (curl, no Origin) may start the mic and type into the
-                # focused app. Browsers always send Origin on POST, so no web page can, not even
-                # one on another localhost port.
+                # Only scripts/ow-dictate may start the mic and type into the focused app: it sends
+                # the token from server.json (in the user's private runtime dir), so other local
+                # users cannot. Browsers always send Origin on POST, so no web page can either.
                 return JSONResponse({"detail": "Dictation is controlled by the desktop key only."}, status_code=403)
             if origin and urlsplit(origin).hostname not in hosts:
                 return JSONResponse({"detail": "Cross-origin requests are not allowed."}, status_code=403)
@@ -122,6 +125,8 @@ def create_app(engine: Any = None, preload: bool = True, allowed_hosts: list[str
 
     app.state.jobs = jobs
     app.state.engine = engine
+    app.state.dictation_token = secrets.token_urlsafe(24)
+    app.state.quit = None  # set by the launcher: stops the server
     from .hotkey import OVERLAY_PATH, GlobalDictation
 
     dictation = GlobalDictation(jobs, model=lambda: config.DEFAULT_MODEL)
@@ -133,8 +138,13 @@ def create_app(engine: Any = None, preload: bool = True, allowed_hosts: list[str
 
     @app.post("/api/dictation/{action}")
     def dictation_action(action: str) -> dict[str, Any]:
+        def quit_app() -> dict[str, Any]:
+            if app.state.quit:
+                app.state.quit()
+            return {"state": "quitting"}
+
         handlers = {"press": dictation.press, "release": dictation.release,
-                    "toggle": dictation.toggle, "cancel": dictation.cancel}
+                    "toggle": dictation.toggle, "cancel": dictation.cancel, "quit": quit_app}
         if action not in handlers:
             raise HTTPException(404, "Unknown dictation action.")
         return handlers[action]()

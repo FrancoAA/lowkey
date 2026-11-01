@@ -24,6 +24,18 @@ UpdateFn = Callable[[dict[str, Any]], None]
 DOWNLOAD_ATTEMPTS = 4
 
 
+def transient(exc: BaseException) -> bool:
+    """Worth a retry: network trouble or a server error, not a 4xx, a full disk or permissions."""
+    import errno
+
+    status = getattr(getattr(exc, "response", None), "status_code", None)
+    if status is not None:
+        return status >= 500 or status == 429
+    if isinstance(exc, OSError) and exc.errno in (errno.ENOSPC, errno.EACCES, errno.EPERM, errno.EROFS):
+        return False
+    return True
+
+
 class UnsupportedMedia(ValueError):
     """The upload has no decodable audio stream."""
 
@@ -147,8 +159,9 @@ class Engine:
             def __init__(self, *args: Any, **kwargs: Any) -> None:
                 kwargs["disable"] = True
                 super().__init__(*args, **kwargs)
-                # A resumed download starts at the size of the partial file.
-                written[0] = max(written[0], int(kwargs.get("initial") or 0))
+                # One bar per attempt: it starts at the partial file's size (0 if the server
+                # ignored the Range header and the hub rewound). The UI total never goes back.
+                written[0] = received[0] = int(kwargs.get("initial") or 0)
                 publish()
 
             # With hf_xet the hub would otherwise open a second "transfer" bar of this class and
@@ -175,7 +188,7 @@ class Engine:
                     path = hf_hub_download(spec.repo, fname, tqdm_class=Progress)
                     break
                 except Exception as exc:  # network hiccup: the next attempt resumes the partial file
-                    if attempt == DOWNLOAD_ATTEMPTS:
+                    if attempt == DOWNLOAD_ATTEMPTS or not transient(exc):
                         raise
                     log.warning("download of %s failed (%s); retrying (%d/%d)", fname, exc, attempt, DOWNLOAD_ATTEMPTS)
                     written[0] = received[0] = 0
