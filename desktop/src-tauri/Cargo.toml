@@ -40,9 +40,10 @@ flate2 = "1"
 
 log = "0.4"
 
-# GPU backend per OS: Vulkan (AMD/Intel/NVIDIA) on Linux and Windows, Metal on macOS.
-[target.'cfg(not(target_os = "macos"))'.dependencies]
-whisper-rs = { version = "0.16", features = ["vulkan", "openmp"] }
+# GPU backend per OS: Vulkan (AMD/Intel/NVIDIA) on Linux, Metal on macOS. Windows: the CPU for
+# now (its Vulkan build needs the Vulkan SDK's Windows import library; not wired yet).
+[target.'cfg(target_os = "windows")'.dependencies]
+whisper-rs = { version = "0.16" }
 
 # Parakeet (NVIDIA, CC-BY-4.0 weights) through sherpa-onnx (Apache-2.0), linked statically with
 # onnxruntime. Exact version: desktop/scripts/sherpa-onnx.sh pins the archive of this release.
@@ -53,6 +54,7 @@ sherpa-onnx = "=2.0.1"
 whisper-rs = { version = "0.16", features = ["metal"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
+whisper-rs = { version = "0.16", features = ["vulkan", "openmp"] }
 # Same versions as wry/tauri use: only to set the overlay webview's GTK size request.
 gtk = "0.18"
 webkit2gtk = "2.0"
