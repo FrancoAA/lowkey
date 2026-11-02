@@ -14,6 +14,7 @@ export interface Options {
   idle_unload_minutes?: number;
   live_preview?: boolean;
   preview_engine?: string;
+  start_at_login?: boolean;
 }
 
 export interface Backend {
@@ -25,6 +26,10 @@ export interface Backend {
   /** Returns false when the user cancelled. */
   save(fileName: string, body: string, mime: string): Promise<boolean>;
   saveOptions(o: Options): Promise<void>;
+  /** Move the dictation key now (Hyprland syntax, "SUPER + ALT + D"). */
+  setHotkey(key: string): Promise<Status>;
+  /** Take the key over from the user's Hyprland config block. Returns the backup's path. */
+  adoptHotkey(): Promise<{ status: Status; backup: string }>;
   onStatus(cb: (s: Status) => void): void;
   pickFile(): Promise<FileRef | null>;
   onFileDrop(onHover: (over: boolean) => void, onDrop: (files: FileRef[]) => void): void;
@@ -75,6 +80,8 @@ async function desktopBackend(): Promise<Backend> {
     async saveOptions(o) {
       await invoke("set_options", { options: o });
     },
+    setHotkey: (key) => invoke<Status>("set_hotkey", { key }),
+    adoptHotkey: () => invoke<{ status: Status; backup: string }>("adopt_hotkey"),
     onStatus(cb) {
       void listen<Status>("status", (e) => cb(e.payload));
     },

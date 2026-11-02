@@ -2,6 +2,7 @@
 
 pub mod app;
 pub mod audio;
+pub mod autostart;
 pub mod config;
 pub mod dictation;
 pub mod engine;

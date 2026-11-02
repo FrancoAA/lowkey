@@ -22,6 +22,10 @@ export interface Status {
   gpu?: boolean;
   auto_model?: string;
   hotkey?: string;
+  /** The dictation key ("SUPER + CTRL + X"; "" = none) and where it lives. */
+  hotkey_key?: string;
+  hotkey_source?: "app" | "config" | "manual" | "none";
+  start_at_login?: boolean;
   options?: { model: string; language: string; idle_unload_minutes: number; live_preview?: boolean; preview_engine?: string };
   /** Live preview: state off | preparing | ready | unavailable; engine whistle | parakeet. */
   preview?: { state: string; error: string | null; engine?: string };

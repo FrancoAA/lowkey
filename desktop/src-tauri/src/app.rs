@@ -30,6 +30,8 @@ pub struct App {
     pub dictation: Mutex<Option<Arc<Dictation>>>,
     hotkey: Mutex<Option<Arc<hyprland::Hotkey>>>,
     hotkey_text: Mutex<String>,
+    /// X11, macOS, Windows: the key registered through the global-shortcut plugin.
+    os_key: Mutex<Option<String>>,
     window_rec: Mutex<Option<Box<dyn Recorder>>>,
     open_files: Mutex<Vec<PathBuf>>,
     started: Instant,
@@ -77,6 +79,41 @@ impl App {
         (!lang.is_empty() && lang != "auto").then_some(lang)
     }
 
+    /// The dictation key as it is now ("" = none).
+    fn hotkey_key(&self) -> String {
+        if let Some(h) = self.hotkey.lock().as_ref() {
+            return h.key();
+        }
+        self.os_key.lock().clone().unwrap_or_default()
+    }
+
+    /// Where the key lives: "app" (the app adds it and can change it), "config" (the user's
+    /// Hyprland config block: the app can take it over), "manual" (the desktop's keyboard
+    /// settings or a classic hyprland.conf), "none".
+    fn hotkey_source(&self) -> &'static str {
+        if let Some(h) = self.hotkey.lock().as_ref() {
+            return h.source();
+        }
+        if self.os_key.lock().is_some() {
+            return "app";
+        }
+        if keys_are_manual() {
+            "manual"
+        } else {
+            "none"
+        }
+    }
+
+    fn start_at_login(&self) -> bool {
+        #[cfg(target_os = "linux")]
+        return crate::autostart::enabled_in(&crate::autostart::dir());
+        #[cfg(not(target_os = "linux"))]
+        {
+            use tauri_plugin_autostart::ManagerExt;
+            self.handle.autolaunch().is_enabled().unwrap_or(false)
+        }
+    }
+
     fn status_emitter(self: &Arc<Self>) -> Arc<dyn Fn() + Send + Sync> {
         let weak = Arc::downgrade(self);
         Arc::new(move || {
@@ -113,6 +150,9 @@ impl App {
             "options": { "model": cfg.model, "language": cfg.language, "idle_unload_minutes": cfg.idle_unload_minutes, "live_preview": cfg.live_preview, "preview_engine": cfg.preview_engine },
             "preview": self.preview.status(),
             "hotkey": *self.hotkey_text.lock(),
+            "hotkey_key": self.hotkey_key(),
+            "hotkey_source": self.hotkey_source(),
+            "start_at_login": self.start_at_login(),
         })
     }
 
@@ -351,12 +391,23 @@ struct OptionsIn {
     idle_unload_minutes: Option<u64>,
     live_preview: Option<bool>,
     preview_engine: Option<String>,
+    start_at_login: Option<bool>,
 }
 
 #[tauri::command]
 fn set_options(app: State<'_, AppRef>, options: OptionsIn) -> Result<Value, String> {
     let model_changed;
     let preview_on = options.live_preview == Some(true) || options.preview_engine.is_some();
+    if let Some(on) = options.start_at_login {
+        #[cfg(target_os = "linux")]
+        crate::autostart::set_in(&crate::autostart::dir(), on, &std::env::current_exe().unwrap_or_default()).map_err(|e| format!("Start at login: {e}"))?;
+        #[cfg(not(target_os = "linux"))]
+        {
+            use tauri_plugin_autostart::ManagerExt;
+            let al = app.handle.autolaunch();
+            if on { al.enable() } else { al.disable() }.map_err(|e| format!("Start at login: {e}"))?;
+        }
+    }
     {
         let mut cfg = app.config.lock();
         let before = cfg.model.clone();
@@ -470,6 +521,86 @@ fn window_dictation_inner(app: &AppRef, action: &str) -> Result<Option<String>, 
     }
 }
 
+/// Wayland desktops other than Hyprland, or Hyprland without a Lua config: the user binds the
+/// key in the desktop's settings (apps cannot).
+fn keys_are_manual() -> bool {
+    let wayland_other = cfg!(target_os = "linux") && std::env::var_os("WAYLAND_DISPLAY").is_some() && !hyprland::running();
+    wayland_other || (hyprland::running() && !hyprland::lua_config())
+}
+
+/// Options → Dictation key → Change: the key moves now and is saved to config.toml.
+#[tauri::command]
+fn set_hotkey(app: State<'_, AppRef>, key: String) -> Result<Value, String> {
+    let app = app.inner().clone();
+    let r = set_hotkey_inner(&app, &key);
+    emit_logged(&app.handle, "hotkey-change", json!({"key": key, "result": r.as_ref().map(|_| "ok").map_err(|e| e.clone())}));
+    r
+}
+
+fn set_hotkey_inner(app: &AppRef, key: &str) -> Result<Value, String> {
+    let app = app.clone();
+    let new = hyprland::normalize_key(key)
+        .ok_or_else(|| format!("{key} cannot be used: hold Super, Ctrl or Alt and press a letter, a digit, F1-F24 or Space."))?;
+    let text = if keys_are_manual() {
+        return Err("This desktop does not let apps add keys: bind `open-whisper --dictate toggle` in its keyboard settings.".into());
+    } else if hyprland::running() {
+        let existing = app.hotkey.lock().clone();
+        match existing {
+            Some(hk) => hk.change(&new).map_err(|e| format!("{e:#}"))?,
+            None => {
+                let hk = hyprland::Hotkey::new(&new, &std::env::current_exe().unwrap_or_default());
+                let t = hk.change(&new).map_err(|e| format!("{e:#}"))?;
+                hk.watch_reloads();
+                *app.hotkey.lock() = Some(hk);
+                t
+            }
+        }
+    } else {
+        use tauri_plugin_global_shortcut::GlobalShortcutExt;
+        let old = app.os_key.lock().clone();
+        if old.as_deref() != Some(new.as_str()) {
+            if let Some(sc) = old.as_deref().and_then(crate::config::to_plugin_shortcut) {
+                let _ = app.handle.global_shortcut().unregister(sc.as_str());
+            }
+            let t = register_global_shortcut(&app, &new);
+            if t.starts_with("not added") {
+                // Put the old key back, so the user is never left without one.
+                if let Some(o) = old.as_deref() {
+                    register_global_shortcut(&app, o);
+                }
+                return Err(t);
+            }
+            t
+        } else {
+            app.hotkey_text.lock().clone()
+        }
+    };
+    {
+        let mut cfg = app.config.lock();
+        cfg.hotkey = new;
+        cfg.save().map_err(|e| e.to_string())?;
+    }
+    *app.hotkey_text.lock() = text;
+    app.emit_status();
+    Ok(app.status())
+}
+
+/// Options → "Let the app manage it": the key comes from the open-whisper block in the user's
+/// Hyprland config. Remove that block (backup next to it), reload, and add the key from the app.
+#[tauri::command]
+fn adopt_hotkey(app: State<'_, AppRef>) -> Result<Value, String> {
+    let app = app.inner().clone();
+    let hk = app.hotkey.lock().clone().ok_or("No Hyprland key to take over.")?;
+    let r = hk.adopt().map_err(|e| format!("{e:#}"));
+    emit_logged(&app.handle, "hotkey-adopt", json!({"result": r.as_ref().map(|b| b.display().to_string()).map_err(|e| e.clone())}));
+    let backup = r?;
+    *app.hotkey_text.lock() = format!("{} — managed by the app (your old config is saved as {})", hk.key(), backup.display());
+    app.config.lock().hotkey = hk.key();
+    let _ = app.config.lock().save();
+    app.emit_status();
+    Ok(json!({"status": app.status(), "backup": backup}))
+}
+
 /// X11, macOS, Windows: the OS lets a running app own a key (press and release).
 fn register_global_shortcut(app: &AppRef, key: &str) -> String {
     use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
@@ -490,8 +621,11 @@ fn register_global_shortcut(app: &AppRef, key: &str) -> String {
         }
     });
     match result {
-        Ok(()) => format!("{key} — hold to talk, tap to start/stop (while open-whisper runs)"),
-        Err(e) => format!("not added: {key} ({e}); it may be taken by another app. Use --hotkey."),
+        Ok(()) => {
+            *app.os_key.lock() = Some(key.to_string());
+            format!("{key} — hold to talk, tap to start/stop (while open-whisper runs)")
+        }
+        Err(e) => format!("not added: {key} ({e}); it may be taken by another app. Choose another key in Options."),
     }
 }
 
@@ -566,6 +700,7 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+
         .invoke_handler(tauri::generate_handler![
             get_status,
             get_languages,
@@ -575,6 +710,8 @@ pub fn run() {
             copy_text,
             save_export,
             set_options,
+            set_hotkey,
+            adopt_hotkey,
             dictation_state,
             overlay_ready,
             window_dictation
@@ -601,6 +738,7 @@ pub fn run() {
                 dictation: Mutex::new(None),
                 hotkey: Mutex::new(None),
                 hotkey_text: Mutex::new(String::new()),
+                os_key: Mutex::new(None),
                 window_rec: Mutex::new(None),
                 open_files: Mutex::new(vec![]),
                 started: Instant::now(),
@@ -744,6 +882,9 @@ pub fn run() {
             Ok(())
         });
 
+    // Start at login on macOS/Windows (Linux: src/autostart.rs writes the XDG entry itself).
+    #[cfg(not(target_os = "linux"))]
+    let builder = builder.plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, Some(vec!["--background"])));
     let context = tauri::generate_context!();
     let app = builder.build(context).expect("open-whisper failed to start");
     app.run(|handle, event| {

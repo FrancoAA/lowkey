@@ -156,6 +156,16 @@ kbd {
 .options-grid label.check { flex-direction: row; align-items: flex-start; gap: 8px; grid-column: 1 / -1; color: var(--text, inherit); }
 .options-grid label.check input { margin-top: 2px; accent-color: var(--accent); }
 .options-grid label.check small { display: block; margin-top: 2px; color: var(--muted); font-size: 0.75rem; }
+.key-row { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 6px; font-size: 0.82rem; color: var(--muted); }
+.key-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.key-current {
+  font: 600 0.9rem ui-monospace, monospace; color: var(--text, inherit); padding: 6px 10px; border-radius: 8px;
+  border: 1px solid var(--line, rgba(127, 127, 127, 0.35)); min-width: 9em; text-align: center;
+}
+.key-row[data-capturing] .key-current { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent); }
+.key-note { font-size: 0.75rem; }
+.key-note[data-kind="error"] { color: #ef4444; }
+.key-note[data-kind="ok"] { color: #16a34a; }
 select {
   font: inherit;
   font-size: 0.9rem;

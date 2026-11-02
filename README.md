@@ -69,6 +69,7 @@ The global key is **<kbd>Super</kbd>+<kbd>Ctrl</kbd>+<kbd>X</kbd>** on Linux and
 
 ![Overlay with live preview](docs/screenshots/18-desktop-overlay-live-preview.png)
 ![Text typed into the focused app](docs/screenshots/14-desktop-text-typed.png)
+![Changing the dictation key in Options](docs/screenshots/19-desktop-options-key.png)
 
 **Hyprland (0.56+, Lua config): no setup.** The app adds the key and the overlay window rule
 to the running Hyprland with `hyprctl eval`, and again when Hyprland reloads its config. No
@@ -81,8 +82,15 @@ keeps working: the script hands the key to the app, or starts `~/.local/bin/open
 `$XDG_RUNTIME_DIR/open-whisper/app.log`. When the key is in your config, the app
 sees it and does not add it again. Classic `hyprland.conf`: `--print-snippet conf`.
 
-- Another key: `open-whisper --hotkey "SUPER + ALT + D"` or `hotkey = "…"` in the settings.
-  `--no-hotkey` adds none; `--remove-hotkey` removes a key that the app added (never yours).
+- **Change the key in Options → Dictation key → Change**, then press the new combination
+  (Super, Ctrl or Alt with a letter, digit, F1-F24 or Space; Esc cancels). It works at once,
+  and Options refuses a combination that another shortcut uses. When the key comes from a
+  block in your Hyprland config, Options offers **"Let the app manage it"**: the block is
+  removed (a backup is kept next to the file), Hyprland reloads, and the app adds the key.
+- **Options → Start open-whisper when you log in**: the app starts hidden at login, so the key
+  works all the time (Linux: `~/.config/autostart/open-whisper.desktop`).
+- Command line: `--hotkey "…"` (this run), `hotkey = "…"` in the settings, `--no-hotkey` adds
+  none; `--remove-hotkey` removes a key that the app added (never yours).
 - Title-bar plugins (hyprbars, as in Omarchy's window controls) skip the overlay: its rule
   turns the bar off when the plugin is loaded.
 - It needs `wl-copy` and `wtype` (typing on Wayland). The microphone is recorded by the app

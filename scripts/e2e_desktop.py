@@ -108,9 +108,18 @@ def main() -> None:
     runtime = Path(tempfile.mkdtemp(prefix="ow", dir="/tmp"))  # short: socket paths max 108 bytes
     snippet = ""
     if config_bind:  # exactly what Franco's bindings.lua block contains
+        # The same lines as Franco's block in bindings.lua (markers included: the app can take
+        # the key over by removing exactly this block).
         shim = ROOT / "scripts" / "ow-dictate"
-        snippet = (f'hl.bind("SUPER + CTRL + X", hl.dsp.exec_cmd("{shim} press"), {{ description = "Dictate (open-whisper)" }})\n'
-                   f'hl.bind("SUPER + CTRL + X", hl.dsp.exec_cmd("{shim} release"), {{ release = true }})\n')
+        snippet = ("-- BEGIN open-whisper.dictation\n"
+                   "-- open-whisper: global dictation (hold = talk, tap = start/stop)\n"
+                   f'hl.bind("SUPER + CTRL + X", hl.dsp.exec_cmd("{shim} press"), {{ description = "Dictate (open-whisper)" }})\n'
+                   f'hl.bind("SUPER + CTRL + X", hl.dsp.exec_cmd("{shim} release"), {{ release = true }})\n'
+                   "if _G.open_whisper_rule then _G.open_whisper_rule:set_enabled(false) end\n"
+                   '_G.open_whisper_rule = hl.window_rule({ name = "open-whisper-overlay", match = { class = "^chrome-.*open-whisper-overlay.*$" }, '
+                   'float = true, pin = true, no_initial_focus = true, no_focus = true, size = { 380, 76 }, '
+                   'move = { "(monitor_w/2-190)", "(monitor_h-150)" }, border_size = 0, no_shadow = true, no_anim = true })\n'
+                   "-- END open-whisper.dictation\n")
     (tmp / "hyprland.lua").write_text(NESTED_CONFIG + snippet)
     models = tmp / "models"
     models.mkdir()
@@ -209,7 +218,14 @@ def main() -> None:
 
         def shot(name: str) -> None:
             SHOTS.mkdir(parents=True, exist_ok=True)
-            run(["grim", SHOTS / name], env)
+            for attempt in range(4):  # grim sometimes fails with "failed to create buffer"; it passes on a retry
+                try:
+                    run(["grim", SHOTS / name], env)
+                    break
+                except RuntimeError:
+                    if attempt == 3:
+                        raise
+                    time.sleep(1.0)
             print(f"  screenshot docs/screenshots/{name}")
 
         def red_pixels_around(w) -> int:
@@ -402,6 +418,69 @@ def main() -> None:
         press_key("Home")  # back to the recommended model
         wait(lambda: 'model = "large-v3-turbo-q5_0"' in cfg_file.read_text(), 15, "model back")
         print("  ok  back to large-v3-turbo-q5_0")
+
+        # ---------------------------------------------------------------- Options: dictation key
+        def key_state(k: str, st: str, mods: str = "") -> None:
+            run(["hyprctl", "dispatch", f'hl.dsp.send_key_state({{ mods = "{mods}", key = "{k}", state = "{st}" }})'], env)
+            time.sleep(0.05)
+
+        def press_combo(mods: str, k: str) -> None:
+            # WebKitGTK reports Ctrl/Alt/Shift with the key but never Super: the page follows the
+            # Super key itself. So Super is pressed as a key (as on a real keyboard) and the other
+            # modifiers come with the key event (send_key_state does not update them otherwise).
+            others = " ".join(m for m in mods.split() if m != "SUPER")
+            if "SUPER" in mods.split():
+                key_state("Super_L", "down")
+            key_state(k, "down", others)
+            key_state(k, "up", others)
+            if "SUPER" in mods.split():
+                key_state("Super_L", "up")
+
+        def binds_on(mask: int, k: str) -> list:
+            return [b for b in hj("binds") if b.get("modmask") == mask and b.get("key", "").upper() == k]
+
+        def latest_status() -> dict:
+            return events("status")[-1] if events("status") else {}
+
+        for _ in range(4):
+            press_key("Tab")  # idle, preview checkbox, preview engine, then the key button
+        if config_bind:
+            # The key comes from the bindings.lua block: Options offers to take it over.
+            check(latest_status().get("hotkey_source") == "config", "Options: the key comes from the config block")
+            block_file = tmp / "hyprland.lua"
+            press_key("Return")  # "Let the app manage it"
+            wait(lambda: latest_status().get("hotkey_source") == "app", 20, "key managed by the app")
+            check("open-whisper.dictation" not in block_file.read_text(), "the block is gone from the Hyprland config")
+            backups = list(tmp.glob("hyprland.lua.bak.open-whisper.*"))
+            check(len(backups) == 1 and "open-whisper.dictation" in backups[0].read_text(), f"a backup of the old config: {backups[0].name if backups else None}")
+            check(len(x_binds()) == 2 and all(b["description"] in (RUNTIME_DESC, "") for b in x_binds()), "SUPER+CTRL+X now comes from the app")
+        press_key("Return")  # Change
+        time.sleep(0.3)
+        press_combo("SUPER ALT", "D")
+        time.sleep(0.5)
+        print(f"  info  key events: {events('hotkey-change') + events('hotkey-adopt')}")
+        wait(lambda: 'hotkey = "SUPER + ALT + D"' in cfg_file.read_text(), 15, "new key saved to config.toml")
+        wait(lambda: binds_on(72, "D") and not x_binds(), 10, "the key moved")
+        check(len(binds_on(72, "D")) == 2 and not x_binds(), "Options: the key moved to SUPER+ALT+D at once (press and release binds); SUPER+CTRL+X is free")
+        time.sleep(0.5)
+        shot("19-desktop-options-key.png")
+        press_key("Return")  # Change again: back to the default
+        time.sleep(0.3)
+        press_combo("SUPER CTRL", "X")
+        wait(lambda: 'hotkey = "SUPER + CTRL + X"' in cfg_file.read_text() and len(x_binds()) == 2 and not binds_on(72, "D"), 15, "key back")
+        print("  ok  back to SUPER+CTRL+X")
+        # Start at login: the autostart entry appears and goes (in the test's own XDG_CONFIG_HOME).
+        autostart = tmp / "config" / "autostart" / "open-whisper.desktop"
+        real_autostart = Path.home() / ".config" / "autostart" / "open-whisper.desktop"
+        real_before = real_autostart.exists()
+        press_key("Tab")
+        press_key("space")
+        wait(lambda: autostart.exists(), 10, "autostart entry")
+        check("--background" in autostart.read_text(), "start at login: the entry starts the app in the background")
+        press_key("space")
+        wait(lambda: not autostart.exists(), 10, "autostart entry removed")
+        check(real_autostart.exists() == real_before, "your real ~/.config/autostart was not touched")
+        print("  ok  start at login turned off again")
         press_key("Escape")
 
         # ---------------------------------------------------------------- close, quit, key starts the app

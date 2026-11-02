@@ -58,6 +58,8 @@ gtk = "0.18"
 webkit2gtk = "2.0"
 
 [target.'cfg(not(target_os = "linux"))'.dependencies]
+# Start at login on macOS/Windows (Linux writes its XDG autostart entry itself: src/autostart.rs).
+tauri-plugin-autostart = "2"
 enigo = "0.6"
 arboard = "3"
 

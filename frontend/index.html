@@ -87,6 +87,22 @@
                 <option value="parakeet">Parakeet · more accurate (~1.1 GB memory)</option>
               </select>
             </label>
+            <div id="key-row" class="key-row">
+              <span class="key-label">Dictation key</span>
+              <div class="key-line">
+                <kbd id="key-current" class="key-current">…</kbd>
+                <button id="key-change" type="button" class="btn">Change</button>
+                <button id="key-adopt" type="button" class="btn" hidden>Let the app manage it</button>
+              </div>
+              <small id="key-note" class="key-note" aria-live="polite"></small>
+            </div>
+            <label class="check">
+              <input id="login-check" type="checkbox" />
+              <span>
+                Start open-whisper when you log in
+                <small>In the background (no window), so the dictation key always works.</small>
+              </span>
+            </label>
           </div>
           <p id="model-details" class="model-details"></p>
         </details>

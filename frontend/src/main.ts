@@ -32,6 +32,12 @@ const modelDetails = $<HTMLParagraphElement>("model-details");
 const previewCheck = $<HTMLInputElement>("preview-check");
 const previewNote = $<HTMLElement>("preview-note");
 const previewEngine = $<HTMLSelectElement>("preview-engine");
+const keyRow = $<HTMLDivElement>("key-row");
+const keyCurrent = $<HTMLElement>("key-current");
+const keyChange = $<HTMLButtonElement>("key-change");
+const keyAdopt = $<HTMLButtonElement>("key-adopt");
+const keyNote = $<HTMLElement>("key-note");
+const loginCheck = $<HTMLInputElement>("login-check");
 const idleSelect = $<HTMLSelectElement>("idle-select");
 
 const MEDIA_EXT = /\.(mp3|wav|wave|m4a|aac|ogg|oga|opus|flac|webm|weba|wma|aiff?|amr|mp4|m4v|mov|mkv|avi|3gp)$/i;
@@ -190,6 +196,7 @@ function applyStatus(next: Status): void {
     previewEngine.querySelector<HTMLOptionElement>('option[value="parakeet"]')!.hidden = !pk;
   }
   renderPreview();
+  renderKey();
   renderStatus();
 }
 
@@ -370,6 +377,157 @@ modelSelect.addEventListener("change", () => {
   renderStatus();
 });
 idleSelect.addEventListener("change", () => void backend.saveOptions({ idle_unload_minutes: Number(idleSelect.value) }));
+// ------------------------------------------------------------------ dictation key
+/** "SUPER + CTRL + X" → "Super + Ctrl + X". */
+function prettyKey(key: string): string {
+  return key
+    .split("+")
+    .map((p) => p.trim())
+    .map((p) => (p.length > 1 && !/^F\d+$/.test(p) ? p[0] + p.slice(1).toLowerCase() : p))
+    .join(" + ");
+}
+
+let capturing = false;
+/** WebKitGTK does not report Super as a modifier of other keys: follow the key itself. */
+let superHeld = false;
+const SUPER_KEYS = ["Meta", "OS", "Super", "Hyper"];
+const SUPER_CODES = ["MetaLeft", "MetaRight", "OSLeft", "OSRight"];
+const isSuper = (e: KeyboardEvent) => SUPER_KEYS.includes(e.key) || SUPER_CODES.includes(e.code);
+let keyMessage: { text: string; kind: "" | "ok" | "error" } = { text: "", kind: "" };
+
+function renderKey(): void {
+  if (!status || capturing) return;
+  const key = status.hotkey_key ?? "";
+  const source = status.hotkey_source ?? "none";
+  keyCurrent.textContent = key ? prettyKey(key) : "None";
+  keyChange.textContent = key ? "Change" : "Choose a key";
+  keyChange.hidden = source === "config" || source === "manual";
+  keyAdopt.hidden = source !== "config";
+  loginCheck.checked = !!status.start_at_login;
+  const explain =
+    source === "config"
+      ? "This key comes from your Hyprland config (the open-whisper block in bindings.lua). To change it here, let the app manage it: the block is removed from your config, and a backup is kept next to it."
+      : source === "manual"
+        ? "This desktop does not let apps add keys: bind `open-whisper --dictate toggle` in its keyboard settings."
+        : "Hold it to talk, or tap it to start and again to stop.";
+  keyNote.textContent = keyMessage.text || explain;
+  keyNote.dataset.kind = keyMessage.kind;
+}
+
+/** A key event as "SUPER + ALT + D", or an explanation of why it cannot be used. */
+function comboOf(e: KeyboardEvent): { key?: string; why?: string } {
+  const mods: string[] = [];
+  if (superHeld || e.metaKey || e.getModifierState("OS") || e.getModifierState("Super")) mods.push("SUPER");
+  if (e.ctrlKey) mods.push("CTRL");
+  if (e.altKey) mods.push("ALT");
+  if (e.shiftKey) mods.push("SHIFT");
+  const code = e.code;
+  const main = /^Key[A-Z]$/.test(code)
+    ? code.slice(3)
+    : /^Digit\d$/.test(code)
+      ? code.slice(5)
+      : /^F\d{1,2}$/.test(code)
+        ? code
+        : code === "Space"
+          ? "SPACE"
+          : "";
+  if (!main) return { why: "Use a letter, a digit, F1-F24 or Space as the last key." };
+  if (!mods.some((m) => m !== "SHIFT")) return { why: "Hold Super, Ctrl or Alt too, so the key does not get in the way of typing." };
+  return { key: [...mods, main].join(" + ") };
+}
+
+function stopCapture(): void {
+  capturing = false;
+  delete keyRow.dataset.capturing;
+  renderKey();
+}
+
+keyChange.addEventListener("click", () => {
+  if (capturing) {
+    keyMessage = { text: "", kind: "" };
+    return stopCapture();
+  }
+  capturing = true;
+  keyRow.dataset.capturing = "";
+  keyCurrent.textContent = "Press the new keys…";
+  keyChange.textContent = "Cancel";
+  keyNote.dataset.kind = "";
+  keyNote.textContent = "Hold Super, Ctrl or Alt and press a letter, a digit, F1-F24 or Space. Esc cancels. A combination that another shortcut already uses does not reach this window.";
+});
+
+// Before every other key handler (the Space dictation key, Esc cancel): while choosing a key,
+// keys only choose the key.
+window.addEventListener(
+  "keydown",
+  (e) => {
+    if (isSuper(e)) superHeld = true;
+    if (!capturing) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    if (e.repeat || isSuper(e) || ["Shift", "Control", "Alt", "AltGraph"].includes(e.key)) return;
+    if (e.key === "Escape") {
+      keyMessage = { text: "", kind: "" };
+      return stopCapture();
+    }
+    const c = comboOf(e);
+    if (!c.key) {
+      keyNote.dataset.kind = "error";
+      keyNote.textContent = c.why ?? "";
+      return;
+    }
+    const chosen = c.key;
+    keyCurrent.textContent = prettyKey(chosen);
+    void backend.setHotkey(chosen).then(
+      (st) => {
+        keyMessage = { text: `Saved. ${prettyKey(chosen)} works now.`, kind: "ok" };
+        stopCapture();
+        applyStatus(st);
+      },
+      (err) => {
+        keyMessage = { text: String(err), kind: "error" };
+        stopCapture();
+      },
+    );
+  },
+  true,
+);
+window.addEventListener(
+  "keyup",
+  (e) => {
+    if (isSuper(e)) superHeld = false;
+    if (capturing) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+    }
+  },
+  true,
+);
+window.addEventListener("blur", () => (superHeld = false));
+
+keyAdopt.addEventListener("click", () => {
+  keyAdopt.disabled = true;
+  void backend.adoptHotkey().then(
+    (r) => {
+      keyMessage = { text: `Done: the app manages the key now. Your old config is saved as ${r.backup}.`, kind: "ok" };
+      keyAdopt.disabled = false;
+      applyStatus(r.status);
+      keyChange.focus(); // it takes the place of the hidden button
+    },
+    (err) => {
+      keyMessage = { text: String(err), kind: "error" };
+      keyAdopt.disabled = false;
+      renderKey();
+    },
+  );
+});
+
+loginCheck.addEventListener("change", () => {
+  void backend.saveOptions({ start_at_login: loginCheck.checked }).catch((err) => {
+    loginCheck.checked = !loginCheck.checked;
+    showError(String(err));
+  });
+});
+
 previewEngine.addEventListener("change", () => {
   void backend.saveOptions({ preview_engine: previewEngine.value }).then(renderPreview, (err) => showError(String(err)));
 });
