@@ -21,8 +21,9 @@ macOS and Windows, a prompt when a call starts, and questions over past meetings
   other's bind as someone else's, and the app refuses the dictation key as the meeting key.
   X11, macOS, Windows: the global-shortcut plugin, as for dictation.
 - The **strip** is the dictation overlay (same window, same Hyprland rule: floating, pinned,
-  never focused). While a meeting records it shows a red dot, the time, the Me/Them levels and
-  the newest line ("Them: …", the speaker always shows). At Stop it says "Saving the
+  never focused). While a meeting records it shows a red dot, the time, a two-colour wave (Me
+  above the line in magenta, Them below it in cyan) and the newest line, its speaker in its
+  colour. At Stop it says "Saving the
   meeting…", then "Meeting saved" for 3 s. A dictation during a meeting takes the strip and
   gives it back when it is done. A meeting started in the window shows the strip too (with no
   keys at all, the app adds the strip's window rule itself). The time is not in the
@@ -31,6 +32,15 @@ macOS and Windows, a prompt when a call starts, and questions over past meetings
   combination), Settings → Keys shows it "not active" with the reason; moving the dictation key
   adds it again.
 - A meeting started with the key gets the title "Meeting"; the list shows its date.
+
+## The Meetings section
+
+- The list is grouped by day (Today, Yesterday, then dates), newest first, with the time, the
+  length, the first words, and marks for "Recording", "Interrupted" and "AI notes". With no
+  meetings, it says how to start, and names the meeting key.
+- While a meeting records, a panel shows the clock, the two-colour wave (the same colours as
+  the transcript's Me and Them) and Stop. Notes and transcript stand side by side when the
+  view is 720 px wide or more, else one above the other. Esc goes back to the list.
 
 ## Two sources
 

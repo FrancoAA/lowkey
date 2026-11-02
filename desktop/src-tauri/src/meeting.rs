@@ -98,6 +98,8 @@ pub struct Summary {
     pub lines: usize,
     /// The first words of the notes, else of the transcript.
     pub excerpt: String,
+    /// It has AI notes.
+    pub ai: bool,
 }
 
 pub fn dir() -> PathBuf {
@@ -176,7 +178,7 @@ pub fn list_in(dir: &Path) -> Vec<Summary> {
             let m = load_in(dir, &id).ok()?;
             let source = if m.notes.trim().is_empty() { m.lines.iter().map(|l| l.text.as_str()).collect::<Vec<_>>().join(" ") } else { m.notes.clone() };
             let excerpt = excerpt(&source, 140);
-            Some(Summary { id: m.id, title: m.title, started_at: m.started_at, duration: m.duration, state: m.state, lines: m.lines.len(), excerpt })
+            Some(Summary { ai: !m.ai_notes.trim().is_empty(), id: m.id, title: m.title, started_at: m.started_at, duration: m.duration, state: m.state, lines: m.lines.len(), excerpt })
         })
         .collect();
     out.sort_by(|a, b| b.started_at.cmp(&a.started_at).then(b.id.cmp(&a.id)));

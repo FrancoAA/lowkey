@@ -130,4 +130,6 @@ export interface MeetingSummary {
   state: string;
   lines: number;
   excerpt: string;
+  /** It has AI notes. */
+  ai?: boolean;
 }

@@ -858,7 +858,7 @@ void getBackend().then((b) => {
   );
   b.onOpenFiles((files) => files[0] && handleRef(files[0]));
   const liveDot = document.querySelector<HTMLElement>('.nav-item[data-section="meetings"] .nav-live')!;
-  initMeetings(b, { announce, onRecording: (on) => (liveDot.hidden = !on) });
+  initMeetings(b, { announce, onRecording: (on) => (liveDot.hidden = !on), meetingKey: () => (status?.meeting_key_source === "app" ? status.meeting_key ?? "" : "") });
   void loadLanguages();
   void refreshStatus();
 });

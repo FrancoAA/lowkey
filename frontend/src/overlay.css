@@ -2,6 +2,8 @@
   color-scheme: dark;
   font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --accent: #e879f9;
+  --me: #e879f9;
+  --them: #22d3ee;
 }
 * { box-sizing: border-box; }
 /* The window is transparent: only the rounded strip is drawn. */
@@ -50,11 +52,12 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: transparent;
 @keyframes pulse { 50% { opacity: 0.4; } }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
 
-/* Meeting: a red recording dot, the time, the Me/Them levels, then the newest line. */
-.levels { display: none; }
+/* Meeting: a red recording dot, "Recording", the time and the two-colour wave (Me above,
+   Them below), then the newest line with its speaker in its colour. */
+.mwave { display: none; }
 .overlay[data-mode="meeting"] {
-  display: grid; grid-template-columns: 40px auto 1fr auto; grid-template-rows: 26px 22px;
-  column-gap: 12px; align-content: center;
+  display: grid; grid-template-columns: 40px auto auto 1fr; grid-template-rows: 28px 22px;
+  column-gap: 10px; align-content: center;
 }
 .overlay[data-mode="meeting"] .dot { grid-row: 1 / 3; align-self: center; }
 .overlay[data-mode="meeting"] .dot svg { display: none; }
@@ -62,15 +65,13 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: transparent;
 .overlay[data-mode="meeting"][data-state="recording"] .dot { animation: rec 1.6s ease-in-out infinite; }
 .overlay[data-mode="meeting"][data-state="done"] .dot::after { background: #4ade80; }
 .overlay[data-mode="meeting"] .text { display: contents; }
-.overlay[data-mode="meeting"] .label { grid-column: 2; grid-row: 1; align-self: end; font-variant-numeric: tabular-nums; }
+.overlay[data-mode="meeting"] .label { grid-column: 2; grid-row: 1; align-self: center; }
 .overlay[data-mode="meeting"] .detail { grid-column: 2 / 5; grid-row: 2; display: block; color: #e4e4e7; }
 .overlay[data-mode="meeting"] #wave, .overlay[data-mode="meeting"] .timer, .overlay[data-mode="meeting"] .preview { display: none; }
 .overlay[data-mode="meeting"][data-state="recording"] .timer {
-  display: block; grid-column: 3; grid-row: 1; align-self: end; font-size: 0.95rem; font-weight: 600; color: #f4f4f5;
+  display: block; grid-column: 3; grid-row: 1; align-self: center; font-size: 0.95rem; font-weight: 600; color: #f4f4f5;
 }
-.overlay[data-mode="meeting"][data-state="recording"] .levels { display: flex; grid-column: 4; grid-row: 1; align-self: end; gap: 10px; }
-.lv { display: flex; align-items: center; gap: 4px; font-size: 0.7rem; color: #a1a1aa; }
-.lv b { font-weight: 500; }
-.lv i { display: block; width: 34px; height: 5px; border-radius: 5px; background: #3f3f46; overflow: hidden; }
-.lv em { display: block; height: 100%; width: 0; background: var(--accent); transition: width 0.08s linear; }
+.overlay[data-mode="meeting"][data-state="recording"] .mwave { display: block; grid-column: 4; grid-row: 1; width: 100%; height: 26px; align-self: center; }
+.who-me { color: var(--me); font-weight: 600; }
+.who-them { color: var(--them); font-weight: 600; }
 @keyframes rec { 50% { box-shadow: 0 0 0 4px rgba(248, 113, 113, 0.25); } }

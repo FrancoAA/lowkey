@@ -66,7 +66,7 @@
         <!-- Transcribe: files, dictation in this window, the result -->
         <section id="section-transcribe" class="section section-wide" role="tabpanel" data-section="transcribe">
           <header class="section-head">
-            <h3>Transcribe</h3>
+            <h2>Transcribe</h2>
             <p>Drop a file for its text and subtitles, or try the dictation here. In other apps, use the dictation key.</p>
           </header>
           <section class="card">
@@ -102,7 +102,7 @@
           <section id="result" class="card result" hidden>
             <div class="result-head">
               <div>
-                <h2 id="result-title">Transcript</h2>
+                <h3 id="result-title">Transcript</h3>
                 <p id="result-meta" class="meta"></p>
               </div>
               <div class="actions">
@@ -123,17 +123,27 @@
         <!-- Meetings: the list, or one meeting (live or saved) -->
         <section id="section-meetings" class="section section-wide" role="tabpanel" data-section="meetings" hidden>
           <div id="meetings-home" class="meetings-home">
-            <header class="section-head section-head-row">
-              <div>
-                <h3>Meetings</h3>
-                <p>Record a call or a talk. Your microphone and the computer's sound become text next to your notes. Audio and text stay on this computer.</p>
+            <header class="meetings-hero">
+              <div class="meetings-hero-text">
+                <h2>Meetings</h2>
+                <p>Your microphone and the computer's sound become text next to your notes. Audio and text stay on this computer.</p>
               </div>
-              <button id="meeting-start" type="button" class="btn btn-default"><span class="rec-dot" aria-hidden="true"></span>Start recording</button>
+              <div class="meetings-hero-action">
+                <button id="meeting-start" type="button" class="btn btn-default btn-rec"><span class="rec-dot" aria-hidden="true"></span>Start recording</button>
+                <span id="meetings-key" class="meetings-key"></span>
+              </div>
             </header>
-            <p class="field-desc">Tell the others that you record. Use headphones: without them, the microphone also hears the others (the app removes most of that repeated text).</p>
+            <p class="meetings-tip">
+              <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 14h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7a9 9 0 0 1 18 0v7a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3" /></svg>
+              <span>Tell the others that you record. Use headphones: without them, the microphone also hears the others.</span>
+            </p>
             <div id="meetings-error" class="error" role="alert" hidden></div>
-            <ul id="meetings-list" class="meetings-list" aria-label="Recorded meetings"></ul>
-            <p id="meetings-empty" class="empty-state" hidden>No meetings yet. Start a recording when your call begins.</p>
+            <div id="meetings-list" class="meetings-list" role="list" aria-label="Recorded meetings"></div>
+            <div id="meetings-empty" class="meetings-empty" hidden>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 10v3M6 6v11M10 3v18M14 8v7M18 5v13M22 10v3" /></svg>
+              <p class="meetings-empty-title">No meetings yet</p>
+              <p id="meetings-empty-text" class="meetings-empty-text">Start a recording when your call begins.</p>
+            </div>
           </div>
 
           <div id="meeting-view" class="meeting-view" hidden>
@@ -144,24 +154,34 @@
               </button>
             </div>
             <div class="meeting-head">
-              <input id="meeting-title" class="title-input" type="text" maxlength="200" aria-label="Meeting title" spellcheck="false" />
+              <div class="meeting-head-text">
+                <input id="meeting-title" class="title-input" type="text" maxlength="200" aria-label="Meeting title" spellcheck="false" />
+                <p id="meeting-meta" class="meta"></p>
+              </div>
               <div class="actions">
-                <button id="meeting-stop" type="button" class="btn btn-default btn-sm"><span class="rec-dot" aria-hidden="true"></span>Stop</button>
                 <button id="meeting-copy" type="button" class="btn btn-outline btn-sm">Copy</button>
                 <button id="meeting-export" type="button" class="btn btn-outline btn-sm">Export .md</button>
                 <button id="meeting-delete" type="button" class="btn btn-ghost btn-sm danger">Delete</button>
               </div>
             </div>
-            <p id="meeting-meta" class="meta"></p>
-            <div id="meeting-meters" class="meters" aria-hidden="true">
-              <span>Me</span><div class="meter"><div id="meter-me"></div></div>
-              <span>Them</span><div class="meter"><div id="meter-them"></div></div>
+            <div id="meeting-live" class="meeting-live" hidden>
+              <div class="live-clock">
+                <span class="rec-dot" aria-hidden="true"></span>
+                <span id="meeting-clock" class="live-time" aria-hidden="true">0:00</span>
+              </div>
+              <canvas id="meeting-wave" class="live-wave" aria-hidden="true"></canvas>
+              <div class="live-legend" aria-hidden="true">
+                <span class="who-me">Me</span>
+                <span class="who-them">Them</span>
+              </div>
+              <button id="meeting-stop" type="button" class="btn btn-default btn-sm btn-stop"><span class="stop-square" aria-hidden="true"></span>Stop</button>
             </div>
             <ul id="meeting-notices" class="notices" role="status" hidden></ul>
             <section id="ai-card" class="ai-card" aria-labelledby="ai-title" hidden>
               <div class="ai-head">
                 <div class="ai-heading">
-                  <span id="ai-title" class="pane-title">AI notes</span>
+                  <svg class="icon ai-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z" /><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z" /></svg>
+                  <h3 id="ai-title" class="ai-title">AI notes</h3>
                   <span id="ai-meta" class="ai-meta"></span>
                 </div>
                 <div class="actions">
@@ -192,7 +212,7 @@
         <!-- General -->
         <section id="section-general" class="section" role="tabpanel" data-section="general" hidden>
           <header class="section-head">
-            <h3>General</h3>
+            <h2>General</h2>
             <p>How open-whisper understands what you say.</p>
           </header>
           <div class="field">
@@ -209,7 +229,7 @@
         <!-- Model -->
         <section id="section-model" class="section" role="tabpanel" data-section="model" hidden>
           <header class="section-head">
-            <h3>Model</h3>
+            <h2>Model</h2>
             <p>The speech model that writes your text. It downloads once and runs on this computer.</p>
           </header>
           <div class="field field-stacked">
@@ -237,7 +257,7 @@
         <!-- Dictation -->
         <section id="section-dictation" class="section" role="tabpanel" data-section="dictation" hidden>
           <header class="section-head">
-            <h3>Keys</h3>
+            <h2>Keys</h2>
             <p>Keys that work in any app, also when this window is closed.</p>
           </header>
           <div id="key-row" class="field field-stacked key-row">
@@ -275,7 +295,7 @@
         <!-- AI notes -->
         <section id="section-ai" class="section" role="tabpanel" data-section="ai" hidden>
           <header class="section-head">
-            <h3>AI notes</h3>
+            <h2>AI notes</h2>
             <p>A language model writes the notes of a meeting from your notes and the transcript: summary, decisions, tasks, open questions. They are a draft: check them against the transcript.</p>
           </header>
           <div class="field field-stacked">
@@ -319,7 +339,7 @@
         <!-- Live preview -->
         <section id="section-preview" class="section" role="tabpanel" data-section="preview" hidden>
           <header class="section-head">
-            <h3>Live preview</h3>
+            <h2>Live preview</h2>
             <p>Words in the dictation overlay while you talk. The model above still writes the text.</p>
           </header>
           <div class="field">
@@ -346,7 +366,7 @@
         <!-- About -->
         <section id="section-about" class="section" role="tabpanel" data-section="about" hidden>
           <header class="section-head">
-            <h3>About</h3>
+            <h2>About</h2>
             <p>Local, open-source speech to text. Audio and text never leave this computer.</p>
           </header>
           <dl class="about">

@@ -6,6 +6,7 @@
 import type { AiNotesEvent, Meeting, MeetingLine, MeetingLive, MeetingSummary } from "./api";
 import type { Backend } from "./backend";
 import { renderMarkdown } from "./markdown";
+import { DualWaveform } from "./waveform";
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -13,6 +14,8 @@ export interface MeetingsUi {
   announce(message: string): void;
   /** The nav item shows a red dot while a meeting records. */
   onRecording(recording: boolean): void;
+  /** The meeting key ("SUPER + CTRL + M"; "" = none), for the hints. */
+  meetingKey(): string;
 }
 
 /** Lines of one speaker with short gaps form one paragraph (as in the Markdown export). */
@@ -63,7 +66,12 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): void {
   const home = $<HTMLDivElement>("meetings-home");
   const startBtn = $<HTMLButtonElement>("meeting-start");
   const errorBox = $<HTMLDivElement>("meetings-error");
-  const list = $<HTMLUListElement>("meetings-list");
+  const list = $<HTMLDivElement>("meetings-list");
+  const keyHint = $<HTMLElement>("meetings-key");
+  const emptyText = $<HTMLElement>("meetings-empty-text");
+  const livePanel = $<HTMLDivElement>("meeting-live");
+  const liveClock = $<HTMLElement>("meeting-clock");
+  const wave = new DualWaveform($<HTMLCanvasElement>("meeting-wave"));
   const empty = $<HTMLElement>("meetings-empty");
   const view = $<HTMLDivElement>("meeting-view");
   const back = $<HTMLButtonElement>("meeting-back");
@@ -73,9 +81,6 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): void {
   const copyBtn = $<HTMLButtonElement>("meeting-copy");
   const exportBtn = $<HTMLButtonElement>("meeting-export");
   const deleteBtn = $<HTMLButtonElement>("meeting-delete");
-  const meters = $<HTMLDivElement>("meeting-meters");
-  const meterMe = $<HTMLDivElement>("meter-me");
-  const meterThem = $<HTMLDivElement>("meter-them");
   const notices = $<HTMLUListElement>("meeting-notices");
   const notes = $<HTMLTextAreaElement>("meeting-notes");
   const transcript = $<HTMLDivElement>("meeting-transcript");
@@ -179,9 +184,10 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): void {
     if (!shown) return;
     if (isLive() && live) {
       const elapsed = live.state === "recording" ? live.elapsed + (performance.now() - liveAt) / 1000 : live.elapsed;
-      const sources = live.meeting.system_audio ? "microphone and computer sound" : "microphone only";
+      const sources = live.meeting.system_audio ? "your microphone and the computer's sound" : "your microphone only";
       meta.dataset.live = live.state;
-      meta.textContent = live.state === "finishing" ? `Finishing… ${clock(elapsed)} recorded` : `Recording ${clock(elapsed)} · ${sources}`;
+      meta.textContent = live.state === "finishing" ? "Saving: transcribing the last seconds…" : `${when(live.meeting.started_at)} · ${sources}`;
+      liveClock.textContent = clock(elapsed);
     } else {
       delete meta.dataset.live;
       const interrupted = shown.state === "recording" ? " · interrupted" : "";
@@ -194,9 +200,15 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): void {
     const recording = isLive();
     stopBtn.hidden = !recording;
     stopBtn.disabled = live?.state === "finishing";
-    stopBtn.textContent = live?.state === "finishing" ? "Finishing…" : "Stop";
+    const square = document.createElement("span");
+    square.className = "stop-square";
+    square.setAttribute("aria-hidden", "true");
+    stopBtn.replaceChildren(square, live?.state === "finishing" ? "Saving…" : "Stop");
     copyBtn.hidden = exportBtn.hidden = deleteBtn.hidden = recording;
-    meters.hidden = !recording || live?.state !== "recording";
+    livePanel.hidden = !recording;
+    livePanel.dataset.state = live?.state ?? "";
+    if (recording && live?.state === "recording") wave.start();
+    else wave.stop();
     const items = recording && live ? live.notices : [];
     notices.replaceChildren(
       ...items.map((n) => {
@@ -309,28 +321,67 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): void {
   }
 
   // ---------------------------------------------------------------- the list
-  function item(s: MeetingSummary, recording: boolean): HTMLLIElement {
-    const li = document.createElement("li");
+  const span = (cls: string, text: string) => {
+    const el = document.createElement("span");
+    el.className = cls;
+    el.textContent = text;
+    return el;
+  };
+
+  /** "Today", "Yesterday", "Mon, Nov 2" (with the year when it is not this year). */
+  function dayLabel(unix: number): string {
+    const d = new Date(unix * 1000);
+    const day = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+    const diff = Math.round((day(new Date()) - day(d)) / 86_400_000);
+    if (diff === 0) return "Today";
+    if (diff === 1) return "Yesterday";
+    const sameYear = d.getFullYear() === new Date().getFullYear();
+    return new Intl.DateTimeFormat(undefined, { weekday: "short", month: "short", day: "numeric", ...(sameYear ? {} : { year: "numeric" }) }).format(d);
+  }
+
+  const timeFmt = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" });
+
+  function item(s: MeetingSummary, recording: boolean): HTMLElement {
     const b = document.createElement("button");
     b.type = "button";
     b.className = "meeting-item";
-    const head = document.createElement("span");
-    head.className = "meeting-item-title";
-    head.textContent = s.title;
-    const sub = document.createElement("span");
-    sub.className = "meeting-item-meta";
-    sub.textContent = recording ? "Recording now" : `${when(s.started_at)} · ${minutes(s.duration)}${s.state === "recording" ? " · interrupted" : ""}`;
-    if (recording) sub.dataset.live = "";
-    b.append(head, sub);
-    if (s.excerpt) {
-      const ex = document.createElement("span");
-      ex.className = "meeting-item-excerpt";
-      ex.textContent = s.excerpt;
-      b.append(ex);
+    b.setAttribute("role", "listitem");
+    const main = span("meeting-item-main", "");
+    const top = span("meeting-item-top", "");
+    top.append(span("meeting-item-title", s.title));
+    if (recording) top.append(span("chip chip-live", "Recording"));
+    else if (s.state === "recording") top.append(span("chip chip-warn", "Interrupted"));
+    if (s.ai) {
+      const chip = span("chip chip-ai", "AI notes");
+      chip.title = "This meeting has AI notes";
+      top.append(chip);
     }
+    main.append(top);
+    if (s.excerpt) main.append(span("meeting-item-excerpt", s.excerpt));
+    const side = span("meeting-item-side", "");
+    side.append(span("meeting-item-time", timeFmt.format(new Date(s.started_at * 1000))));
+    side.append(span("meeting-item-len", recording ? "now" : minutes(s.duration)));
+    b.append(main, side);
     b.addEventListener("click", () => void openById(s.id));
-    li.append(b);
-    return li;
+    return b;
+  }
+
+  function renderHints(): void {
+    const key = ui.meetingKey();
+    keyHint.replaceChildren();
+    if (key) {
+      keyHint.append("or ");
+      for (const [i, part] of key.split("+").map((p) => p.trim()).entries()) {
+        if (i) keyHint.append(" ");
+        const k = document.createElement("kbd");
+        k.textContent = part.length > 1 && !/^F\d+$/.test(part) ? part[0] + part.slice(1).toLowerCase() : part;
+        keyHint.append(k);
+      }
+      keyHint.append(" in any app");
+    }
+    emptyText.textContent = key
+      ? "Start a recording when your call begins, here or with the meeting key from any app."
+      : "Start a recording when your call begins.";
   }
 
   async function renderList(): Promise<void> {
@@ -341,9 +392,29 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): void {
       showError(String(err));
     }
     const liveId = live && live.state !== "done" ? live.meeting.id : null;
-    list.replaceChildren(...all.map((s) => item(s, s.id === liveId)));
+    // Grouped by day, newest first (the app sorts them).
+    const groups: HTMLElement[] = [];
+    let current = "";
+    let box: HTMLElement | null = null;
+    for (const s of all) {
+      const label = dayLabel(s.started_at);
+      if (label !== current || !box) {
+        current = label;
+        const group = document.createElement("section");
+        group.className = "meeting-day";
+        const h = document.createElement("h3");
+        h.textContent = label;
+        box = document.createElement("div");
+        box.className = "meeting-day-items";
+        group.append(h, box);
+        groups.push(group);
+      }
+      box.append(item(s, s.id === liveId));
+    }
+    list.replaceChildren(...groups);
     empty.hidden = all.length > 0;
     startBtn.disabled = !!liveId;
+    renderHints();
   }
 
   // ---------------------------------------------------------------- start / stop
@@ -424,17 +495,29 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): void {
   });
 
   api.onLevels((lv) => {
-    // A square root, so quiet speech still shows.
-    meterMe.style.width = `${Math.round(Math.min(1, Math.sqrt(lv.me)) * 100)}%`;
-    meterThem.style.width = `${Math.round(Math.min(1, Math.sqrt(lv.them)) * 100)}%`;
+    wave.levels = lv;
   });
 
+  let hintKey: string | null = null;
   window.setInterval(() => {
     if (isLive() && live?.state === "recording") renderMeta();
+    // The key comes with the status, maybe after the list: show it once it is known.
+    if (!home.hidden && hintKey !== ui.meetingKey()) {
+      hintKey = ui.meetingKey();
+      renderHints();
+    }
   }, 1000);
 
   // ---------------------------------------------------------------- saved meeting actions
   back.addEventListener("click", () => void showHome());
+  // Esc: back to the list (the notes are saved first). A recording goes on.
+  document.addEventListener("keydown", (e) => {
+    // Only while this view is on screen (its section shown), and not while keys are chosen.
+    if (e.key !== "Escape" || e.defaultPrevented || view.hidden || !view.offsetParent) return;
+    e.preventDefault();
+    (document.activeElement as HTMLElement | null)?.blur();
+    void showHome();
+  });
 
   copyBtn.addEventListener("click", async () => {
     if (!shown) return;

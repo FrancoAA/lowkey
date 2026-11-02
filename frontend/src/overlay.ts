@@ -1,5 +1,5 @@
 import "./overlay.css";
-import { Waveform } from "./waveform";
+import { DualWaveform, Waveform } from "./waveform";
 
 /**
  * The strip at the bottom of the screen: what the dictation is doing, and while a meeting
@@ -34,8 +34,8 @@ interface MeetingLive {
   pending: number;
 }
 
-const lvMe = document.getElementById("lv-me")!;
-const lvThem = document.getElementById("lv-them")!;
+/** Me above the line, Them below, in their colours (overlay.css --me / --them). */
+const mwave = new DualWaveform(document.getElementById("mwave") as HTMLCanvasElement);
 let dict: DictationState | null = null;
 let dictAt = 0; // when the dictation state arrived (done/error show for a moment)
 let meet: MeetingLive | null = null;
@@ -96,9 +96,12 @@ function show(): void {
   else render(dict ?? { state: "idle", level: 0, text: "", error: null, detail: "", delivered: [], elapsed: 0 });
 }
 
-/** "Them: … the newest words": the speaker always shows, older words are cut. */
-function speakerLine(prefix: string, text: string): string {
-  return prefix + fitTail(text, detail, prefix);
+/** "Them  … the newest words": the speaker always shows (in its colour), older words are cut. */
+function speakerLine(who: "me" | "them", text: string): void {
+  const name = document.createElement("b");
+  name.className = who === "me" ? "who-me" : "who-them";
+  name.textContent = who === "me" ? "Me" : "Them";
+  detail.replaceChildren(name, " " + fitTail(text, detail, `${name.textContent}  `));
 }
 
 function renderMeeting(now: number): void {
@@ -107,6 +110,8 @@ function renderMeeting(now: number): void {
     clearInterval(tick);
     current = "meeting";
   }
+  if (meet?.state === "recording") mwave.start();
+  else mwave.stop();
   root.dataset.mode = "meeting";
   root.dataset.preview = "";
   preview.textContent = "";
@@ -124,9 +129,8 @@ function renderMeeting(now: number): void {
     label.textContent = "Recording";
     timer.textContent = clock(elapsed * 1000); // aria-hidden: no announcement every second
     const stop = meetingKey ? ` · ${prettyKey(meetingKey)} stops` : "";
-    detail.textContent = last
-      ? speakerLine(last.speaker === "me" ? "Me: " : "Them: ", last.text)
-      : `${m.meeting.system_audio ? "Your mic and the computer's sound" : "Your mic only"}${stop}`;
+    if (last) speakerLine(last.speaker, last.text);
+    else detail.textContent = `${m.meeting.system_audio ? "Your mic and the computer's sound" : "Your mic only"}${stop}`;
   } else if (m.state === "finishing") {
     label.textContent = "Saving the meeting…";
     detail.textContent = m.pending ? `${m.pending} part${m.pending > 1 ? "s" : ""} to transcribe` : "One moment";
@@ -137,6 +141,7 @@ function renderMeeting(now: number): void {
 }
 
 function render(d: DictationState): void {
+  if (root.dataset.mode === "meeting") mwave.stop();
   delete root.dataset.mode;
   level = d.level;
   if (d.state !== current) {
@@ -204,8 +209,7 @@ void (async () => {
     }
   });
   await listen<{ me: number; them: number }>("meeting-level", (e) => {
-    lvMe.style.width = `${Math.round(Math.min(1, Math.sqrt(e.payload.me)) * 100)}%`;
-    lvThem.style.width = `${Math.round(Math.min(1, Math.sqrt(e.payload.them)) * 100)}%`;
+    mwave.levels = e.payload;
   });
   await listen<{ meeting_key?: string }>("status", (e) => (meetingKey = e.payload.meeting_key ?? meetingKey));
   // The clock, and the moment after "done" / "saved" when the view changes.

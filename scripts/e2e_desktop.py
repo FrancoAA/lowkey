@@ -611,6 +611,9 @@ def main() -> None:
             shot("25-desktop-meeting-ai-notes.png")
         else:
             print(f"  SKIP AI notes: no cached Qwen3.5 4B and runner in {BENCH_LLM}")
+        press_key("Escape")  # back to the list (grouped by day)
+        time.sleep(0.8)
+        shot("26-desktop-meetings-list.png")
 
         # ---------------------------------------------------------------- Meetings: the key, from another app
         focus(target["address"])  # the terminal has the focus
