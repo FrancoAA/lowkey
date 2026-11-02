@@ -86,7 +86,9 @@ sees it and does not add it again. Classic `hyprland.conf`: `--print-snippet con
   (Super, Ctrl or Alt with a letter, digit, F1-F24 or Space; Esc cancels). It works at once,
   and Options refuses a combination that another shortcut uses. When the key comes from a
   block in your Hyprland config, Options offers **"Let the app manage it"**: the block is
-  removed (a backup is kept next to the file), Hyprland reloads, and the app adds the key.
+  removed (a backup is kept next to the file), Hyprland reloads, and the app checks that its
+  key works; if not, your config is put back. It also turns on "Start at login" (the config's
+  bind worked after a logout; the app's bind needs the app).
 - **Options → Start open-whisper when you log in**: the app starts hidden at login, so the key
   works all the time (Linux: `~/.config/autostart/open-whisper.desktop`).
 - Command line: `--hotkey "…"` (this run), `hotkey = "…"` in the settings, `--no-hotkey` adds

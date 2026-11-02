@@ -399,7 +399,8 @@ function renderKey(): void {
   if (!status || capturing) return;
   const key = status.hotkey_key ?? "";
   const source = status.hotkey_source ?? "none";
-  keyCurrent.textContent = key ? prettyKey(key) : "None";
+  const inactive = source === "none" && !!key;
+  keyCurrent.textContent = key ? prettyKey(key) + (inactive ? " (not active)" : "") : "None";
   keyChange.textContent = key ? "Change" : "Choose a key";
   keyChange.hidden = source === "config" || source === "manual";
   keyAdopt.hidden = source !== "config";
@@ -409,9 +410,11 @@ function renderKey(): void {
       ? "This key comes from your Hyprland config (the open-whisper block in bindings.lua). To change it here, let the app manage it: the block is removed from your config, and a backup is kept next to it."
       : source === "manual"
         ? "This desktop does not let apps add keys: bind `open-whisper --dictate toggle` in its keyboard settings."
-        : "Hold it to talk, or tap it to start and again to stop.";
+        : inactive
+          ? status.hotkey_problem || "This key is not active. Choose another one."
+          : "Hold it to talk, or tap it to start and again to stop.";
   keyNote.textContent = keyMessage.text || explain;
-  keyNote.dataset.kind = keyMessage.kind;
+  keyNote.dataset.kind = keyMessage.kind || (inactive ? "error" : "");
 }
 
 /** A key event as "SUPER + ALT + D", or an explanation of why it cannot be used. */
@@ -438,6 +441,7 @@ function comboOf(e: KeyboardEvent): { key?: string; why?: string } {
 
 function stopCapture(): void {
   capturing = false;
+  superHeld = false;
   delete keyRow.dataset.capturing;
   renderKey();
 }
@@ -448,6 +452,7 @@ keyChange.addEventListener("click", () => {
     return stopCapture();
   }
   capturing = true;
+  superHeld = false; // only a Super key pressed from now on counts
   keyRow.dataset.capturing = "";
   keyCurrent.textContent = "Press the new keys…";
   keyChange.textContent = "Cancel";
@@ -503,12 +508,20 @@ window.addEventListener(
   true,
 );
 window.addEventListener("blur", () => (superHeld = false));
+// Never leave the keys captured behind a closed panel or a hidden window.
+$<HTMLDetailsElement>("options").addEventListener("toggle", (e) => {
+  if (capturing && !(e.target as HTMLDetailsElement).open) stopCapture();
+});
+document.addEventListener("visibilitychange", () => {
+  if (capturing && document.hidden) stopCapture();
+});
 
 keyAdopt.addEventListener("click", () => {
   keyAdopt.disabled = true;
   void backend.adoptHotkey().then(
     (r) => {
-      keyMessage = { text: `Done: the app manages the key now. Your old config is saved as ${r.backup}.`, kind: "ok" };
+      const login = r.start_at_login ? " Start at login is on, so the key works after a restart too." : "";
+      keyMessage = { text: `Done: the app manages the key now. Your old config is saved as ${r.backup}.${login}`, kind: "ok" };
       keyAdopt.disabled = false;
       applyStatus(r.status);
       keyChange.focus(); // it takes the place of the hidden button

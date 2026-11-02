@@ -351,6 +351,9 @@ impl Worker {
     fn handle(&mut self, msg: Msg, cur: &mut Option<Current>) {
         match msg {
             Msg::Use { engine } => {
+                if *self.wanted.lock() != engine {
+                    return; // turned off or switched since this was asked: not this engine
+                }
                 if self.kind == engine && (self.engine.is_some() || self.released) {
                     self.report(engine, "ready", None);
                 } else {

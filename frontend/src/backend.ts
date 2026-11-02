@@ -29,7 +29,7 @@ export interface Backend {
   /** Move the dictation key now (Hyprland syntax, "SUPER + ALT + D"). */
   setHotkey(key: string): Promise<Status>;
   /** Take the key over from the user's Hyprland config block. Returns the backup's path. */
-  adoptHotkey(): Promise<{ status: Status; backup: string }>;
+  adoptHotkey(): Promise<{ status: Status; backup: string; start_at_login: boolean }>;
   onStatus(cb: (s: Status) => void): void;
   pickFile(): Promise<FileRef | null>;
   onFileDrop(onHover: (over: boolean) => void, onDrop: (files: FileRef[]) => void): void;
@@ -81,7 +81,7 @@ async function desktopBackend(): Promise<Backend> {
       await invoke("set_options", { options: o });
     },
     setHotkey: (key) => invoke<Status>("set_hotkey", { key }),
-    adoptHotkey: () => invoke<{ status: Status; backup: string }>("adopt_hotkey"),
+    adoptHotkey: () => invoke<{ status: Status; backup: string; start_at_login: boolean }>("adopt_hotkey"),
     onStatus(cb) {
       void listen<Status>("status", (e) => cb(e.payload));
     },

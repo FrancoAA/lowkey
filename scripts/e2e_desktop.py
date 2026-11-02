@@ -51,6 +51,8 @@ if PREVIEW == "parakeet" and not BENCH_PARAKEET.is_dir():
 RUNTIME_DESC = "Dictate (open-whisper, added by the app)"
 NESTED_CONFIG = """
 hl.monitor({ output = "", mode = "preferred", position = "auto", scale = 1 })
+-- A taken key: Options must refuse it for the dictation key.
+hl.bind("SUPER + ALT + Q", hl.dsp.exec_cmd("true"), { description = "e2e: a taken key" })
 hl.config({ misc = { disable_hyprland_logo = true, disable_splash_rendering = true, disable_watchdog_warning = true },
             ecosystem = { no_donation_nag = true }, decoration = { rounding = 12 } })
 """
@@ -454,6 +456,15 @@ def main() -> None:
             backups = list(tmp.glob("hyprland.lua.bak.open-whisper.*"))
             check(len(backups) == 1 and "open-whisper.dictation" in backups[0].read_text(), f"a backup of the old config: {backups[0].name if backups else None}")
             check(len(x_binds()) == 2 and all(b["description"] in (RUNTIME_DESC, "") for b in x_binds()), "SUPER+CTRL+X now comes from the app")
+            check((tmp / "config" / "autostart" / "open-whisper.desktop").exists(), "taking the key over turned on start at login")
+        # A combination that another shortcut uses is refused; the key stays.
+        n_ev = len(events("hotkey-change"))
+        press_key("Return")  # Change
+        time.sleep(0.3)
+        press_combo("SUPER ALT", "Q")
+        refused = wait(lambda: events("hotkey-change")[n_ev:] or None, 10, "taken key answer")[0]
+        check("Err" in refused["result"] and "e2e: a taken key" in refused["result"]["Err"] and len(x_binds()) == 2,
+              f"a taken key is refused and the key stays: {refused['result']}")
         press_key("Return")  # Change
         time.sleep(0.3)
         press_combo("SUPER ALT", "D")
@@ -462,6 +473,9 @@ def main() -> None:
         wait(lambda: 'hotkey = "SUPER + ALT + D"' in cfg_file.read_text(), 15, "new key saved to config.toml")
         wait(lambda: binds_on(72, "D") and not x_binds(), 10, "the key moved")
         check(len(binds_on(72, "D")) == 2 and not x_binds(), "Options: the key moved to SUPER+ALT+D at once (press and release binds); SUPER+CTRL+X is free")
+        run(["hyprctl", "reload"], env)  # a config reload: the app adds its key again, once
+        time.sleep(2.0)
+        check(len(binds_on(72, "D")) == 2 and not x_binds(), "after a Hyprland reload the new key is back, not doubled")
         time.sleep(0.5)
         shot("19-desktop-options-key.png")
         press_key("Return")  # Change again: back to the default
@@ -473,9 +487,15 @@ def main() -> None:
         autostart = tmp / "config" / "autostart" / "open-whisper.desktop"
         real_autostart = Path.home() / ".config" / "autostart" / "open-whisper.desktop"
         real_before = real_autostart.exists()
+        was = autostart.exists()  # on after taking the key over (--config-bind)
         press_key("Tab")
         press_key("space")
-        wait(lambda: autostart.exists(), 10, "autostart entry")
+        wait(lambda: autostart.exists() != was, 10, "autostart entry toggled")
+        press_key("space")
+        wait(lambda: autostart.exists() == was, 10, "autostart entry back")
+        if not autostart.exists():
+            press_key("space")
+            wait(lambda: autostart.exists(), 10, "autostart entry")
         check("--background" in autostart.read_text(), "start at login: the entry starts the app in the background")
         press_key("space")
         wait(lambda: not autostart.exists(), 10, "autostart entry removed")

@@ -91,22 +91,21 @@ impl App {
     /// Hyprland config block: the app can take it over), "manual" (the desktop's keyboard
     /// settings or a classic hyprland.conf), "none".
     fn hotkey_source(&self) -> &'static str {
+        if keys_are_manual() {
+            return "manual";
+        }
         if let Some(h) = self.hotkey.lock().as_ref() {
             return h.source();
         }
         if self.os_key.lock().is_some() {
             return "app";
         }
-        if keys_are_manual() {
-            "manual"
-        } else {
-            "none"
-        }
+        "none"
     }
 
     fn start_at_login(&self) -> bool {
         #[cfg(target_os = "linux")]
-        return crate::autostart::enabled_in(&crate::autostart::dir());
+        return crate::autostart::enabled_in(&crate::autostart::dir()); // and its program exists
         #[cfg(not(target_os = "linux"))]
         {
             use tauri_plugin_autostart::ManagerExt;
@@ -152,6 +151,8 @@ impl App {
             "hotkey": *self.hotkey_text.lock(),
             "hotkey_key": self.hotkey_key(),
             "hotkey_source": self.hotkey_source(),
+            // Why the key is not active (source "none"): shown in Options.
+            "hotkey_problem": if self.hotkey_source() == "none" && !self.hotkey_key().is_empty() { self.hotkey_text.lock().clone() } else { String::new() },
             "start_at_login": self.start_at_login(),
         })
     }
@@ -398,16 +399,6 @@ struct OptionsIn {
 fn set_options(app: State<'_, AppRef>, options: OptionsIn) -> Result<Value, String> {
     let model_changed;
     let preview_on = options.live_preview == Some(true) || options.preview_engine.is_some();
-    if let Some(on) = options.start_at_login {
-        #[cfg(target_os = "linux")]
-        crate::autostart::set_in(&crate::autostart::dir(), on, &std::env::current_exe().unwrap_or_default()).map_err(|e| format!("Start at login: {e}"))?;
-        #[cfg(not(target_os = "linux"))]
-        {
-            use tauri_plugin_autostart::ManagerExt;
-            let al = app.handle.autolaunch();
-            if on { al.enable() } else { al.disable() }.map_err(|e| format!("Start at login: {e}"))?;
-        }
-    }
     {
         let mut cfg = app.config.lock();
         let before = cfg.model.clone();
@@ -438,6 +429,10 @@ fn set_options(app: State<'_, AppRef>, options: OptionsIn) -> Result<Value, Stri
         }
         model_changed = cfg.model != before;
         cfg.save().map_err(|e| e.to_string())?;
+    }
+    // After the other options are valid and saved.
+    if let Some(on) = options.start_at_login {
+        set_start_at_login(app.inner(), on)?;
     }
     if preview_on && app.config.lock().live_preview {
         app.prepare_preview(); // turned on (again), or another engine: get it ready
@@ -548,8 +543,12 @@ fn set_hotkey_inner(app: &AppRef, key: &str) -> Result<Value, String> {
         match existing {
             Some(hk) => hk.change(&new).map_err(|e| format!("{e:#}"))?,
             None => {
+                // Started without a key: install it (the bind and the overlay's window rule).
                 let hk = hyprland::Hotkey::new(&new, &std::env::current_exe().unwrap_or_default());
-                let t = hk.change(&new).map_err(|e| format!("{e:#}"))?;
+                let t = hk.install(false).map_err(|e| format!("{e:#}"))?;
+                if hk.source() != "app" {
+                    return Err(t);
+                }
                 hk.watch_reloads();
                 *app.hotkey.lock() = Some(hk);
                 t
@@ -588,17 +587,41 @@ fn set_hotkey_inner(app: &AppRef, key: &str) -> Result<Value, String> {
 /// Options → "Let the app manage it": the key comes from the open-whisper block in the user's
 /// Hyprland config. Remove that block (backup next to it), reload, and add the key from the app.
 #[tauri::command]
-fn adopt_hotkey(app: State<'_, AppRef>) -> Result<Value, String> {
+async fn adopt_hotkey(app: State<'_, AppRef>) -> Result<Value, String> {
     let app = app.inner().clone();
+    // Off the window's thread: it edits a file and waits for Hyprland to reload.
+    tauri::async_runtime::spawn_blocking(move || adopt_hotkey_inner(&app)).await.map_err(|e| e.to_string())?
+}
+
+fn adopt_hotkey_inner(app: &AppRef) -> Result<Value, String> {
     let hk = app.hotkey.lock().clone().ok_or("No Hyprland key to take over.")?;
     let r = hk.adopt().map_err(|e| format!("{e:#}"));
     emit_logged(&app.handle, "hotkey-adopt", json!({"result": r.as_ref().map(|b| b.display().to_string()).map_err(|e| e.clone())}));
     let backup = r?;
-    *app.hotkey_text.lock() = format!("{} — managed by the app (your old config is saved as {})", hk.key(), backup.display());
-    app.config.lock().hotkey = hk.key();
-    let _ = app.config.lock().save();
+    // The config's bind survived a logout; the app's bind needs the app: start it at login.
+    let login = set_start_at_login(app, true).is_ok();
+    *app.hotkey_text.lock() = format!("{} — managed by the app", hk.key());
+    {
+        let mut cfg = app.config.lock();
+        cfg.hotkey = hk.key();
+        let _ = cfg.save();
+    }
     app.emit_status();
-    Ok(json!({"status": app.status(), "backup": backup}))
+    Ok(json!({"status": app.status(), "backup": backup, "start_at_login": login}))
+}
+
+fn set_start_at_login(app: &AppRef, on: bool) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    {
+        let _ = app;
+        crate::autostart::set_in(&crate::autostart::dir(), on, &crate::autostart::launcher()).map_err(|e| format!("Start at login: {e}"))
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        use tauri_plugin_autostart::ManagerExt;
+        let al = app.handle.autolaunch();
+        if on { al.enable() } else { al.disable() }.map_err(|e| format!("Start at login: {e}"))
+    }
 }
 
 /// X11, macOS, Windows: the OS lets a running app own a key (press and release).
