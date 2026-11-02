@@ -10,5 +10,16 @@ fn main() {
     if os == "linux" && arch == "x86_64" && env == "gnu" && std::env::var_os("OPENWHISPER_NO_PARAKEET").is_none() {
         println!("cargo:rustc-cfg=parakeet");
     }
+    // macOS: whisper.cpp's Metal code uses @available(), which needs __isPlatformVersionAtLeast
+    // from clang's runtime (libclang_rt.osx.a); rustc does not link it by itself.
+    if os == "macos" {
+        if let Ok(out) = std::process::Command::new("clang").arg("--print-resource-dir").output() {
+            let dir = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if !dir.is_empty() {
+                println!("cargo:rustc-link-search=native={dir}/lib/darwin");
+                println!("cargo:rustc-link-lib=static=clang_rt.osx");
+            }
+        }
+    }
     tauri_build::build()
 }
