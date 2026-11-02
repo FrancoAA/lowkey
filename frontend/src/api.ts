@@ -38,11 +38,19 @@ export interface Status {
   /** AI notes settings (the API key itself never comes to the page). */
   ai?: {
     engine: "builtin" | "server";
+    /** The built-in model's id (qwen3.5-4b, qwen3.5-2b, gemma-4-e4b). */
+    builtin_model: string;
     url: string;
     model: string;
     has_key: boolean;
     auto: boolean;
-    builtin: { supported: boolean; downloaded: boolean; model: string; download_mb: number };
+    builtin: {
+      supported: boolean;
+      downloaded: boolean;
+      model: string;
+      download_mb: number;
+      models: { id: string; label: string; note: string; download_mb: number; downloaded: boolean }[];
+    };
   };
   options?: { model: string; language: string; idle_unload_minutes: number; live_preview?: boolean; preview_engine?: string };
   /** Live preview: state off | preparing | ready | unavailable; engine whistle | parakeet. */

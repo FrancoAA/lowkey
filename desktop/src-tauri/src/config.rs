@@ -67,6 +67,8 @@ pub struct Config {
     pub meeting_hotkey: String,
     /// AI notes: "builtin" (Qwen3.5 4B, run by the app) or "server" (an OpenAI-compatible API).
     pub ai_engine: String,
+    /// The built-in model: an id from llm::MODELS ("qwen3.5-4b", "qwen3.5-2b", "gemma-4-e4b").
+    pub ai_builtin_model: String,
     /// The own server: base URL (".../v1"), model name, key ("" = none).
     pub ai_url: String,
     pub ai_model: String,
@@ -79,6 +81,7 @@ impl Default for Config {
     fn default() -> Self {
         Self { model: String::new(), language: "auto".into(), idle_unload_minutes: 15, hotkey: DEFAULT_HOTKEY.into(), live_preview: true, preview_engine: "auto".into(), meeting_hotkey: DEFAULT_MEETING_HOTKEY.into(),
             ai_engine: "builtin".into(),
+            ai_builtin_model: crate::llm::DEFAULT_MODEL.into(),
             ai_url: "http://localhost:11434/v1".into(),
             ai_model: String::new(),
             ai_key: String::new(),

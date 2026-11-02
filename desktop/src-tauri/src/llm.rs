@@ -24,11 +24,60 @@ use parking_lot::Mutex;
 use serde::Serialize;
 use serde_json::{json, Value};
 
-pub const MODEL_LABEL: &str = "Qwen3.5 4B";
-const MODEL_FILE: &str = "Qwen3.5-4B-Q4_K_M.gguf";
-const MODEL_URL: &str = "https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/e87f176479d0855a907a41277aca2f8ee7a09523/Qwen3.5-4B-Q4_K_M.gguf";
-const MODEL_SHA256: &str = "00fe7986ff5f6b463e62455821146049db6f9313603938a70800d1fb69ef11a4";
-const MODEL_BYTES: u64 = 2_740_937_888;
+/// A built-in model for the AI notes: a Q4_K_M GGUF at a pinned Hugging Face revision.
+#[derive(Debug, Serialize)]
+pub struct Model {
+    pub id: &'static str,
+    pub label: &'static str,
+    #[serde(skip)]
+    file: &'static str,
+    #[serde(skip)]
+    url: &'static str,
+    #[serde(skip)]
+    sha256: &'static str,
+    #[serde(skip)]
+    bytes: u64,
+    /// What the test in bench/summary showed (Settings shows it).
+    pub note: &'static str,
+}
+
+pub const DEFAULT_MODEL: &str = "qwen3.5-4b";
+
+/// The three measured in bench/summary/results.md (all Apache-2.0).
+pub const MODELS: &[Model] = &[
+    Model {
+        id: "qwen3.5-4b",
+        label: "Qwen3.5 4B",
+        file: "Qwen3.5-4B-Q4_K_M.gguf",
+        url: "https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/e87f176479d0855a907a41277aca2f8ee7a09523/Qwen3.5-4B-Q4_K_M.gguf",
+        sha256: "00fe7986ff5f6b463e62455821146049db6f9313603938a70800d1fb69ef11a4",
+        bytes: 2_740_937_888,
+        note: "Recommended. In the test: every task with the right owner. About 25 s for 8 minutes of meeting with a GPU, a minute without.",
+    },
+    Model {
+        id: "qwen3.5-2b",
+        label: "Qwen3.5 2B",
+        file: "Qwen3.5-2B-Q4_K_M.gguf",
+        url: "https://huggingface.co/unsloth/Qwen3.5-2B-GGUF/resolve/f6d5376be1edb4d416d56da11e5397a961aca8ae/Qwen3.5-2B-Q4_K_M.gguf",
+        sha256: "aaf42c8b7c3cab2bf3d69c355048d4a0ee9973d48f16c731c0520ee914699223",
+        bytes: 1_280_835_840,
+        note: "The fastest and smallest (about 15 s with a GPU). In the test it gave tasks to the wrong people: check its notes.",
+    },
+    Model {
+        id: "gemma-4-e4b",
+        label: "Gemma 4 E4B",
+        file: "gemma-4-E4B-it-Q4_K_M.gguf",
+        url: "https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/bfc15c382204943c3a8fff0c750b94ae2364d7a3/gemma-4-E4B-it-Q4_K_M.gguf",
+        sha256: "85a896a047553e842f25297ee5b031d64ff30147d9c4af17b1e4b394cd1fab87",
+        bytes: 4_977_171_584,
+        note: "Google. As fast as Qwen3.5 4B and best at open questions and numbers, but it gave the recorder's own task to someone else.",
+    },
+];
+
+/// The model with this id; an unknown id gives the default.
+pub fn model(id: &str) -> &'static Model {
+    MODELS.iter().find(|m| m.id == id).unwrap_or(&MODELS[0])
+}
 
 /// llama.cpp release b12047 (2026-11-02). SHA-256 as GitHub publishes it for each file.
 struct Runtime {
@@ -75,8 +124,8 @@ pub fn dir() -> PathBuf {
     crate::models::models_dir().join("llm")
 }
 
-fn model_path() -> PathBuf {
-    dir().join(MODEL_FILE)
+fn model_path(m: &Model) -> PathBuf {
+    dir().join(m.file)
 }
 
 fn runtime_dir() -> PathBuf {
@@ -87,24 +136,42 @@ fn runtime_dir() -> PathBuf {
 pub struct BuiltinStatus {
     /// A llama.cpp build exists for this system.
     pub supported: bool,
-    /// The model and the server are on disk.
+    /// The chosen model and the server are on disk.
     pub downloaded: bool,
+    /// The chosen model.
     pub model: &'static str,
     pub download_mb: u64,
+    /// Every built-in model, and whether it is on disk.
+    pub models: Vec<ModelStatus>,
 }
 
-pub fn builtin_status() -> BuiltinStatus {
+#[derive(Debug, Clone, Serialize)]
+pub struct ModelStatus {
+    pub id: &'static str,
+    pub label: &'static str,
+    pub note: &'static str,
+    pub download_mb: u64,
+    pub downloaded: bool,
+}
+
+pub fn builtin_status(chosen: &str) -> BuiltinStatus {
+    let runner = server_exe(&runtime_dir()).is_some();
+    let m = model(chosen);
     BuiltinStatus {
         supported: RUNTIME.is_some(),
-        downloaded: model_ok_quick(&model_path()) && server_exe(&runtime_dir()).is_some(),
-        model: MODEL_LABEL,
-        download_mb: (MODEL_BYTES + 37_000_000) / 1_000_000,
+        downloaded: model_ok_quick(m) && runner,
+        model: m.label,
+        download_mb: (m.bytes + if runner { 0 } else { 37_000_000 }) / 1_000_000,
+        models: MODELS
+            .iter()
+            .map(|x| ModelStatus { id: x.id, label: x.label, note: x.note, download_mb: x.bytes / 1_000_000, downloaded: model_ok_quick(x) })
+            .collect(),
     }
 }
 
-/// The size is checked at every use; the SHA-256 once after the download (2.7 GB take seconds).
-fn model_ok_quick(p: &Path) -> bool {
-    std::fs::metadata(p).map(|m| m.len() == MODEL_BYTES).unwrap_or(false)
+/// The size is checked at every use; the SHA-256 once after the download (GBs take seconds).
+fn model_ok_quick(m: &Model) -> bool {
+    std::fs::metadata(model_path(m)).map(|f| f.len() == m.bytes).unwrap_or(false)
 }
 
 fn server_exe(dir: &Path) -> Option<PathBuf> {
@@ -131,7 +198,7 @@ fn find_file(dir: &Path, name: &str, depth: u32) -> Option<PathBuf> {
 pub type ProgressFn<'a> = &'a mut dyn FnMut(&str, u64, u64);
 
 /// The server and the model, downloaded and checked once. Returns (server, model).
-pub fn ensure_builtin(progress: ProgressFn, cancel: &AtomicBool) -> anyhow::Result<(PathBuf, PathBuf)> {
+pub fn ensure_builtin(m: &Model, progress: ProgressFn, cancel: &AtomicBool) -> anyhow::Result<(PathBuf, PathBuf)> {
     let rt = RUNTIME.as_ref().ok_or_else(|| anyhow::anyhow!("the built-in model is not available for this system; use your own server in Settings → AI notes"))?;
     let rdir = runtime_dir();
     if server_exe(&rdir).is_none() {
@@ -153,15 +220,15 @@ pub fn ensure_builtin(progress: ProgressFn, cancel: &AtomicBool) -> anyhow::Resu
         std::fs::rename(&tmp, &rdir)?;
         server_exe(&rdir).ok_or_else(|| anyhow::anyhow!("llama-server is missing from the model runner download"))?;
     }
-    let model = model_path();
-    if !model_ok_quick(&model) {
+    let model = model_path(m);
+    if !model_ok_quick(m) {
         let _ = std::fs::remove_file(&model);
-        let part = dir().join(format!("{MODEL_FILE}.download"));
-        crate::models::download_cancellable(MODEL_URL, &part, |d, t| progress(MODEL_LABEL, d, t), cancel)?;
+        let part = dir().join(format!("{}.download", m.file));
+        crate::models::download_cancellable(m.url, &part, |d, t| progress(m.label, d, t), cancel)?;
         progress("checking the download", 0, 0);
-        if crate::models::sha256_file(&part)? != MODEL_SHA256 {
+        if crate::models::sha256_file(&part)? != m.sha256 {
             let _ = std::fs::remove_file(&part);
-            anyhow::bail!("the {MODEL_LABEL} download has an unexpected checksum; try again");
+            anyhow::bail!("the {} download has an unexpected checksum; try again", m.label);
         }
         std::fs::rename(&part, &model)?;
     }
@@ -426,7 +493,8 @@ fn builtin_endpoint(exe: &Path, model: &Path, gpu: bool, cancel: &AtomicBool) ->
 /// Where the notes are written.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Engine {
-    Builtin { gpu: bool },
+    /// `model`: an id from MODELS.
+    Builtin { gpu: bool, model: String },
     /// An OpenAI-compatible API: base URL (".../v1"), model name, key ("" = none).
     Server { url: String, model: String, key: String },
 }
@@ -492,12 +560,13 @@ pub fn write_notes(
     anyhow::ensure!(input.chars().count() <= MAX_INPUT_CHARS, "this meeting is too long for AI notes for now (over about four hours)");
     let mut _in_use = None;
     let (base, key, model, builtin) = match engine {
-        Engine::Builtin { gpu } => {
+        Engine::Builtin { gpu, model: id } => {
             _in_use = Some(InUse::new()); // from the start of the server to the last word
-            let (exe, model) = ensure_builtin(&mut *progress, cancel)?;
+            let spec = model(id);
+            let (exe, model) = ensure_builtin(spec, &mut *progress, cancel)?;
             progress("starting", 0, 0);
             let (base, key) = builtin_endpoint(&exe, &model, *gpu, cancel)?;
-            (base, key, MODEL_LABEL.to_string(), true)
+            (base, key, spec.label.to_string(), true)
         }
         Engine::Server { url, model, key } => (url.trim_end_matches('/').to_string(), key.clone(), model.clone(), false),
     };
@@ -772,19 +841,34 @@ mod tests {
         let tmp = std::env::temp_dir().join(format!("ow-llm-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(tmp.join("llm")).unwrap();
-        std::os::unix::fs::symlink(bench.join(MODEL_FILE), tmp.join("llm").join(MODEL_FILE)).unwrap();
+        let m = model(DEFAULT_MODEL);
+        std::os::unix::fs::symlink(bench.join(m.file), tmp.join("llm").join(m.file)).unwrap();
         std::env::set_var("OPENWHISPER_MODELS_DIR", &tmp);
-        assert!(!builtin_status().downloaded);
+        assert!(!builtin_status(DEFAULT_MODEL).downloaded);
         let mut steps = Vec::new();
         let input = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../bench/summary/meeting-es.md")).unwrap();
-        let text = write_notes(&Engine::Builtin { gpu: true }, &input, "Spanish", &mut |w, _, _| steps.push(w.to_string()), &mut |_| {}, &AtomicBool::new(false));
+        let text = write_notes(&Engine::Builtin { gpu: true, model: DEFAULT_MODEL.into() }, &input, "Spanish", &mut |w, _, _| steps.push(w.to_string()), &mut |_| {}, &AtomicBool::new(false));
         stop_builtin();
         let text = text.unwrap();
         assert!(steps.iter().any(|s| s == "the model runner"), "{steps:?}");
-        assert!(builtin_status().downloaded);
+        assert!(builtin_status(DEFAULT_MODEL).downloaded);
         assert!(text.contains("Martín") && text.contains("14"), "{text}");
         eprintln!("{text}");
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn the_model_catalog_is_pinned_and_the_default_comes_first() {
+        assert_eq!(MODELS[0].id, DEFAULT_MODEL);
+        assert_eq!(model("nope").id, DEFAULT_MODEL, "an unknown id gives the default");
+        for m in MODELS {
+            assert_eq!(m.sha256.len(), 64, "{}", m.id);
+            assert!(m.url.contains("/resolve/") && m.url.ends_with(m.file), "{}: a pinned revision, the file", m.id);
+            let rev = m.url.split("/resolve/").nth(1).unwrap().split('/').next().unwrap();
+            assert_eq!(rev.len(), 40, "{}: a full commit, not a branch", m.id);
+        }
+        let st = builtin_status("qwen3.5-2b");
+        assert_eq!((st.model, st.models.len()), ("Qwen3.5 2B", 3));
     }
 
     #[test]

@@ -43,7 +43,7 @@ make desktop-bundle      # AppImage / .deb / .rpm in desktop/src-tauri/target/re
   **.txt**, **.srt** and **.vtt** save the transcript or subtitles.
 - **The window** has sections on the left: **Transcribe** (files, dictation in the window, the
   result; it opens there), **Meetings** (below) and the settings — General (language), Model (model, free memory when
-  idle), Keys (the dictation key, the meeting key, start at login), AI notes, Live preview (on/off, engine), About.
+  idle), Shortcuts (the dictation key, the meeting key, start at login), AI notes (the model), Live preview (on/off, engine), About.
   <kbd>Ctrl</kbd>+<kbd>,</kbd> jumps to the settings, <kbd>Esc</kbd> back to Transcribe.
 - Files given on the command line open in the app. **Closing the window keeps the app
   running** in the tray, so the dictation key stays instant. Quit from the tray or with
@@ -84,14 +84,14 @@ keeps working: the script hands the key to the app, or starts `~/.local/bin/open
 `$XDG_RUNTIME_DIR/open-whisper/app.log`. When the key is in your config, the app
 sees it and does not add it again. Classic `hyprland.conf`: `--print-snippet conf`.
 
-- **Change the key in Settings → Keys → Change**, then press the new combination
+- **Change the key in Settings → Shortcuts → Change**, then press the new combination
   (Super, Ctrl or Alt with a letter, digit, F1-F24 or Space; Esc cancels). It works at once,
   and the app refuses a combination that another shortcut uses. When the key comes from a
   block in your Hyprland config, Settings offer **"Let the app manage it"**: the block is
   removed (a backup is kept next to the file), Hyprland reloads, and the app checks that its
   key works; if not, your config is put back. It also turns on "Start at login" (the config's
   bind worked after a logout; the app's bind needs the app).
-- **Settings → Keys → Start when you log in**: the app starts hidden at login, so the key
+- **Settings → Shortcuts → Start when you log in**: the app starts hidden at login, so the key
   works all the time (Linux: `~/.config/autostart/open-whisper.desktop`).
 - Command line: `--hotkey "…"` (this run), `hotkey = "…"` in the settings, `--no-hotkey` adds
   none; `--remove-hotkey` removes a key that the app added (never yours).
@@ -123,7 +123,7 @@ Turn the preview off in Settings (`live_preview = false`). Details and measureme
 Record a call or a talk, as text next to your notes (Linux for now). No bot joins the call.
 
 - **The meeting key** (<kbd>Super</kbd>+<kbd>Ctrl</kbd>+<kbd>M</kbd> on Linux,
-  <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>M</kbd> on macOS and Windows; change it in Settings → Keys)
+  <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>M</kbd> on macOS and Windows; change it in Settings → Shortcuts)
   starts a recording from any app, and stops it. On Hyprland (or with your own desktop bind)
   it also starts the app when it is closed; on X11, macOS and Windows the app must run. A
   strip at the bottom of the screen shows the time, a two-colour wave (Me magenta, Them cyan) and the newest line,
@@ -138,7 +138,8 @@ Record a call or a talk, as text next to your notes (Linux for now). No bot join
 - **AI notes**: a language model writes the meeting's notes (summary, decisions, tasks with
   who and when, open questions, numbers) from your notes and the transcript. Built in:
   **Qwen3.5 4B** (Apache-2.0), run by llama.cpp on this computer (a 2.7 GB download the first
-  time; ~25 s for 8 minutes of meeting on the Radeon 780M, ~1 min on a CPU). Or your own
+  time; ~25 s for 8 minutes of meeting on the Radeon 780M, ~1 min on a CPU). Settings → AI
+  notes → Model also offers Qwen3.5 2B (1.3 GB, faster, less exact) and Gemma 4 E4B (5 GB). Or your own
   server in Settings → AI notes (Ollama, LM Studio, any OpenAI-compatible API; a warning shows
   when it is not on this computer). They are written by themselves when a meeting stops (the
   first time, after the model's download), and again with **Write again**; they are a draft
@@ -161,7 +162,8 @@ language = "auto"
 idle_unload_minutes = 15        # free the model's memory after 15 idle minutes; 0 = never
 hotkey = "SUPER + CTRL + X"
 meeting_hotkey = "SUPER + CTRL + M"   # start/stop a meeting recording; "" = no key
-ai_engine = "builtin"           # AI notes: builtin (Qwen3.5 4B) | server
+ai_engine = "builtin"           # AI notes: builtin | server
+ai_builtin_model = "qwen3.5-4b" # qwen3.5-4b (recommended) | qwen3.5-2b | gemma-4-e4b
 ai_url = "http://localhost:11434/v1"   # own server (OpenAI-compatible); ai_model, ai_key too
 ai_auto = true                  # write AI notes when a meeting stops
 live_preview = true             # words in the overlay while you talk

@@ -787,21 +787,34 @@ let aiFilled = false;
 function renderAi(): void {
   const ai = status?.ai;
   if (!ai) return;
+  // The menu: every built-in model (with its size, or "downloaded"), then the own server.
+  const b = ai.builtin;
+  const gb = (mb: number) => `${(mb / 1000).toFixed(1)} GB`;
+  const options = b.models.map((m) => new Option(`${m.label}${m.id === b.models[0].id ? " (recommended)" : ""} — ${m.downloaded ? "downloaded" : `${gb(m.download_mb)} download`}`, `builtin:${m.id}`));
+  options.push(new Option("My own server: Ollama, LM Studio, or an OpenAI-compatible API", "server"));
+  const chosen = ai.engine === "server" ? "server" : `builtin:${ai.builtin_model}`;
+  const keep = aiFilled ? aiEngine.value : chosen;
+  // Only when the menu's content changed: never under an open menu for nothing.
+  const signature = options.map((o) => o.value + o.text).join("|");
+  if (aiEngine.dataset.signature !== signature) {
+    aiEngine.replaceChildren(...options);
+    aiEngine.dataset.signature = signature;
+  }
+  aiEngine.value = keep;
   if (!aiFilled) {
-    aiEngine.value = ai.engine;
     aiUrl.value = ai.url;
     aiModel.value = ai.model;
     aiFilled = true;
   }
   aiAuto.checked = ai.auto;
   aiServer.hidden = aiEngine.value !== "server";
-  const b = ai.builtin;
+  const pick = b.models.find((m) => `builtin:${m.id}` === aiEngine.value);
   aiEngineNote.textContent =
     aiEngine.value === "server"
-      ? "The app sends your notes and the transcript to this server, and shows its answer."
+      ? "The app sends the transcript to this server, and shows its answer."
       : !b.supported
         ? "Not available for this system: use your own server."
-        : `${b.downloaded ? "Downloaded." : `A ${(b.download_mb / 1000).toFixed(1)} GB download the first time you write notes.`} About 25 s for 8 minutes of meeting with a GPU, about a minute without one. Apache-2.0.`;
+        : `${pick?.note ?? ""} ${pick?.downloaded ? "On this computer." : `Downloads once (${gb(b.download_mb)}) the first time notes are written.`} Apache-2.0.`;
   aiKey.placeholder = ai.has_key ? "A key is saved (type to replace it)" : "None";
   aiKeyClear.hidden = !ai.has_key;
   renderAiUrlNote();
@@ -830,7 +843,8 @@ function saveAi(o: Parameters<Backend["saveOptions"]>[0]): void {
 
 aiEngine.addEventListener("change", () => {
   aiServer.hidden = aiEngine.value !== "server";
-  saveAi({ ai_engine: aiEngine.value });
+  const v = aiEngine.value;
+  saveAi(v.startsWith("builtin:") ? { ai_engine: "builtin", ai_builtin_model: v.slice("builtin:".length) } : { ai_engine: "server" });
 });
 aiUrl.addEventListener("input", renderAiUrlNote);
 aiUrl.addEventListener("change", () => saveAi({ ai_url: aiUrl.value }));

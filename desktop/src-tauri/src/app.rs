@@ -242,7 +242,8 @@ impl App {
             "ai": {
                 "engine": cfg.ai_engine, "url": cfg.ai_url, "model": cfg.ai_model, "has_key": !cfg.ai_key.is_empty(),
                 "auto": cfg.ai_auto,
-                "builtin": llm::builtin_status(),
+                "builtin_model": llm::model(&cfg.ai_builtin_model).id,
+                "builtin": llm::builtin_status(&cfg.ai_builtin_model),
             },
         })
     }
@@ -566,6 +567,7 @@ struct OptionsIn {
     preview_engine: Option<String>,
     start_at_login: Option<bool>,
     ai_engine: Option<String>,
+    ai_builtin_model: Option<String>,
     ai_url: Option<String>,
     ai_model: Option<String>,
     /// Some("") removes the key.
@@ -610,6 +612,12 @@ fn set_options(app: State<'_, AppRef>, options: OptionsIn) -> Result<Value, Stri
                 return Err(format!("Unknown AI notes engine {e:?}"));
             }
             cfg.ai_engine = e;
+        }
+        if let Some(m) = options.ai_builtin_model {
+            if !llm::MODELS.iter().any(|x| x.id == m) {
+                return Err(format!("Unknown AI notes model {m:?}"));
+            }
+            cfg.ai_builtin_model = m;
         }
         if let Some(u) = options.ai_url {
             let u = u.trim().to_string();
@@ -816,7 +824,7 @@ fn stop_meeting(app: &AppRef) -> Result<meeting::Meeting, String> {
     // (progress in the meeting; Cancel stops it).
     if let Ok(m) = &r {
         let cfg = app.config.lock().clone();
-        let ready = if cfg.ai_engine == "server" { !cfg.ai_url.is_empty() } else { llm::builtin_status().supported };
+        let ready = if cfg.ai_engine == "server" { !cfg.ai_url.is_empty() } else { llm::builtin_status(&cfg.ai_builtin_model).supported };
         if cfg.ai_auto && ready && !m.lines.is_empty() {
             if let Err(why) = start_ai_notes(app, m.id.clone()) {
                 // e.g. another meeting's notes are being written: say so in this meeting.
@@ -883,7 +891,7 @@ fn ai_engine(app: &AppRef) -> llm::Engine {
         llm::Engine::Server { url: cfg.ai_url, model: cfg.ai_model, key: cfg.ai_key }
     } else {
         // Vulkan / Metal when the app found a GPU; the CPU else (slower, but it works).
-        llm::Engine::Builtin { gpu: app.engines.hw.gpu.is_some() }
+        llm::Engine::Builtin { gpu: app.engines.hw.gpu.is_some(), model: cfg.ai_builtin_model }
     }
 }
 
@@ -949,7 +957,7 @@ fn run_ai_notes(app: &AppRef, id: &str) {
         };
         let engine = ai_engine(app);
         let label = match &engine {
-            llm::Engine::Builtin { .. } => llm::MODEL_LABEL.to_string(),
+            llm::Engine::Builtin { model, .. } => llm::model(model).label.to_string(),
             llm::Engine::Server { model, url, .. } => if model.is_empty() { url.clone() } else { model.clone() },
         };
         let mut last = Instant::now() - Duration::from_secs(1);

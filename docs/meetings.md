@@ -11,7 +11,7 @@ macOS and Windows, a prompt when a call starts, and questions over past meetings
 
 ## The meeting key and the strip
 
-- Settings → Keys → **Meeting key**: Super+Ctrl+M on Linux, Ctrl+Alt+M on macOS and Windows
+- Settings → Shortcuts → **Meeting key**: Super+Ctrl+M on Linux, Ctrl+Alt+M on macOS and Windows
   (`meeting_hotkey` in config.toml). It runs `open-whisper --meeting toggle`: a tap starts a
   meeting, the next tap stops and saves it. A tap while it starts is remembered (it stops
   right after the start). On Hyprland a closed app starts in the background for it; on X11,
@@ -29,7 +29,7 @@ macOS and Windows, a prompt when a call starts, and questions over past meetings
   keys at all, the app adds the strip's window rule itself). The time is not in the
   screen-reader region, so it is not read out every second.
 - If the meeting key cannot be added (e.g. `config.toml` gives it the dictation key's
-  combination), Settings → Keys shows it "not active" with the reason; moving the dictation key
+  combination), Settings → Shortcuts shows it "not active" with the reason; moving the dictation key
   adds it again.
 - A meeting started with the key gets the title "Meeting"; the list shows its date.
 
@@ -120,6 +120,11 @@ models wrote English notes for a Spanish meeting (bench/summary/results.md).
   hours of meeting), all layers on the GPU when the app found one. It stops 2 minutes after the
   last use (never during a job), on Cancel, and when the app quits; a pid file lets the next
   start stop one that a crash or a kill left behind (only if that pid is our llama-server).
+- **The built-in model** (Settings → AI notes → Model, `ai_builtin_model`): Qwen3.5 4B
+  (`qwen3.5-4b`, 2.7 GB, recommended), Qwen3.5 2B (`qwen3.5-2b`, 1.3 GB) or Gemma 4 E4B
+  (`gemma-4-e4b`, 5.0 GB), each pinned to a Hugging Face commit and its SHA-256, with the
+  note of its test in the menu. A model downloads the first time it writes notes; the runner
+  restarts with the new model when the choice changes.
 - **Own server**: any OpenAI-compatible API (`ai_url`, `ai_model`, `ai_key`). Ollama:
   `http://localhost:11434/v1`, LM Studio: `http://localhost:1234/v1`. Settings warns when the
   address is not on this computer (the address is parsed as the HTTP client parses it). The key

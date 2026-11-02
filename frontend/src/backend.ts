@@ -16,6 +16,7 @@ export interface Options {
   preview_engine?: string;
   start_at_login?: boolean;
   ai_engine?: string;
+  ai_builtin_model?: string;
   ai_url?: string;
   ai_model?: string;
   /** "" removes the key. */
