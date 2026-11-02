@@ -9,6 +9,7 @@ pub mod engine;
 pub mod formats;
 pub mod hyprland;
 pub mod jobs;
+pub mod llm;
 pub mod meeting;
 pub mod mic;
 pub mod models;

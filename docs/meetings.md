@@ -88,6 +88,32 @@ Stop saved in under a second (the model kept up, so nothing waited). Screenshots
 The real monitor read is checked by an ignored unit test (it reads 1 s, plays nothing, keeps
 nothing): `cd desktop/src-tauri && cargo test --lib system_audio -- --ignored`.
 
+## AI notes
+
+`llm.rs`. A language model reads the meeting as Markdown (title, date, your notes, the
+transcript; never older AI notes) and writes: Summary, Decisions, Action items (**who** — what —
+when), Open questions, Numbers. The language is named in the instructions (Settings → General,
+else found in the transcript with whatlang): with "the language of the meeting" two of three
+models wrote English notes for a Spanish meeting (bench/summary/results.md).
+
+- **Built in**: Qwen3.5 4B Q4_K_M (Apache-2.0, 2.74 GB, SHA-256 pinned, HF revision e87f176) and
+  llama.cpp's `llama-server` from the pinned release b12047 (Vulkan on Linux and Windows, Metal
+  on macOS; SHA-256 as GitHub publishes it). Both download on the first **Write notes** with
+  progress in the meeting, into `~/.local/share/open-whisper/models/llm`. The server runs in its
+  own process on 127.0.0.1 with a random API key (no other program and no web page can use
+  it), 64K context (about four hours of meeting), all layers on the GPU when the app found one.
+  It stops 2 minutes after the last use and when the app quits.
+- **Own server**: any OpenAI-compatible API (`ai_url`, `ai_model`, `ai_key`). Ollama:
+  `http://localhost:11434/v1`, LM Studio: `http://localhost:1234/v1`. Settings warns when the
+  address is not on this computer. The key stays in config.toml (0600) and never goes to the page.
+- The text streams into the meeting while it is written; Cancel stops it. One job at a time.
+- **Automatic**: when a meeting stops, if `ai_auto` is on and the model is there (never a first
+  2.7 GB download unasked).
+- The notes are saved in the meeting file (`ai_notes`, `ai_model`, `ai_at`); Copy and Export put
+  them first, as "AI notes (model, a draft)", their headings one level down.
+- The e2e test (cached model): notes written 7–9 s after Stop for a 16-s test meeting, streamed,
+  saved; screenshot `docs/screenshots/25-desktop-meeting-ai-notes.png`.
+
 ## Limits now
 
 - **Stop waits for the pieces that are not transcribed yet.** A model slower than the speech

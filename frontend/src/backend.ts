@@ -1,7 +1,7 @@
 /**
  * Everything the page needs from the app (Tauri commands and events) goes through here.
  */
-import type { JobEvent, Meeting, MeetingLive, MeetingSummary, Status } from "./api";
+import type { AiNotesEvent, JobEvent, Meeting, MeetingLive, MeetingSummary, Status } from "./api";
 
 export interface FileRef {
   name: string;
@@ -15,6 +15,12 @@ export interface Options {
   live_preview?: boolean;
   preview_engine?: string;
   start_at_login?: boolean;
+  ai_engine?: string;
+  ai_url?: string;
+  ai_model?: string;
+  /** "" removes the key. */
+  ai_key?: string;
+  ai_auto?: boolean;
 }
 
 export interface Backend {
@@ -52,6 +58,10 @@ export interface MeetingsBackend {
   markdown(id: string): Promise<string>;
   onLive(cb: (l: MeetingLive) => void): void;
   onLevels(cb: (lv: { me: number; them: number }) => void): void;
+  /** Start writing the AI notes of a saved meeting; progress comes through onAiNotes. */
+  aiNotes(id: string): Promise<void>;
+  aiCancel(): Promise<void>;
+  onAiNotes(cb: (e: AiNotesEvent) => void): void;
 }
 
 const baseName = (p: string) => p.split(/[\\/]/).pop() || p;
@@ -144,6 +154,11 @@ async function desktopBackend(): Promise<Backend> {
       },
       onLevels(cb) {
         void listen<{ me: number; them: number }>("meeting-level", (e) => cb(e.payload));
+      },
+      aiNotes: (id) => invoke("meeting_ai_notes", { id }),
+      aiCancel: () => invoke("ai_notes_cancel"),
+      onAiNotes(cb) {
+        void listen<AiNotesEvent>("ai-notes", (e) => cb(e.payload));
       },
     },
   };

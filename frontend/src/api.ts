@@ -35,6 +35,18 @@ export interface Status {
   meeting_key_problem?: string;
   /** A meeting is being recorded. */
   recording?: boolean;
+  /** AI notes settings (the API key itself never comes to the page). */
+  ai?: {
+    engine: "builtin" | "server";
+    url: string;
+    model: string;
+    has_key: boolean;
+    auto: boolean;
+    /** The server address is on this computer. */
+    local: boolean;
+    busy: boolean;
+    builtin: { supported: boolean; downloaded: boolean; model: string; download_mb: number };
+  };
   options?: { model: string; language: string; idle_unload_minutes: number; live_preview?: boolean; preview_engine?: string };
   /** Live preview: state off | preparing | ready | unavailable; engine whistle | parakeet. */
   preview?: { state: string; error: string | null; engine?: string };
@@ -89,6 +101,20 @@ export interface Meeting {
   system_audio: boolean;
   notes: string;
   lines: MeetingLine[];
+  /** Notes written by a language model (Markdown, a draft). */
+  ai_notes?: string;
+  ai_model?: string;
+  ai_at?: number;
+}
+
+/** Progress of the AI notes of one meeting. */
+export interface AiNotesEvent {
+  id: string;
+  state: "preparing" | "downloading" | "writing" | "done" | "error" | "cancelled";
+  detail: string;
+  progress: number;
+  /** The text so far (writing), or all of it (done). */
+  text: string;
 }
 
 export interface MeetingLive {

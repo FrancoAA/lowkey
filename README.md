@@ -43,7 +43,7 @@ make desktop-bundle      # AppImage / .deb / .rpm in desktop/src-tauri/target/re
   **.txt**, **.srt** and **.vtt** save the transcript or subtitles.
 - **The window** has sections on the left: **Transcribe** (files, dictation in the window, the
   result; it opens there), **Meetings** (below) and the settings — General (language), Model (model, free memory when
-  idle), Keys (the dictation key, the meeting key, start at login), Live preview (on/off, engine), About.
+  idle), Keys (the dictation key, the meeting key, start at login), AI notes, Live preview (on/off, engine), About.
   <kbd>Ctrl</kbd>+<kbd>,</kbd> jumps to the settings, <kbd>Esc</kbd> back to Transcribe.
 - Files given on the command line open in the app. **Closing the window keeps the app
   running** in the tray, so the dictation key stays instant. Quit from the tray or with
@@ -136,6 +136,14 @@ Record a call or a talk, as text next to your notes (Linux for now). No bot join
 - **Stop** transcribes the last seconds and saves. The list shows all meetings; open one to read
   it, change the title or notes, **Copy** or **Export .md** (notes, then the transcript), or
   **Delete** it (two clicks).
+- **AI notes**: a language model writes the meeting's notes (summary, decisions, tasks with
+  who and when, open questions, numbers) from your notes and the transcript. Built in:
+  **Qwen3.5 4B** (Apache-2.0), run by llama.cpp on this computer (a 2.7 GB download the first
+  time; ~25 s for 8 minutes of meeting on the Radeon 780M, ~1 min on a CPU). Or your own
+  server in Settings → AI notes (Ollama, LM Studio, any OpenAI-compatible API; a warning shows
+  when it is not on this computer). They are written when a meeting stops (once the model is
+  there), or with **Write notes**; they are a draft next to the transcript, and Copy/Export
+  include them. Measurements: [bench/summary/results.md](bench/summary/results.md).
 - Use headphones. Without them the microphone also hears the others; the app removes a "Me"
   line when most of its words are in a "Them" line at the same time.
 - Tell the others that you record. Meetings are saved as JSON in
@@ -154,6 +162,9 @@ language = "auto"
 idle_unload_minutes = 15        # free the model's memory after 15 idle minutes; 0 = never
 hotkey = "SUPER + CTRL + X"
 meeting_hotkey = "SUPER + CTRL + M"   # start/stop a meeting recording; "" = no key
+ai_engine = "builtin"           # AI notes: builtin (Qwen3.5 4B) | server
+ai_url = "http://localhost:11434/v1"   # own server (OpenAI-compatible); ai_model, ai_key too
+ai_auto = true                  # write AI notes when a meeting stops (when the model is there)
 live_preview = true             # words in the overlay while you talk
 preview_engine = "auto"         # auto (Parakeet when on disk, else Whistle) | whistle | parakeet
 ```
@@ -207,7 +218,8 @@ make desktop-dev   # the app with hot reload (Vite + tauri dev)
 make test          # UI typecheck + build, Rust unit tests
 make e2e-desktop   # the app in a nested Hyprland (your session is not touched): files,
                    # errors, dictation, the global key, live preview, Settings, a meeting;
-                   # the meeting key and its strip; screenshots 09-24.
+                   # the meeting key and its strip, AI notes (with a cached
+                   # Qwen3.5 4B in bench/.work/llm); screenshots 09-25.
                    # python3 scripts/e2e_desktop.py --first-run: empty model folder
                    # OW_E2E_HYPRBARS=<hyprbars.so>: also checks that title-bar plugins skip the overlay
 make bench         # research only: the model benchmark (docs/benchmark.md), Python via uv
@@ -218,8 +230,9 @@ Dependencies are pinned in `desktop/src-tauri/Cargo.lock` and `frontend/package-
 
 ## Privacy
 
-Audio and transcripts stay on your computer. The only network access is the one-time model
-download from Hugging Face (the live preview engine and model come from pinned revisions,
+Audio and transcripts stay on your computer, unless you point AI notes to a server that is
+not on it (Settings says so). The only other network access is the one-time model
+download from Hugging Face (and the llama.cpp runner from GitHub for AI notes) (the live preview engine and model come from pinned revisions,
 checked with SHA-256; that engine has no network code).
 
 ## Licenses

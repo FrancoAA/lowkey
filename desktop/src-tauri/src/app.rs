@@ -16,7 +16,7 @@ use crate::config::{Cli, Config, HELP};
 use crate::dictation::{self, Dictation, Io, Snapshot};
 use crate::engine::{Engines, Input};
 use crate::jobs::{JobSnapshot, Jobs};
-use crate::meeting;
+use crate::{llm, meeting};
 use crate::mic::{self, EndFn, LevelFn, Recorder};
 use crate::models;
 use crate::preview::{AudioFn, Preview, Stream, TextFn};
@@ -55,6 +55,9 @@ pub struct App {
     meeting_os_key: Mutex<Option<String>>,
     /// Who wants the overlay: [dictation, meeting]. It shows while either does.
     overlay_wants: [AtomicBool; 2],
+    /// AI notes: one job at a time, and its cancel flag.
+    ai_busy: Arc<AtomicBool>,
+    ai_cancel: Arc<AtomicBool>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -234,6 +237,11 @@ impl App {
             "meeting_key_source": self.source_of(KeyKind::Meeting),
             "meeting_key_problem": if self.source_of(KeyKind::Meeting) == "none" && !self.key_of(KeyKind::Meeting).is_empty() { self.meeting_hotkey_text.lock().clone() } else { String::new() },
             "recording": self.meeting.lock().is_some(),
+            "ai": {
+                "engine": cfg.ai_engine, "url": cfg.ai_url, "model": cfg.ai_model, "has_key": !cfg.ai_key.is_empty(),
+                "auto": cfg.ai_auto, "local": llm::is_local(&cfg.ai_url), "busy": self.ai_busy.load(Ordering::SeqCst),
+                "builtin": llm::builtin_status(),
+            },
         })
     }
 
@@ -387,6 +395,8 @@ impl App {
         if self.overlay_rule.load(Ordering::SeqCst) {
             hyprland::remove_overlay_rule();
         }
+        self.ai_cancel.store(true, Ordering::SeqCst);
+        llm::stop_builtin();
         let f = runtime_dir().join("desktop.json");
         if std::fs::read_to_string(&f).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()).and_then(|v| v["pid"].as_u64())
             == Some(std::process::id() as u64)
@@ -553,6 +563,12 @@ struct OptionsIn {
     live_preview: Option<bool>,
     preview_engine: Option<String>,
     start_at_login: Option<bool>,
+    ai_engine: Option<String>,
+    ai_url: Option<String>,
+    ai_model: Option<String>,
+    /// Some("") removes the key.
+    ai_key: Option<String>,
+    ai_auto: Option<bool>,
 }
 
 #[tauri::command]
@@ -586,6 +602,28 @@ fn set_options(app: State<'_, AppRef>, options: OptionsIn) -> Result<Value, Stri
                 return Err(format!("Unknown preview engine {e:?}"));
             }
             cfg.preview_engine = e;
+        }
+        if let Some(e) = options.ai_engine {
+            if !["builtin", "server"].contains(&e.as_str()) {
+                return Err(format!("Unknown AI notes engine {e:?}"));
+            }
+            cfg.ai_engine = e;
+        }
+        if let Some(u) = options.ai_url {
+            let u = u.trim().to_string();
+            if !(u.starts_with("http://") || u.starts_with("https://")) {
+                return Err("The server address starts with http:// or https://, e.g. http://localhost:11434/v1".into());
+            }
+            cfg.ai_url = u;
+        }
+        if let Some(m) = options.ai_model {
+            cfg.ai_model = m.trim().to_string();
+        }
+        if let Some(k) = options.ai_key {
+            cfg.ai_key = k.trim().to_string();
+        }
+        if let Some(on) = options.ai_auto {
+            cfg.ai_auto = on;
         }
         model_changed = cfg.model != before;
         cfg.save().map_err(|e| e.to_string())?;
@@ -772,6 +810,14 @@ fn stop_meeting(app: &AppRef) -> Result<meeting::Meeting, String> {
     app.emit_status();
     // The strip says "saved" for a moment, then goes (unless a new meeting started).
     app.hide_meeting_strip_later(3);
+    // AI notes right away, when the model is ready (never a first 2.7 GB download unasked).
+    if let Ok(m) = &r {
+        let cfg = app.config.lock().clone();
+        let ready = if cfg.ai_engine == "server" { !cfg.ai_url.is_empty() } else { llm::builtin_status().downloaded };
+        if cfg.ai_auto && ready && !m.lines.is_empty() {
+            let _ = start_ai_notes(app, m.id.clone());
+        }
+    }
     r.map_err(|_| {
         session.abandon(); // keep what is transcribed; the next meeting can start
         "Stopping failed; the meeting is saved as it was.".to_string()
@@ -811,14 +857,118 @@ fn meeting_update(app: State<'_, AppRef>, id: String, title: Option<String>, not
         return Ok(());
     }
     let dir = meeting::dir();
-    let mut m = meeting::load_in(&dir, &id).map_err(|e| format!("{e:#}"))?;
-    if let Some(t) = title {
-        m.title = t;
+    meeting::edit_in(&dir, &id, |m| {
+        if let Some(t) = title {
+            m.title = t;
+        }
+        if let Some(n) = notes {
+            m.notes = n;
+        }
+    })
+    .map(|_| ())
+    .map_err(|e| format!("{e:#}"))
+}
+
+// ------------------------------------------------------------------ AI notes
+/// Settings → AI notes: the engine to use now.
+fn ai_engine(app: &AppRef) -> llm::Engine {
+    let cfg = app.config.lock().clone();
+    if cfg.ai_engine == "server" {
+        llm::Engine::Server { url: cfg.ai_url, model: cfg.ai_model, key: cfg.ai_key }
+    } else {
+        // Vulkan / Metal when the app found a GPU; the CPU else (slower, but it works).
+        llm::Engine::Builtin { gpu: app.engines.hw.gpu.is_some() }
     }
-    if let Some(n) = notes {
-        m.notes = n;
+}
+
+/// Write the AI notes of a saved meeting (in the background; "ai-notes" events follow it).
+#[tauri::command]
+fn meeting_ai_notes(app: State<'_, AppRef>, id: String) -> Result<(), String> {
+    let app = app.inner().clone();
+    if !meeting::valid_id(&id) {
+        return Err(format!("unknown meeting {id:?}"));
     }
-    meeting::save_in(&dir, &m).map_err(|e| format!("{e:#}"))
+    if live_session(&app, &id).is_some() {
+        return Err("Stop the recording first.".into());
+    }
+    start_ai_notes(&app, id)
+}
+
+#[tauri::command]
+fn ai_notes_cancel(app: State<'_, AppRef>) {
+    app.ai_cancel.store(true, Ordering::SeqCst);
+}
+
+fn start_ai_notes(app: &AppRef, id: String) -> Result<(), String> {
+    let busy = llm::Busy::take(&app.ai_busy).ok_or("AI notes are being written for another meeting. Wait for them, or cancel them.")?;
+    app.ai_cancel.store(false, Ordering::SeqCst);
+    let app = app.clone();
+    std::thread::Builder::new()
+        .name("ai-notes".into())
+        .spawn(move || {
+            let _busy = busy;
+            run_ai_notes(&app, &id);
+            app.emit_status();
+        })
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn run_ai_notes(app: &AppRef, id: &str) {
+    let h = app.handle.clone();
+    let send = |state: &str, detail: &str, progress: f64, text: &str| {
+        emit_logged(&h, "ai-notes", json!({"id": id, "state": state, "detail": detail, "progress": progress, "text": text}));
+    };
+    send("preparing", "Getting ready…", 0.0, "");
+    let result = (|| -> anyhow::Result<(String, String)> {
+        let m = meeting::load_in(&meeting::dir(), id)?;
+        anyhow::ensure!(!m.lines.is_empty() || !m.notes.trim().is_empty(), "this meeting has no transcript and no notes");
+        let input = meeting::model_input(&m);
+        // The language: the one set in Settings, else found in the transcript.
+        let lang = match app.current_language().and_then(|c| (0..=whisper_rs::get_lang_max_id()).find(|&i| whisper_rs::get_lang_str(i) == Some(c.as_str()))) {
+            Some(i) => {
+                let name = whisper_rs::get_lang_str_full(i).unwrap_or("English");
+                let mut c = name.chars();
+                c.next().map(|f| f.to_uppercase().collect::<String>() + c.as_str()).unwrap_or_default()
+            }
+            None => llm::language_of(&m.lines.iter().map(|l| l.text.as_str()).collect::<Vec<_>>().join(" ")).to_string(),
+        };
+        let engine = ai_engine(app);
+        let label = match &engine {
+            llm::Engine::Builtin { .. } => llm::MODEL_LABEL.to_string(),
+            llm::Engine::Server { model, url, .. } => if model.is_empty() { url.clone() } else { model.clone() },
+        };
+        let mut last = Instant::now() - Duration::from_secs(1);
+        let mut progress = |what: &str, done: u64, total: u64| match what {
+            "starting" => send("preparing", "Starting the model…", 0.0, ""),
+            "writing" => send("writing", "Writing…", 0.0, ""),
+            "checking the download" => send("preparing", "Checking the download…", 1.0, ""),
+            what if last.elapsed() >= Duration::from_millis(250) || done == total => {
+                last = Instant::now();
+                let p = if total > 0 { done as f64 / total as f64 } else { 0.0 };
+                send("downloading", &format!("Downloading {what} (once)… {}% of {} MB", (p * 100.0) as u32, total / 1_000_000), p, "");
+            }
+            _ => {}
+        };
+        let mut on_text = |t: &str| send("writing", "Writing…", 0.0, t);
+        let text = llm::write_notes(&engine, &input, &lang, &mut progress, &mut on_text, &app.ai_cancel)?;
+        Ok((text, label))
+    })();
+    match result {
+        Ok((text, label)) => {
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+            match meeting::edit_in(&meeting::dir(), id, |m| {
+                m.ai_notes = text.clone();
+                m.ai_model = label.clone();
+                m.ai_at = now;
+            }) {
+                Ok(_) => send("done", &label, 1.0, &text),
+                Err(e) => send("error", &format!("The notes were written but not saved: {e:#}"), 0.0, &text),
+            }
+        }
+        Err(e) if format!("{e}") == "cancelled" => send("cancelled", "Cancelled", 0.0, ""),
+        Err(e) => send("error", &format!("{e:#}"), 0.0, ""),
+    }
 }
 
 #[tauri::command]
@@ -1106,7 +1256,9 @@ pub fn run() {
             meeting_get,
             meeting_update,
             meeting_delete,
-            meeting_markdown
+            meeting_markdown,
+            meeting_ai_notes,
+            ai_notes_cancel
         ])
         .setup(move |tauri_app| {
             let cli = first_cli.clone();
@@ -1153,6 +1305,8 @@ pub fn run() {
                 meeting_hotkey_text: Mutex::new(String::new()),
                 meeting_os_key: Mutex::new(None),
                 overlay_wants: [AtomicBool::new(false), AtomicBool::new(false)],
+                ai_busy: Arc::new(AtomicBool::new(false)),
+                ai_cancel: Arc::new(AtomicBool::new(false)),
             });
             let io = Arc::new(TauriIo { app: Arc::downgrade(&app), handle: handle.clone() });
             *app.dictation.lock() = Some(Dictation::new(io, jobs));

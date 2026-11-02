@@ -49,6 +49,9 @@ BENCH_MODELS = ROOT / "bench" / ".work" / "ggml"
 # later runs link them, so they work offline like the ggml models above.
 BENCH_WHISTLE = ROOT / "bench" / ".work" / "whistle"
 BENCH_PARAKEET = ROOT / "bench" / ".work" / "parakeet-tdt-0.6b-v3-int8"  # Parakeet files (670 MB), if cached
+# AI notes: Qwen3.5 4B (2.7 GB) and the llama.cpp runner, if cached (bench/summary). Without
+# them the AI notes step is skipped (the test never downloads 2.7 GB).
+BENCH_LLM = ROOT / "bench" / ".work" / "llm"
 if PREVIEW == "parakeet" and not BENCH_PARAKEET.is_dir():
     print(f"  note: OW_E2E_PREVIEW=parakeet but no {BENCH_PARAKEET}: using whistle")
     PREVIEW = "whistle"
@@ -59,7 +62,9 @@ hl.monitor({ output = "", mode = "preferred", position = "auto", scale = 1 })
 -- A taken key: Options must refuse it for the dictation key.
 hl.bind("SUPER + ALT + Q", hl.dsp.exec_cmd("true"), { description = "e2e: a taken key" })
 hl.config({ misc = { disable_hyprland_logo = true, disable_splash_rendering = true, disable_watchdog_warning = true },
-            ecosystem = { no_donation_nag = true }, decoration = { rounding = 12 } })
+            ecosystem = { no_donation_nag = true }, decoration = { rounding = 12 },
+            -- The focus stays where the test puts it, wherever the pointer is.
+            input = { follow_mouse = 0 } })
 """
 
 
@@ -136,6 +141,10 @@ def main() -> None:
                 (models / f).symlink_to(BENCH_MODELS / f)
         if BENCH_PARAKEET.is_dir():
             (models / BENCH_PARAKEET.name).symlink_to(BENCH_PARAKEET)
+        if (BENCH_LLM / "Qwen3.5-4B-Q4_K_M.gguf").exists() and (BENCH_LLM / "llama-b12047").is_dir():
+            (models / "llm").mkdir()
+            for f in ("Qwen3.5-4B-Q4_K_M.gguf", "llama-b12047"):
+                (models / "llm" / f).symlink_to(BENCH_LLM / f)
         if BENCH_WHISTLE.is_dir():
             (models / "whistle").mkdir()
             for f in BENCH_WHISTLE.iterdir():
@@ -587,6 +596,21 @@ def main() -> None:
         check(oct(meetings_dir.stat().st_mode & 0o777) == "0o700", "the meetings folder is private (0700)")
         time.sleep(1.0)
         shot("22-desktop-meeting-saved.png")
+
+        # ---------------------------------------------------------------- AI notes (written when it stops)
+        if (models / "llm").is_dir():
+            t_ai = time.monotonic()
+            ai = wait(lambda: next((e for e in events("ai-notes") if e["id"] == mid and e["state"] in ("done", "error")), None), 240, "AI notes")
+            check(ai["state"] == "done", f"AI notes written by themselves after Stop in {time.monotonic() - t_ai:.0f} s ({ai['detail']}): {ai['text'][:80]!r}")
+            check(any(e["state"] == "writing" and e["text"] for e in events("ai-notes") if e["id"] == mid), "the notes stream in while they are written")
+            saved = json.loads((meetings_dir / f"{mid}.json").read_text())
+            check(saved["ai_notes"] == ai["text"] and saved["ai_model"] == "Qwen3.5 4B" and saved["notes"] == "hello", "the AI notes are saved with the meeting; your notes stay")
+            low = saved["ai_notes"].lower()
+            check("## " in low and ("openwhisper" in low or "open whisper" in low), "the notes have sections and use the transcript")
+            time.sleep(1.0)
+            shot("25-desktop-meeting-ai-notes.png")
+        else:
+            print(f"  SKIP AI notes: no cached Qwen3.5 4B and runner in {BENCH_LLM}")
 
         # ---------------------------------------------------------------- Meetings: the key, from another app
         focus(target["address"])  # the terminal has the focus

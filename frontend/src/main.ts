@@ -43,6 +43,15 @@ const meetingKeyRow = $<HTMLDivElement>("meeting-key-row");
 const meetingKeyCurrent = $<HTMLElement>("meeting-key-current");
 const meetingKeyChange = $<HTMLButtonElement>("meeting-key-change");
 const meetingKeyNote = $<HTMLElement>("meeting-key-note");
+const aiEngine = $<HTMLSelectElement>("ai-engine");
+const aiEngineNote = $<HTMLElement>("ai-engine-note");
+const aiServer = $<HTMLDivElement>("ai-server");
+const aiUrl = $<HTMLInputElement>("ai-url");
+const aiUrlNote = $<HTMLElement>("ai-url-note");
+const aiModel = $<HTMLInputElement>("ai-model");
+const aiKey = $<HTMLInputElement>("ai-key");
+const aiKeyClear = $<HTMLButtonElement>("ai-key-clear");
+const aiAuto = $<HTMLInputElement>("ai-auto");
 const idleSelect = $<HTMLSelectElement>("idle-select");
 
 const MEDIA_EXT = /\.(mp3|wav|wave|m4a|aac|ogg|oga|opus|flac|webm|weba|wma|aiff?|amr|mp4|m4v|mov|mkv|avi|3gp)$/i;
@@ -203,6 +212,7 @@ function applyStatus(next: Status): void {
   }
   renderPreview();
   renderKey();
+  renderAi();
   renderAbout();
   renderStatus();
 }
@@ -770,6 +780,68 @@ document.addEventListener("keydown", (e) => {
     showSection("transcribe", true);
   }
 });
+
+// ------------------------------------------------------------------ AI notes settings
+let aiFilled = false;
+/** Settings → AI notes, from the status. Fields being edited are left alone. */
+function renderAi(): void {
+  const ai = status?.ai;
+  if (!ai) return;
+  if (!aiFilled) {
+    aiEngine.value = ai.engine;
+    aiUrl.value = ai.url;
+    aiModel.value = ai.model;
+    aiFilled = true;
+  }
+  aiAuto.checked = ai.auto;
+  aiServer.hidden = aiEngine.value !== "server";
+  const b = ai.builtin;
+  aiEngineNote.textContent =
+    aiEngine.value === "server"
+      ? "The app sends your notes and the transcript to this server, and shows its answer."
+      : !b.supported
+        ? "Not available for this system: use your own server."
+        : `${b.downloaded ? "Downloaded." : `A ${(b.download_mb / 1000).toFixed(1)} GB download the first time you write notes.`} About 25 s for 8 minutes of meeting with a GPU, about a minute without one. Apache-2.0.`;
+  aiKey.placeholder = ai.has_key ? "A key is saved (type to replace it)" : "None";
+  aiKeyClear.hidden = !ai.has_key;
+  renderAiUrlNote();
+}
+
+function renderAiUrlNote(): void {
+  const url = aiUrl.value.trim();
+  let local = false;
+  try {
+    const host = new URL(url).hostname.replace(/^\[|\]$/g, "");
+    local = host === "localhost" || host.endsWith(".localhost") || host === "::1" || /^127\.\d+\.\d+\.\d+$/.test(host);
+  } catch {
+    aiUrlNote.textContent = "Ollama: http://localhost:11434/v1 · LM Studio: http://localhost:1234/v1";
+    aiUrlNote.dataset.kind = "";
+    return;
+  }
+  aiUrlNote.textContent = local
+    ? "On this computer: nothing leaves it."
+    : `Not on this computer: your notes and the transcript go to ${new URL(url).hostname}.`;
+  aiUrlNote.dataset.kind = local ? "" : "warn";
+}
+
+function saveAi(o: Parameters<Backend["saveOptions"]>[0]): void {
+  void backend.saveOptions(o).then(refreshStatus, (err) => showError(String(err)));
+}
+
+aiEngine.addEventListener("change", () => {
+  aiServer.hidden = aiEngine.value !== "server";
+  saveAi({ ai_engine: aiEngine.value });
+});
+aiUrl.addEventListener("input", renderAiUrlNote);
+aiUrl.addEventListener("change", () => saveAi({ ai_url: aiUrl.value }));
+aiModel.addEventListener("change", () => saveAi({ ai_model: aiModel.value }));
+aiKey.addEventListener("change", () => {
+  if (!aiKey.value) return;
+  saveAi({ ai_key: aiKey.value });
+  aiKey.value = ""; // never kept in the page
+});
+aiKeyClear.addEventListener("click", () => saveAi({ ai_key: "" }));
+aiAuto.addEventListener("change", () => saveAi({ ai_auto: aiAuto.checked }));
 
 function renderAbout(): void {
   if (!status) return;

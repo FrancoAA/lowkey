@@ -3,8 +3,9 @@
  * transcript as it comes, and write notes next to it. The app records, transcribes and saves
  * (desktop/src-tauri/src/meeting.rs); this page shows it and sends the notes.
  */
-import type { Meeting, MeetingLine, MeetingLive, MeetingSummary } from "./api";
+import type { AiNotesEvent, Meeting, MeetingLine, MeetingLive, MeetingSummary } from "./api";
 import type { Backend } from "./backend";
+import { renderMarkdown } from "./markdown";
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -79,6 +80,17 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): void {
   const notes = $<HTMLTextAreaElement>("meeting-notes");
   const transcript = $<HTMLDivElement>("meeting-transcript");
   const pending = $<HTMLElement>("meeting-pending");
+  const aiCard = $<HTMLElement>("ai-card");
+  const aiMeta = $<HTMLElement>("ai-meta");
+  const aiWrite = $<HTMLButtonElement>("ai-write");
+  const aiCancel = $<HTMLButtonElement>("ai-cancel");
+  const aiProgress = $<HTMLDivElement>("ai-progress");
+  const aiProgressFill = $<HTMLDivElement>("ai-progress-fill");
+  const aiProgressText = $<HTMLElement>("ai-progress-text");
+  const aiBody = $<HTMLDivElement>("ai-body");
+  const aiError = $<HTMLElement>("ai-error");
+  /** The AI notes job of the app (one at a time): which meeting, and its last event. */
+  let aiJob: AiNotesEvent | null = null;
 
   /** The meeting on screen (live or saved), and the live one (if any). */
   let shown: Meeting | null = null;
@@ -198,7 +210,71 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): void {
     pending.textContent = waiting ? `· ${waiting} part${waiting > 1 ? "s" : ""} to transcribe` : "";
     renderMeta();
     renderTranscript(recording && live ? live.meeting : shown, recording);
+    renderAi();
   }
+
+  // ---------------------------------------------------------------- AI notes
+  const aiRunning = () => !!aiJob && ["preparing", "downloading", "writing"].includes(aiJob.state);
+
+  function renderAi(): void {
+    if (!shown || isLive()) {
+      aiCard.hidden = true;
+      return;
+    }
+    aiCard.hidden = false;
+    const mine = aiJob?.id === shown.id ? aiJob : null;
+    const running = !!mine && aiRunning();
+    aiWrite.hidden = running;
+    aiWrite.disabled = aiRunning(); // another meeting's notes are being written
+    aiWrite.textContent = shown.ai_notes ? "Write again" : "Write notes";
+    aiCancel.hidden = !running;
+    aiProgress.hidden = !running || mine!.state === "writing";
+    if (running) {
+      aiProgress.classList.toggle("indeterminate", mine!.state !== "downloading");
+      aiProgressFill.style.width = mine!.state === "downloading" ? `${Math.max(2, Math.round(mine!.progress * 100))}%` : "30%";
+      aiProgressText.textContent = mine!.detail;
+    }
+    aiError.hidden = !(mine && mine.state === "error");
+    aiError.textContent = mine && mine.state === "error" ? mine.detail : "";
+    const text = running && mine!.text ? mine!.text : shown.ai_notes ?? "";
+    if (text) {
+      renderMarkdown(aiBody, text);
+      aiBody.classList.remove("ai-empty");
+    } else {
+      aiBody.replaceChildren(running ? "Writing…" : "Summary, decisions, tasks and open questions, from your notes and the transcript. On this computer.");
+      aiBody.classList.add("ai-empty");
+    }
+    aiMeta.textContent = running
+      ? mine!.state === "writing" ? "· writing…" : ""
+      : shown.ai_notes
+        ? `· ${shown.ai_model || "AI"} · a draft: check it against the transcript`
+        : "";
+  }
+
+  aiWrite.addEventListener("click", async () => {
+    if (!shown) return;
+    await flush(); // the model reads your latest notes
+    try {
+      aiJob = { id: shown.id, state: "preparing", detail: "Getting ready…", progress: 0, text: "" };
+      renderAi();
+      await api.aiNotes(shown.id);
+    } catch (err) {
+      aiJob = { id: shown.id, state: "error", detail: String(err), progress: 0, text: "" };
+      renderAi();
+    }
+  });
+
+  aiCancel.addEventListener("click", () => void api.aiCancel());
+
+  api.onAiNotes((e) => {
+    aiJob = e;
+    if (e.state === "done" && shown?.id === e.id) {
+      shown.ai_notes = e.text;
+      shown.ai_model = e.detail;
+      ui.announce("AI notes written.");
+    }
+    if (shown?.id === e.id || !aiRunning()) renderAi();
+  });
 
   function open(m: Meeting): void {
     shown = m;

@@ -41,6 +41,10 @@
             <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect width="20" height="16" x="2" y="4" rx="2" /><path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M8 12h.01M12 12h.01M16 12h.01M7 16h10" /></svg>
             Keys
           </button>
+          <button type="button" role="tab" class="nav-item" data-section="ai" aria-controls="section-ai">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z" /><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z" /></svg>
+            AI notes
+          </button>
           <button type="button" role="tab" class="nav-item" data-section="preview" aria-controls="section-preview">
             <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 10v3M6 6v11M10 3v18M14 8v7M18 5v13M22 10v3" /></svg>
             Live preview
@@ -154,6 +158,24 @@
               <span>Them</span><div class="meter"><div id="meter-them"></div></div>
             </div>
             <ul id="meeting-notices" class="notices" role="status" hidden></ul>
+            <section id="ai-card" class="ai-card" aria-labelledby="ai-title" hidden>
+              <div class="ai-head">
+                <div class="ai-heading">
+                  <span id="ai-title" class="pane-title">AI notes</span>
+                  <span id="ai-meta" class="ai-meta"></span>
+                </div>
+                <div class="actions">
+                  <button id="ai-write" type="button" class="btn btn-outline btn-sm">Write notes</button>
+                  <button id="ai-cancel" type="button" class="btn btn-ghost btn-sm" hidden>Cancel</button>
+                </div>
+              </div>
+              <div id="ai-progress" class="progress" hidden>
+                <div class="progress-track"><div id="ai-progress-fill" class="progress-fill"></div></div>
+                <span id="ai-progress-text" class="progress-text"></span>
+              </div>
+              <div id="ai-body" class="ai-body" aria-live="off"></div>
+              <p id="ai-error" class="ai-error" role="alert" hidden></p>
+            </section>
             <div class="meeting-body">
               <div class="pane">
                 <label for="meeting-notes" class="pane-title">Notes</label>
@@ -247,6 +269,50 @@
               <p class="field-desc">open-whisper starts in the background (no window), so the keys always work.</p>
             </div>
             <input id="login-check" type="checkbox" role="switch" class="switch" />
+          </div>
+        </section>
+
+        <!-- AI notes -->
+        <section id="section-ai" class="section" role="tabpanel" data-section="ai" hidden>
+          <header class="section-head">
+            <h3>AI notes</h3>
+            <p>A language model writes the notes of a meeting from your notes and the transcript: summary, decisions, tasks, open questions. They are a draft: check them against the transcript.</p>
+          </header>
+          <div class="field field-stacked">
+            <div class="field-text">
+              <label for="ai-engine">Model</label>
+              <p id="ai-engine-note" class="field-desc"></p>
+            </div>
+            <select id="ai-engine" class="select select-wide">
+              <option value="builtin">Built in: Qwen3.5 4B, runs on this computer</option>
+              <option value="server">My own server: Ollama, LM Studio, or an OpenAI-compatible API</option>
+            </select>
+          </div>
+          <div id="ai-server" class="ai-server" hidden>
+            <div class="field field-stacked">
+              <label for="ai-url" class="label">Server address</label>
+              <input id="ai-url" class="input" type="url" spellcheck="false" placeholder="http://localhost:11434/v1" />
+              <p id="ai-url-note" class="field-desc"></p>
+            </div>
+            <div class="field field-stacked">
+              <label for="ai-model" class="label">Model name</label>
+              <input id="ai-model" class="input" type="text" spellcheck="false" placeholder="e.g. qwen3.5:4b" />
+            </div>
+            <div class="field field-stacked">
+              <label for="ai-key" class="label">API key (only if the server asks for one)</label>
+              <div class="key-line">
+                <input id="ai-key" class="input" type="password" autocomplete="off" spellcheck="false" />
+                <button id="ai-key-clear" type="button" class="btn btn-outline btn-sm" hidden>Remove the key</button>
+              </div>
+            </div>
+          </div>
+          <div class="separator"></div>
+          <div class="field">
+            <div class="field-text">
+              <label for="ai-auto">Write AI notes when a meeting stops</label>
+              <p class="field-desc">Only when the model is ready. The first download always starts from "Write notes" in a meeting.</p>
+            </div>
+            <input id="ai-auto" type="checkbox" role="switch" class="switch" />
           </div>
         </section>
 

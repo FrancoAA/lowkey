@@ -65,11 +65,25 @@ pub struct Config {
     pub preview_engine: String,
     /// Global key that starts or stops a meeting recording. Empty = no key.
     pub meeting_hotkey: String,
+    /// AI notes: "builtin" (Qwen3.5 4B, run by the app) or "server" (an OpenAI-compatible API).
+    pub ai_engine: String,
+    /// The own server: base URL (".../v1"), model name, key ("" = none).
+    pub ai_url: String,
+    pub ai_model: String,
+    pub ai_key: String,
+    /// Write the AI notes when a meeting stops (when the model is ready, without asking to download).
+    pub ai_auto: bool,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Self { model: String::new(), language: "auto".into(), idle_unload_minutes: 15, hotkey: DEFAULT_HOTKEY.into(), live_preview: true, preview_engine: "auto".into(), meeting_hotkey: DEFAULT_MEETING_HOTKEY.into() }
+        Self { model: String::new(), language: "auto".into(), idle_unload_minutes: 15, hotkey: DEFAULT_HOTKEY.into(), live_preview: true, preview_engine: "auto".into(), meeting_hotkey: DEFAULT_MEETING_HOTKEY.into(),
+            ai_engine: "builtin".into(),
+            ai_url: "http://localhost:11434/v1".into(),
+            ai_model: String::new(),
+            ai_key: String::new(),
+            ai_auto: true,
+        }
     }
 }
 
@@ -111,6 +125,12 @@ impl Config {
             toml::to_string_pretty(self)?
         );
         std::fs::write(&path, body)?;
+        #[cfg(unix)]
+        {
+            // It can hold an API key: readable by you only.
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+        }
         Ok(())
     }
 }

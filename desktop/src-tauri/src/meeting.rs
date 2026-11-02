@@ -62,6 +62,11 @@ pub struct Meeting {
     pub system_audio: bool,
     pub notes: String,
     pub lines: Vec<Line>,
+    /// Notes written by a language model (Markdown), a draft; "" = none yet.
+    pub ai_notes: String,
+    /// Which model wrote them, and when (unix seconds).
+    pub ai_model: String,
+    pub ai_at: u64,
 }
 
 pub const MAX_TITLE: usize = 200;
@@ -134,6 +139,17 @@ pub fn save_in(dir: &Path, m: &Meeting) -> anyhow::Result<()> {
         let _ = d.sync_all(); // the rename itself
     }
     Ok(())
+}
+
+/// Read, change and save a saved meeting, one change at a time (the page's notes and the AI
+/// notes can arrive together).
+pub fn edit_in(dir: &Path, id: &str, change: impl FnOnce(&mut Meeting)) -> anyhow::Result<Meeting> {
+    static ONE_EDIT: Mutex<()> = Mutex::new(());
+    let _one = ONE_EDIT.lock();
+    let mut m = load_in(dir, id)?;
+    change(&mut m);
+    save_in(dir, &m)?;
+    Ok(m)
 }
 
 pub fn load_in(dir: &Path, id: &str) -> anyhow::Result<Meeting> {
@@ -439,8 +455,20 @@ fn duration_text(seconds: f64) -> String {
     }
 }
 
+/// What the language model reads: the title, your notes and the transcript (no AI notes).
+pub fn model_input(m: &Meeting) -> String {
+    let mut plain = m.clone();
+    plain.ai_notes.clear();
+    to_markdown(&plain, 0)
+}
+
 pub fn to_markdown(m: &Meeting, offset_min: i32) -> String {
     let mut s = format!("# {}\n\n{} · {}\n\n", m.title, local_time(m.started_at, offset_min), duration_text(m.duration));
+    if !m.ai_notes.trim().is_empty() {
+        // The model's own "## …" headings go one level down, under this one.
+        let body: String = m.ai_notes.trim().lines().map(|l| if l.starts_with('#') { format!("#{l}\n") } else { format!("{l}\n") }).collect();
+        s += &format!("## AI notes ({}, a draft)\n\n{}\n\n", m.ai_model, body.trim_end());
+    }
     if !m.notes.trim().is_empty() {
         s += &format!("## Notes\n\n{}\n\n", m.notes.trim());
     }
@@ -978,5 +1006,12 @@ mod tests {
         assert_eq!(duration_text(20.0), "under 1 min");
         assert_eq!(duration_text(4_000.0), "1 h 07 min");
         assert_eq!(excerpt("one two three four", 9), "one two…");
+        // AI notes go first, their headings one level down; the model never reads them back.
+        m.ai_notes = "## Resumen\nTodo bien.\n\n## Decisiones\n- Jueves 14".into();
+        m.ai_model = "Qwen3.5 4B".into();
+        let md = to_markdown(&m, 60);
+        assert!(md.contains("## AI notes (Qwen3.5 4B, a draft)\n\n### Resumen\nTodo bien.\n\n### Decisiones\n- Jueves 14\n\n## Notes"), "{md}");
+        assert!(!model_input(&m).contains("Todo bien"));
+        assert!(model_input(&m).contains("- ship Friday"));
     }
 }
