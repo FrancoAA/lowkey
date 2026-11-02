@@ -167,6 +167,26 @@ Record a call or a talk, as text next to your notes (Linux for now). No bot join
 
 Details: [docs/meetings.md](docs/meetings.md).
 
+## Vocabulary
+
+Settings → General → Vocabulary: names and terms the model gets wrong (people, projects,
+products), each with "sounds like" spellings. In every transcript (dictation, files,
+meetings) those spellings, and the term in another case, become the term, whole words only.
+Whisper also gets the terms as a prompt, so it spells them right more often; the AI notes get
+them too. Parakeet has no prompt: there only the replacement helps. (Idea from
+[Hex](https://github.com/anomalyco/hex), MIT.)
+
+```toml
+[[vocabulary]]
+term = "Lisandro"
+sounds_like = ["Lisando", "Lee Sandro"]
+```
+
+Whisper's prompt is tokenized in Rust (`whisper_tokens.rs`): whisper.cpp's own tokenizer
+aborts in this binary ("free(): invalid pointer"), because the static sherpa-onnx library
+brings another build of libstdc++'s `std::regex` and the linker keeps one copy for both
+(confirmed: a build without Parakeet does not abort).
+
 ## Settings (all optional)
 
 Settings in the window save them to `~/.config/open-whisper/config.toml`:

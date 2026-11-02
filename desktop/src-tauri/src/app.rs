@@ -226,7 +226,7 @@ impl App {
             "default_model": current,
             "auto_model": models::auto_model(&self.engines.hw),
             "models": list,
-            "options": { "model": cfg.model, "language": cfg.language, "idle_unload_minutes": cfg.idle_unload_minutes, "live_preview": cfg.live_preview, "preview_engine": cfg.preview_engine },
+            "options": { "model": cfg.model, "language": cfg.language, "idle_unload_minutes": cfg.idle_unload_minutes, "live_preview": cfg.live_preview, "preview_engine": cfg.preview_engine, "vocabulary": cfg.vocabulary },
             "preview": self.preview.status(),
             "version": env!("CARGO_PKG_VERSION"),
             "hotkey": *self.hotkey_text.lock(),
@@ -573,6 +573,7 @@ struct OptionsIn {
     /// Some("") removes the key.
     ai_key: Option<String>,
     ai_auto: Option<bool>,
+    vocabulary: Option<Vec<crate::vocabulary::Term>>,
 }
 
 #[tauri::command]
@@ -634,6 +635,10 @@ fn set_options(app: State<'_, AppRef>, options: OptionsIn) -> Result<Value, Stri
         }
         if let Some(on) = options.ai_auto {
             cfg.ai_auto = on;
+        }
+        if let Some(v) = options.vocabulary {
+            cfg.vocabulary = crate::vocabulary::normalize(&v);
+            app.engines.set_vocabulary(&cfg.vocabulary);
         }
         model_changed = cfg.model != before;
         cfg.save().map_err(|e| e.to_string())?;
@@ -973,7 +978,8 @@ fn run_ai_notes(app: &AppRef, id: &str) {
             _ => {}
         };
         let mut on_text = |t: &str| send("writing", "Writing…", 0.0, t);
-        let text = llm::write_notes(&engine, &input, &lang, &mut progress, &mut on_text, &app.ai_cancel)?;
+        let names = crate::vocabulary::Vocabulary::new(&app.config.lock().vocabulary).names();
+        let text = llm::write_notes(&engine, &input, &lang, &names, &mut progress, &mut on_text, &app.ai_cancel)?;
         Ok((text, label))
     })();
     match result {
@@ -1212,6 +1218,7 @@ pub fn headless(cli: &Cli) -> bool {
     if let Some(path) = &cli.transcribe {
         let cfg = Config::load();
         let engines = Engines::new(cfg.idle_unload_minutes);
+        engines.set_vocabulary(&cfg.vocabulary);
         let model = cli
             .model
             .clone()
@@ -1294,6 +1301,7 @@ pub fn run() {
             let handle = tauri_app.handle().clone();
             let config = Config::load();
             let engines = Engines::new(config.idle_unload_minutes);
+            engines.set_vocabulary(&config.vocabulary);
             let h_jobs = handle.clone();
             let jobs = Jobs::new(engines.clone(), Arc::new(move |s: &JobSnapshot| {
                 emit_logged(&h_jobs, "job", s.clone());

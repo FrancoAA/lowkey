@@ -52,7 +52,14 @@ export interface Status {
       models: { id: string; label: string; note: string; download_mb: number; downloaded: boolean }[];
     };
   };
-  options?: { model: string; language: string; idle_unload_minutes: number; live_preview?: boolean; preview_engine?: string };
+  options?: {
+    model: string;
+    language: string;
+    idle_unload_minutes: number;
+    live_preview?: boolean;
+    preview_engine?: string;
+    vocabulary?: VocabTerm[];
+  };
   /** Live preview: state off | preparing | ready | unavailable; engine whistle | parakeet. */
   preview?: { state: string; error: string | null; engine?: string };
 }
@@ -140,4 +147,10 @@ export interface MeetingSummary {
   excerpt: string;
   /** It has AI notes. */
   ai?: boolean;
+}
+
+/** A vocabulary term (desktop/src-tauri/src/vocabulary.rs). */
+export interface VocabTerm {
+  term: string;
+  sounds_like: string[];
 }

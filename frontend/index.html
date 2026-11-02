@@ -210,6 +210,27 @@
               <option value="auto" selected>Auto-detect</option>
             </select>
           </div>
+          <div class="separator"></div>
+          <div class="field field-stacked">
+            <div class="field-text">
+              <span class="label" id="vocab-label">Vocabulary</span>
+              <p class="field-desc">Names and terms the model gets wrong. In every transcript, their "sounds like" spellings become the term. Whisper and the AI notes also get the list as a hint.</p>
+            </div>
+            <div id="vocab" class="vocab" role="table" aria-labelledby="vocab-label">
+              <div class="vocab-row vocab-head" role="row">
+                <span role="columnheader">Term</span>
+                <span role="columnheader">Sounds like <span class="vocab-hint">(separate with commas)</span></span>
+                <span></span>
+              </div>
+              <div id="vocab-rows" role="rowgroup"></div>
+            </div>
+            <div class="vocab-foot">
+              <button id="vocab-add" type="button" class="btn btn-outline btn-sm">
+                <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>Add term
+              </button>
+              <span id="vocab-note" class="field-desc" aria-live="polite"></span>
+            </div>
+          </div>
         </section>
 
         <!-- Models: speech to text, AI notes -->

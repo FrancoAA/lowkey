@@ -269,7 +269,10 @@ def main() -> None:
         (tmp / "config" / "open-whisper").mkdir(parents=True)
         # AI notes after Stop only with the cached model: the test never downloads 2.7 GB.
         ai_auto = "true" if (models / "llm").is_dir() else "false"
-        (tmp / "config" / "open-whisper" / "config.toml").write_text(f'idle_unload_minutes = 5\npreview_engine = "{PREVIEW}"\nai_auto = {ai_auto}\n')
+        # A vocabulary term: "open whisper" (as Whisper hears it) must come out as "OpenWhisper".
+        (tmp / "config" / "open-whisper" / "config.toml").write_text(
+            f'idle_unload_minutes = 5\npreview_engine = "{PREVIEW}"\nai_auto = {ai_auto}\n\n'
+            '[[vocabulary]]\nterm = "OpenWhisper"\nsounds_like = ["open whisper", "Open Wish"]\n')
         app = subprocess.Popen([APP], env=env, stdout=open(tmp / "app.log", "w"), stderr=subprocess.STDOUT)
         main_win = wait(lambda: win("open-whisper"), 30, "main window")
         print("  ok  main window opened")
@@ -372,6 +375,7 @@ def main() -> None:
         key("release")
         d1 = wait(lambda: (s := dict_state())["state"] in ("done", "error") and s, 60, "global result")
         check(d1["state"] == "done" and d1["delivered"] == ["copied", "typed"], f"typed and copied: {d1['text']!r}")
+        check("OpenWhisper" in d1["text"] and "open whisper" not in d1["text"].lower(), "the vocabulary writes the term (OpenWhisper), not what it sounds like")
         tail = [d["preview"] for d in events("dictation")[n_key:] if d["state"] == "transcribing" and d.get("preview")]
         print(f"  info  preview while transcribing: {tail[-1] if tail else '(the main model was first)'!r}; typed: {d1['text']!r}")
         check(not d1.get("preview"), "the preview is gone once the text is typed")

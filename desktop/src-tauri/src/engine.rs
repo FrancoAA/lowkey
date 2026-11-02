@@ -77,6 +77,10 @@ pub struct Engines {
     pub idle_minutes: AtomicU64,
     /// Transcriptions running now: never unload under a running job.
     busy: AtomicU64,
+    /// The vocabulary: Whisper's prompt, and the spellings fixed in every result.
+    vocabulary: Mutex<Arc<crate::vocabulary::Vocabulary>>,
+    /// Whisper's token table of the loaded model (by the context's address), for the prompt.
+    whisper_vocab: Mutex<Option<(usize, Arc<crate::whisper_tokens::WhisperVocab>)>>,
     /// One transcription runs at a time (the job queue and the meeting share the model; a GPU
     /// backend must not run two at once).
     run_lock: Mutex<()>,
@@ -122,6 +126,8 @@ impl Engines {
             last_used: Mutex::new(Instant::now()),
             idle_minutes: AtomicU64::new(idle_minutes),
             busy: AtomicU64::new(0),
+            vocabulary: Mutex::new(Arc::default()),
+            whisper_vocab: Mutex::new(None),
             run_lock: Mutex::new(()),
             on_change: Mutex::new(None),
         });
@@ -132,6 +138,25 @@ impl Engines {
             me.unload_if_idle();
         });
         me
+    }
+
+    /// The loaded Whisper model's token table, read once per model.
+    fn whisper_tokens(&self, ctx: &Arc<WhisperContext>) -> Arc<crate::whisper_tokens::WhisperVocab> {
+        let key = Arc::as_ptr(ctx) as usize;
+        let mut slot = self.whisper_vocab.lock();
+        match slot.as_ref() {
+            Some((k, v)) if *k == key => v.clone(),
+            _ => {
+                let v = Arc::new(crate::whisper_tokens::WhisperVocab::from_context(ctx));
+                *slot = Some((key, v.clone()));
+                v
+            }
+        }
+    }
+
+    /// Settings → General → Vocabulary changed (or the app started).
+    pub fn set_vocabulary(&self, terms: &[crate::vocabulary::Term]) {
+        *self.vocabulary.lock() = Arc::new(crate::vocabulary::Vocabulary::new(terms));
     }
 
     pub fn on_change(&self, f: Arc<dyn Fn() + Send + Sync>) {
@@ -287,12 +312,38 @@ impl Engines {
             None => audio::decode_file(input.path.as_deref().ok_or_else(|| anyhow::anyhow!("nothing to transcribe"))?).map_err(|e| anyhow::anyhow!("{e}"))?,
         };
         let _one_at_a_time = self.run_lock.lock();
-        match model {
-            Loaded::Whisper(ctx) => run_whisper_cpp(&ctx, &pcm, input.language.as_deref(), &sink),
+        let vocab = self.vocabulary.lock().clone();
+        // Segments go to the sink as they come: fixed there too, so live text matches the result.
+        let fixed_sink: Sink = if vocab.is_empty() {
+            sink
+        } else {
+            let (v, s) = (vocab.clone(), sink);
+            Arc::new(move |ev| {
+                s(match ev {
+                    EngineEvent::Segment(mut seg) => {
+                        seg.text = v.apply(&seg.text);
+                        EngineEvent::Segment(seg)
+                    }
+                    other => other,
+                })
+            })
+        };
+        let mut out = match model {
+            Loaded::Whisper(ctx) => {
+                let prompt: Vec<std::ffi::c_int> = match vocab.whisper_prompt() {
+                    Some(p) => self.whisper_tokens(&ctx).tokenize(&p, 220),
+                    None => Vec::new(),
+                };
+                run_whisper_cpp(&ctx, &pcm, input.language.as_deref(), &prompt, &fixed_sink)
+            }
             // Parakeet finds the language itself (25 European languages); it has no setting.
             #[cfg(parakeet)]
-            Loaded::Parakeet(rec) => run_parakeet(&rec, &pcm, &sink),
+            Loaded::Parakeet(rec) => run_parakeet(&rec, &pcm, &fixed_sink),
+        }?;
+        for seg in &mut out.segments {
+            seg.text = vocab.apply(&seg.text);
         }
+        Ok(out)
     }
 
 }
@@ -499,7 +550,9 @@ fn has_speech(vad_model: &Path, pcm: &[f32]) -> bool {
     }
 }
 
-fn run_whisper_cpp(ctx: &WhisperContext, pcm: &[f32], language: Option<&str>, sink: &Sink) -> anyhow::Result<Output> {
+/// `prompt`: the vocabulary as Whisper tokens (crate::whisper_tokens; never whisper.cpp's own
+/// tokenizer, which aborts in this binary), empty for none.
+fn run_whisper_cpp(ctx: &WhisperContext, pcm: &[f32], language: Option<&str>, prompt: &[std::ffi::c_int], sink: &Sink) -> anyhow::Result<Output> {
     let vad = models::local_path(models::VAD_FILE);
     let duration = pcm.len() as f64 / audio::RATE as f64;
     if vad.exists() && !has_speech(&vad, pcm) {
@@ -510,6 +563,10 @@ fn run_whisper_cpp(ctx: &WhisperContext, pcm: &[f32], language: Option<&str>, si
     let mut params = FullParams::new(SamplingStrategy::BeamSearch { beam_size: 5, patience: -1.0 });
     params.set_n_threads(physical_threads());
     params.set_language(Some(language.unwrap_or("auto")));
+    if !prompt.is_empty() {
+        // The vocabulary: Whisper spells these names the way they are written here.
+        params.set_tokens(prompt);
+    }
     params.set_print_progress(false);
     params.set_print_realtime(false);
     params.set_print_timestamps(false);

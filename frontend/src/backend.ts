@@ -22,6 +22,7 @@ export interface Options {
   /** "" removes the key. */
   ai_key?: string;
   ai_auto?: boolean;
+  vocabulary?: { term: string; sounds_like: string[] }[];
 }
 
 export interface Backend {

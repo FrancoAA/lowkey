@@ -501,7 +501,12 @@ pub enum Engine {
 
 /// The instructions. Measured in bench/summary (the language must be named: with "the
 /// language of the meeting", two of three models wrote English notes for a Spanish meeting).
-pub fn system_prompt(lang: &str) -> String {
+pub fn system_prompt(lang: &str, names: &[String]) -> String {
+    let glossary = if names.is_empty() {
+        String::new()
+    } else {
+        format!("\n\nNames and terms that may appear (write them exactly like this): {}.", names.join(", "))
+    };
     format!(
         "You write meeting notes from a transcript. \"Me\" is the person who recorded the meeting; \
 \"Them\" is everyone else (several people: tell them apart by the names they use). The notes \
@@ -523,7 +528,7 @@ One line per task: **who** — what — when (if said). A task that \"Me\" takes
 Things left without a decision, with the next date if one was set.
 
 ## Numbers
-Figures that were said (money, dates, metrics), one per line, each with what it is."
+Figures that were said (money, dates, metrics), one per line, each with what it is.{glossary}"
     )
 }
 
@@ -553,6 +558,7 @@ pub fn write_notes(
     engine: &Engine,
     input: &str,
     lang: &str,
+    names: &[String],
     progress: ProgressFn,
     on_text: &mut dyn FnMut(&str),
     cancel: &AtomicBool,
@@ -573,7 +579,7 @@ pub fn write_notes(
     progress("writing", 0, 0);
     let mut body = json!({
         "model": model,
-        "messages": [{"role": "system", "content": system_prompt(lang)}, {"role": "user", "content": input}],
+        "messages": [{"role": "system", "content": system_prompt(lang, names)}, {"role": "user", "content": input}],
         "temperature": 0.2,
         "max_tokens": 2000,
         "stream": true,
@@ -781,7 +787,7 @@ mod tests {
             String::from_utf8_lossy(&buf).to_string()
         });
         let engine = Engine::Server { url, model: "qwen3.5:4b".into(), key: "sk-test".into() };
-        let text = write_notes(&engine, "**Them** (00:01): Hola.", "Spanish", &mut |_, _, _| {}, &mut |_| {}, &AtomicBool::new(false)).unwrap();
+        let text = write_notes(&engine, "**Them** (00:01): Hola.", "Spanish", &[], &mut |_, _, _| {}, &mut |_| {}, &AtomicBool::new(false)).unwrap();
         assert_eq!(text, "## Summary\nDone.");
         let req = got.join().unwrap();
         assert!(req.starts_with("POST /v1/chat/completions "), "{req}");
@@ -847,7 +853,7 @@ mod tests {
         assert!(!builtin_status(DEFAULT_MODEL).downloaded);
         let mut steps = Vec::new();
         let input = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../bench/summary/meeting-es.md")).unwrap();
-        let text = write_notes(&Engine::Builtin { gpu: true, model: DEFAULT_MODEL.into() }, &input, "Spanish", &mut |w, _, _| steps.push(w.to_string()), &mut |_| {}, &AtomicBool::new(false));
+        let text = write_notes(&Engine::Builtin { gpu: true, model: DEFAULT_MODEL.into() }, &input, "Spanish", &[], &mut |w, _, _| steps.push(w.to_string()), &mut |_| {}, &AtomicBool::new(false));
         stop_builtin();
         let text = text.unwrap();
         assert!(steps.iter().any(|s| s == "the model runner"), "{steps:?}");
@@ -879,6 +885,7 @@ mod tests {
         for bad in ["../x", "/etc/passwd", "a/../../b", "C:\\x", "\\\\server\\x", ""] {
             assert_eq!(safe_relative(bad), None, "{bad}");
         }
-        assert!(system_prompt("Spanish").contains("Write in Spanish"));
+        assert!(system_prompt("Spanish", &[]).contains("Write in Spanish"));
+        assert!(system_prompt("Spanish", &["Lisandro".into(), "NMR".into()]).contains("write them exactly like this): Lisandro, NMR."));
     }
 }

@@ -75,6 +75,9 @@ pub struct Config {
     pub ai_key: String,
     /// Write the AI notes when a meeting stops (the first time, the built-in model downloads).
     pub ai_auto: bool,
+    /// Names and terms the speech model gets wrong (Settings → General → Vocabulary). Last:
+    /// a list of tables goes after the plain values in config.toml.
+    pub vocabulary: Vec<crate::vocabulary::Term>,
 }
 
 impl Default for Config {
@@ -86,6 +89,7 @@ impl Default for Config {
             ai_model: String::new(),
             ai_key: String::new(),
             ai_auto: true,
+            vocabulary: Vec::new(),
         }
     }
 }
@@ -281,6 +285,12 @@ mod tests {
             assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
         }
         assert_eq!(Config::load_from(&path), c);
+        // The vocabulary (a list of tables) round-trips, after the plain values.
+        let v = Config { vocabulary: vec![crate::vocabulary::Term { term: "Lisandro".into(), sounds_like: vec!["Lisando".into()] }], ..c.clone() };
+        v.save().unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("[[vocabulary]]") && text.contains("term = \"Lisandro\""), "{text}");
+        assert_eq!(Config::load_from(&path), v);
     }
 
     #[test]

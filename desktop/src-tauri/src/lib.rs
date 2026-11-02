@@ -16,6 +16,8 @@ pub mod models;
 pub mod output;
 pub mod preview;
 pub mod system_audio;
+pub mod vocabulary;
+pub mod whisper_tokens;
 #[cfg(parakeet)]
 pub mod preview_parakeet;
 

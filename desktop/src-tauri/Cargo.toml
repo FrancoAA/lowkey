@@ -43,6 +43,8 @@ tar = "0.4"
 getrandom = "0.3"
 # The host of an own server's address, parsed as reqwest parses it (the same crate).
 url = "2"
+# Vocabulary: whole-word, case-insensitive replacement of "sounds like" spellings.
+regex = "1"
 whatlang = "0.16"
 
 log = "0.4"

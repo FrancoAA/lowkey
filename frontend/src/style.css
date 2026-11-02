@@ -460,3 +460,13 @@ h1 { font-size: 20px; font-weight: 600; }
 .group-head .model-status { max-width: 100%; }
 .model-status[data-state="missing"] .dot { background: var(--muted-foreground); opacity: 0.6; }
 .model-status[data-state="downloading"] { min-width: 260px; }
+
+/* ───────────────────────────── vocabulary ───────────────────────────── */
+.vocab { display: flex; flex-direction: column; gap: 6px; }
+.vocab-row { display: grid; grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.4fr) 36px; gap: 8px; align-items: center; }
+.vocab-head { font-size: 12px; font-weight: 500; color: var(--muted-foreground); }
+.vocab-hint { font-weight: 400; }
+#vocab-rows { display: flex; flex-direction: column; gap: 6px; }
+#vocab-rows:empty { display: none; }
+.vocab-foot { display: flex; align-items: center; gap: 12px; }
+.vocab:has(#vocab-rows:empty) .vocab-head { display: none; }

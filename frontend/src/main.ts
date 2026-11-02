@@ -3,6 +3,7 @@ import type { AiNotesEvent, JobEvent, JobResult, ModelInfo, Segment, Status } fr
 import { getBackend, type Backend, type FileRef } from "./backend";
 import { Dictation, type DictationState } from "./dictation";
 import { initMeetings } from "./meetings";
+import { initVocabulary } from "./vocabulary";
 import { Waveform } from "./waveform";
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -210,6 +211,7 @@ function applyStatus(next: Status): void {
     if (status.options) idleSelect.value = String(status.options.idle_unload_minutes);
     if (status.options?.live_preview !== undefined) previewCheck.checked = status.options.live_preview;
     if (status.options?.preview_engine) previewEngine.value = status.options.preview_engine;
+    initVocabulary(backend, status.options?.vocabulary ?? [], showError);
     // Parakeet is built on some systems only: offer it where the app has it.
     const pk = status.models.some((m) => m.name === "parakeet-v3");
     previewEngine.querySelector<HTMLOptionElement>('option[value="parakeet"]')!.hidden = !pk;
