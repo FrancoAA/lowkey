@@ -248,6 +248,27 @@ struct Running {
 struct Runner {
     running: Mutex<Option<Running>>,
     last_used: Mutex<Instant>,
+    /// A job is starting the server or writing: never stopped for being idle then (an hour of
+    /// meeting on a CPU takes longer than the idle time).
+    in_use: AtomicBool,
+}
+
+/// Marks the built-in server as in use until dropped; the idle time starts then.
+struct InUse;
+
+impl InUse {
+    fn new() -> Self {
+        runner().in_use.store(true, Ordering::SeqCst);
+        InUse
+    }
+}
+
+impl Drop for InUse {
+    fn drop(&mut self) {
+        let r = runner();
+        *r.last_used.lock() = Instant::now();
+        r.in_use.store(false, Ordering::SeqCst);
+    }
 }
 
 fn runner() -> &'static Runner {
@@ -257,11 +278,11 @@ fn runner() -> &'static Runner {
         std::thread::spawn(|| loop {
             std::thread::sleep(Duration::from_secs(15));
             let r = runner();
-            if r.last_used.lock().elapsed() >= IDLE_STOP {
+            if !r.in_use.load(Ordering::SeqCst) && r.last_used.lock().elapsed() >= IDLE_STOP {
                 stop_builtin();
             }
         });
-        Runner { running: Mutex::new(None), last_used: Mutex::new(Instant::now()) }
+        Runner { running: Mutex::new(None), last_used: Mutex::new(Instant::now()), in_use: AtomicBool::new(false) }
     })
 }
 
@@ -412,8 +433,10 @@ pub fn write_notes(
     cancel: &AtomicBool,
 ) -> anyhow::Result<String> {
     anyhow::ensure!(input.len() <= MAX_INPUT_CHARS, "this meeting is too long for AI notes for now (over about four hours)");
+    let mut _in_use = None;
     let (base, key, model, builtin) = match engine {
         Engine::Builtin { gpu } => {
+            _in_use = Some(InUse::new()); // from the start of the server to the last word
             let (exe, model) = ensure_builtin(&mut *progress)?;
             progress("starting", 0, 0);
             let (base, key) = builtin_endpoint(&exe, &model, *gpu, cancel)?;
@@ -445,9 +468,6 @@ pub fn write_notes(
         anyhow::bail!("{base} answered {status}: {text}");
     }
     let text = read_stream(BufReader::new(resp), on_text, cancel)?;
-    if builtin {
-        *runner().last_used.lock() = Instant::now();
-    }
     anyhow::ensure!(!text.trim().is_empty(), "the model wrote nothing");
     Ok(text.trim().to_string())
 }
