@@ -104,6 +104,7 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): void {
     try {
       await api.update(shown.id, patch);
     } catch (err) {
+      unsaved = { ...patch, ...unsaved }; // kept: the next change or Back tries again
       showError(`Your notes were not saved: ${String(err)}`);
     }
   }
@@ -210,7 +211,7 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): void {
 
   async function openById(id: string): Promise<void> {
     try {
-      open(live?.meeting.id === id ? { ...live.meeting } : await api.get(id));
+      open(await api.get(id)); // the app's copy: it has the notes saved meanwhile
     } catch (err) {
       showError(String(err));
     }
@@ -289,17 +290,20 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): void {
       ui.onRecording(false);
       ui.announce("Meeting saved.");
       if (!shown || shown.id === saved.id) {
-        // What you typed while it finished stays on screen and is still saved.
-        const keep = { title: title.value, notes: notes.value, unsaved };
+        // Only what you typed while it finished (not saved yet) goes over the saved meeting.
+        const typed = unsaved;
         open(saved);
-        title.value = keep.title;
-        notes.value = keep.notes;
-        if (keep.unsaved.title !== undefined || keep.unsaved.notes !== undefined) later(keep.unsaved);
+        if (typed.title !== undefined) title.value = typed.title;
+        if (typed.notes !== undefined) notes.value = typed.notes;
+        if (typed.title !== undefined || typed.notes !== undefined) later(typed);
       }
       void renderList();
     } catch (err) {
       showError(String(err));
-      renderView();
+      // The app freed the recording (and saved what it had): back to a usable list.
+      live = null;
+      ui.onRecording(false);
+      await showHome();
     }
   });
 

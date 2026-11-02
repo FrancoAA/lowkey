@@ -23,10 +23,12 @@ says so. macOS (ScreenCaptureKit) and Windows (WASAPI loopback) are not built ye
 
 `meeting.rs`, `Chunker`, one per source:
 
-- Frames of 100 ms. "Loud" is the level that 80% of the frames stay under.
-- A piece ends at a **pause** (6 frames under 20% of "loud") once it has **4 s**; long speech
-  is cut at **20 s**, at the quietest frame of the last quarter.
-- **Silence** (loud under RMS 0.003, e.g. nothing plays) is dropped and never transcribed.
+- Frames of 100 ms. A frame with an RMS level under 0.003 is **silence** (nothing plays gives 0).
+- Silence in front of speech is dropped (0.3 s stays), so a short word after a long quiet
+  time is kept. Audio with no frame above the silence level is never transcribed.
+- "Loud" is the level that 80% of the non-silent frames stay under. A piece ends at a
+  **pause** (6 frames under 20% of "loud") once it has **4 s**; long speech is cut at **20 s**,
+  at the quietest frame of the last quarter.
 - Each block carries its time by the clock: when a source stops sending for over a second, its
   next audio starts at the right time.
 
@@ -35,13 +37,17 @@ Whisper; the VAD drops pieces with no speech). `Engines` runs one transcription 
 the meeting, dictation and files share the model safely. Lines are kept in time order; sound
 labels such as `[Music]` are dropped.
 
-**Echo.** Without headphones, the microphone also hears the others. A "Me" line of 3 or more
-words is removed when 60% of its words are in "Them" lines within 3 s of it.
+**Echo.** Without headphones, the microphone also hears the others, at the same time. A "Me"
+line of 3 or more words is removed when it lies inside the time of the "Them" lines (1.5 s of
+slack) and 80% of its words are in them, in the same order. Words that you repeat after the
+others spoke stay. Chinese and Japanese count each character as a word.
 
 ## Saving
 
 - A meeting is saved when it starts, after each piece, and when your notes change (0.6 s after
-  you stop typing). A crash keeps what was transcribed; the list then says "interrupted".
+  you stop typing), with its length so far. One write at a time; each file is synced before it
+  replaces the old one. A crash keeps what was transcribed; the list then says "interrupted".
+  When a save of your notes fails, the page keeps them and tries again at the next change.
 - Files: `~/.local/share/open-whisper/meetings/m-<unix ms>.json` (the folder is 0700). The id
   is `m-` plus digits only, so a command never names a path outside the folder.
 - Quitting the app during a recording keeps what is transcribed and does not wait for the rest.
@@ -51,9 +57,22 @@ words is removed when 60% of its words are in "Them" lines within 3 s of it.
 ## Measured
 
 The e2e test (`scripts/e2e_desktop.py`, nested Hyprland, fake sources: `hello.ogg` as the mic,
-`bench/.work/samples/en_jfk.wav` as the computer's sound, Whisper large-v3-turbo-q5_0 on the
-Radeon 780M): text from both sources 13 s after the start; Stop saves at once. Screenshots:
+`tests/fixtures/jfk.ogg` (JFK's inaugural address, public domain) as the computer's sound,
+Whisper large-v3-turbo-q5_0 on the Radeon 780M): text from both sources 13 s after the start;
+Stop saved in under a second (the model kept up, so nothing waited). Screenshots:
 `docs/screenshots/21-desktop-meeting-live.png`, `22-desktop-meeting-saved.png`.
 
 The real monitor read is checked by an ignored unit test (it reads 1 s, plays nothing, keeps
 nothing): `cd desktop/src-tauri && cargo test --lib system_audio -- --ignored`.
+
+## Limits now
+
+- **Stop waits for the pieces that are not transcribed yet.** A model slower than the speech
+  (Whisper turbo on a CPU: two sources need 2× real time) falls behind; the meeting then shows
+  a notice, and Stop can take long. Parakeet (36× real time on the CPU) and Small keep up.
+- The list reads every meeting file, and each live update carries the whole meeting. Fine for
+  tens of meetings and calls of a few hours; a summary index comes when it is needed.
+- If the sound server hangs in a read, stopping does not wait for it more than 1 s; that
+  thread ends when the read returns.
+
+Review 14 (`docs/reviews/14-30b299c.md`) lists what was checked and fixed.

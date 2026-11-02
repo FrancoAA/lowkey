@@ -42,6 +42,8 @@ pub struct App {
     preview: Preview,
     /// The meeting being recorded (Meetings section), until it is saved.
     meeting: Mutex<Option<Arc<meeting::Session>>>,
+    /// A meeting's devices are opening.
+    meeting_starting: AtomicBool,
 }
 
 type AppRef = Arc<App>;
@@ -526,18 +528,26 @@ fn window_dictation_inner(app: &AppRef, action: &str) -> Result<Option<String>, 
 // ------------------------------------------------------------------ meetings
 /// Start recording a meeting: the mic ("Me") and the computer's sound ("Them").
 #[tauri::command]
-fn meeting_start(app: State<'_, AppRef>, title: String) -> Result<meeting::Live, String> {
+async fn meeting_start(app: State<'_, AppRef>, title: String) -> Result<meeting::Live, String> {
     let app = app.inner().clone();
-    let r = meeting_start_inner(&app, &title);
+    // Off the window's thread: opening the devices can take seconds.
+    let a2 = app.clone();
+    let r = tauri::async_runtime::spawn_blocking(move || meeting_start_inner(&a2, &title)).await.map_err(|e| e.to_string()).and_then(|r| r);
     emit_logged(&app.handle, "meeting-start", json!({"result": r.as_ref().map(|l| l.meeting.id.clone()).map_err(|e| e.clone())}));
     r
 }
 
 fn meeting_start_inner(app: &AppRef, title: &str) -> Result<meeting::Live, String> {
-    let mut slot = app.meeting.lock();
-    if slot.is_some() {
+    // Claim the start without holding the slot's lock while the devices open.
+    if app.meeting.lock().is_some() || app.meeting_starting.swap(true, Ordering::SeqCst) {
         return Err("A meeting is already being recorded.".into());
     }
+    let r = meeting_open(app, title);
+    app.meeting_starting.store(false, Ordering::SeqCst);
+    r
+}
+
+fn meeting_open(app: &AppRef, title: &str) -> Result<meeting::Live, String> {
     let model = app.current_model();
     let language = app.current_language();
     let engines = app.engines.clone();
@@ -560,7 +570,7 @@ fn meeting_start_inner(app: &AppRef, title: &str) -> Result<meeting::Live, Strin
         let _ = meeting::delete_in(&meeting::dir(), &id);
         return Err(format!("{e:#}"));
     }
-    *slot = Some(session.clone());
+    *app.meeting.lock() = Some(session.clone());
     // The first piece comes after a few seconds: have the model loaded by then.
     let e2 = app.engines.clone();
     std::thread::spawn(move || {
@@ -574,9 +584,13 @@ fn meeting_start_inner(app: &AppRef, title: &str) -> Result<meeting::Live, Strin
 async fn meeting_stop(app: State<'_, AppRef>) -> Result<meeting::Meeting, String> {
     let app = app.inner().clone();
     let session = app.meeting.lock().clone().ok_or("No meeting is being recorded.")?;
-    let m = tauri::async_runtime::spawn_blocking(move || session.finish()).await.map_err(|e| e.to_string())?;
+    let s2 = session.clone();
+    let r = tauri::async_runtime::spawn_blocking(move || s2.finish()).await;
     app.meeting.lock().take(); // only now: no second meeting while this one finishes
-    Ok(m)
+    r.map_err(|e| {
+        session.abandon(); // keep what is transcribed; the next meeting can start
+        format!("Stopping failed ({e}); the meeting is saved as it was.")
+    })
 }
 
 #[tauri::command]
@@ -908,6 +922,7 @@ pub fn run() {
                     })
                 }),
                 meeting: Mutex::new(None),
+                meeting_starting: AtomicBool::new(false),
             });
             let io = Arc::new(TauriIo { app: Arc::downgrade(&app), handle: handle.clone() });
             *app.dictation.lock() = Some(Dictation::new(io, jobs));

@@ -3,7 +3,6 @@
 //! the pieces go to the speech model in order. Saved as JSON in <data dir>/meetings; nothing
 //! leaves the computer, and no audio is kept.
 
-use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc};
@@ -110,8 +109,12 @@ fn file_in(dir: &Path, id: &str) -> anyhow::Result<PathBuf> {
     Ok(dir.join(format!("{id}.json")))
 }
 
-/// Written to a temporary file first, then renamed: a crash never leaves half a file.
+/// Written to a temporary file first, synced, then renamed: a crash or a power loss never
+/// leaves half a file. One write at a time in this process (the notes and the transcript of
+/// the same meeting are saved from two threads).
 pub fn save_in(dir: &Path, m: &Meeting) -> anyhow::Result<()> {
+    static ONE_WRITER: Mutex<()> = Mutex::new(());
+    let _one = ONE_WRITER.lock();
     let path = file_in(dir, &m.id)?;
     std::fs::create_dir_all(dir)?;
     #[cfg(unix)]
@@ -120,8 +123,16 @@ pub fn save_in(dir: &Path, m: &Meeting) -> anyhow::Result<()> {
         std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?; // transcripts are private
     }
     let tmp = dir.join(format!(".{}.json.tmp", m.id));
-    std::fs::write(&tmp, serde_json::to_vec_pretty(m)?)?;
+    {
+        use std::io::Write;
+        let mut f = std::fs::File::create(&tmp)?;
+        f.write_all(&serde_json::to_vec_pretty(m)?)?;
+        f.sync_all()?;
+    }
     std::fs::rename(&tmp, &path)?;
+    if let Ok(d) = std::fs::File::open(dir) {
+        let _ = d.sync_all(); // the rename itself
+    }
     Ok(())
 }
 
@@ -209,9 +220,13 @@ fn loud(frames: &[f32]) -> f32 {
     v[(v.len() * 4 / 5).min(v.len() - 1)]
 }
 
+/// No frame above the silence level. (A short word in seconds of silence is not silence.)
 fn is_silent(pcm: &[f32]) -> bool {
-    loud(&pcm.chunks(FRAME).map(rms).collect::<Vec<_>>()) < SILENCE
+    pcm.chunks(FRAME).map(rms).all(|r| r < SILENCE)
 }
+
+/// Silence kept before speech when the silence in front of it is dropped.
+const LEAD_FRAMES: usize = 3;
 
 impl Default for Chunker {
     fn default() -> Self {
@@ -269,10 +284,15 @@ impl Chunker {
             return Step::Wait;
         }
         let frames: Vec<f32> = self.buf.chunks_exact(FRAME).map(rms).collect();
-        let level = loud(&frames);
-        if level < SILENCE {
-            return Step::Drop(frames.len() * FRAME);
+        // Silence in front of the speech (or only silence): drop it, so a piece starts near the
+        // speech and a short word after a long quiet time is not lost with that quiet time.
+        match frames.iter().position(|&r| r >= SILENCE) {
+            None => return Step::Drop(frames.len() * FRAME),
+            Some(i) if i > LEAD_FRAMES => return Step::Drop((i - LEAD_FRAMES) * FRAME),
+            _ => {}
         }
+        // How loud the speech is: from the frames that are not silence.
+        let level = loud(&frames.iter().copied().filter(|&r| r >= SILENCE).collect::<Vec<_>>());
         let quiet = (0.2 * level).max(SILENCE);
         if frames.len() >= PAUSE_FRAMES && frames[frames.len() - PAUSE_FRAMES..].iter().all(|&r| r < quiet) {
             return Step::Emit(frames.len() * FRAME);
@@ -287,24 +307,65 @@ impl Chunker {
 }
 
 // ------------------------------------------------------------------ echo
-fn words(text: &str) -> Vec<String> {
-    text.split_whitespace()
-        .map(|w| w.chars().filter(|c| c.is_alphanumeric()).collect::<String>().to_lowercase())
-        .filter(|w| !w.is_empty())
-        .collect()
+/// Chinese and Japanese have no spaces: each character counts as a word there.
+fn no_spaces_script(c: char) -> bool {
+    matches!(c as u32, 0x3040..=0x30FF | 0x3400..=0x4DBF | 0x4E00..=0x9FFF | 0xF900..=0xFAFF)
 }
 
-/// Without headphones the microphone also hears the others: their words come back as "Me".
-/// A "Me" line of 3+ words is an echo when most of its words are in "Them" lines at the same time.
+fn words(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for w in text.split_whitespace() {
+        let mut cur = String::new();
+        for c in w.chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase) {
+            if no_spaces_script(c) {
+                if !cur.is_empty() {
+                    out.push(std::mem::take(&mut cur));
+                }
+                out.push(c.to_string());
+            } else {
+                cur.push(c);
+            }
+        }
+        if !cur.is_empty() {
+            out.push(cur);
+        }
+    }
+    out
+}
+
+/// Longest common subsequence of two word lists (words in the same order).
+fn common_in_order(a: &[String], b: &[String]) -> usize {
+    let mut row = vec![0usize; b.len() + 1];
+    for x in a {
+        let mut diag = 0;
+        for (j, y) in b.iter().enumerate() {
+            let up = row[j + 1];
+            row[j + 1] = if x == y { diag + 1 } else { up.max(row[j]) };
+            diag = up;
+        }
+    }
+    row[b.len()]
+}
+
+/// Without headphones the microphone also hears the others: their words come back as "Me", at
+/// the same time. A "Me" line of 3+ words is an echo when it lies inside the time of "Them"
+/// lines (1.5 s of slack for the different cuts) and 80% of its words are in them, in order.
+/// So "Me" repeating the others' words after they spoke is kept.
 fn is_echo(me: &Line, them: &[&Line]) -> bool {
+    const SLACK: f64 = 1.5;
     let mine = words(&me.text);
     if mine.len() < 3 {
         return false;
     }
-    let near: HashSet<String> =
-        them.iter().filter(|t| t.start <= me.end + 3.0 && me.start <= t.end + 3.0).flat_map(|t| words(&t.text)).collect();
-    let shared = mine.iter().filter(|w| near.contains(*w)).count();
-    shared as f64 >= 0.6 * mine.len() as f64
+    let near: Vec<&&Line> = them.iter().filter(|t| t.start < me.end && me.start < t.end).collect();
+    let (Some(from), Some(to)) = (near.iter().map(|t| t.start).reduce(f64::min), near.iter().map(|t| t.end).reduce(f64::max)) else {
+        return false;
+    };
+    if me.start < from - SLACK || me.end > to + SLACK {
+        return false;
+    }
+    let theirs: Vec<String> = near.iter().flat_map(|t| words(&t.text)).collect();
+    common_in_order(&mine, &theirs) as f64 >= 0.8 * mine.len() as f64
 }
 
 fn drop_echoes(lines: &mut Vec<Line>, since: f64) {
@@ -429,7 +490,11 @@ struct Inner {
     notices: Mutex<Vec<String>>,
     levels: Mutex<([f32; 2], Instant)>,
     emit: EmitFn,
+    saving: Mutex<()>,
 }
+
+/// More pieces than this waiting: the model is slower than the speech.
+const BEHIND: usize = 6;
 
 impl Inner {
     fn elapsed(&self) -> f64 {
@@ -454,7 +519,9 @@ impl Inner {
 
     fn send(&self, who: Speaker, c: Chunk) {
         if let Some(tx) = self.tx.lock().as_ref() {
-            self.pending.fetch_add(1, Ordering::SeqCst);
+            if self.pending.fetch_add(1, Ordering::SeqCst) + 1 > BEHIND && *self.state.lock() == "recording" {
+                self.notice("The speech model is slower than the speech: the text comes late, and Stop waits for it. Parakeet or Small keep up.".into());
+            }
             if tx.send((who, c)).is_err() {
                 self.pending.fetch_sub(1, Ordering::SeqCst);
             }
@@ -499,8 +566,17 @@ impl Inner {
         }
     }
 
+    /// The snapshot is taken under the save lock: a later state never loses to an older one.
     fn save(&self) {
-        let doc = self.doc.lock().clone();
+        let _one = self.saving.lock();
+        let elapsed = self.elapsed();
+        let doc = {
+            let mut d = self.doc.lock();
+            if d.state == "recording" {
+                d.duration = elapsed; // right after a crash too
+            }
+            d.clone()
+        };
         if let Err(e) = save_in(&self.dir, &doc) {
             self.notice(format!("Could not save the meeting: {e:#}"));
         }
@@ -546,6 +622,7 @@ impl Session {
             notices: Mutex::default(),
             levels: Mutex::new(([0.0; 2], Instant::now())),
             emit,
+            saving: Mutex::new(()),
         });
         let w = inner.clone();
         let worker = std::thread::Builder::new().name("meeting".into()).spawn(move || {
@@ -685,6 +762,7 @@ impl Session {
 
     /// The app quits: keep what is transcribed, do not wait for the rest.
     pub fn abandon(&self) {
+        *self.inner.state.lock() = "finishing"; // the mic's last block is still taken
         self.stop_sources();
         drop(self.inner.tx.lock().take());
         {
@@ -757,6 +835,20 @@ mod tests {
     }
 
     #[test]
+    fn a_short_word_in_a_long_quiet_time_is_kept() {
+        // Quiet, then "bye" (0.5 s), then Stop: the word reaches the model.
+        let mut c = Chunker::default();
+        assert!(c.push(&[quiet(3.5), tone(0.5)].concat(), 0).is_empty());
+        let last = c.flush().expect("the word");
+        assert!(last.pcm.len() >= R / 2 && last.start <= 3 * R + R / 2 && last.start + last.pcm.len() == 4 * R, "{} at {}", last.pcm.len(), last.start);
+        // A short reply, then a long quiet time: one piece with the word, not dropped as silence.
+        let mut c = Chunker::default();
+        let out = c.push(&[tone(0.5), quiet(3.6)].concat(), 0);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].start, 0);
+    }
+
+    #[test]
     fn a_source_that_stalls_keeps_its_times() {
         let mut c = Chunker::default();
         assert!(c.push(&tone(2.0), 0).is_empty());
@@ -777,6 +869,19 @@ mod tests {
         let mut lines = vec![them.clone(), echo, mine.clone(), short.clone(), later.clone()];
         drop_echoes(&mut lines, 0.0);
         assert_eq!(lines, vec![them, mine, short, later], "the echo goes; own words, short words and later repeats stay");
+        // Repeating a part of what they said, after they spoke (with headphones): kept.
+        let them = line(Speaker::Them, 10.0, 14.0, "we should do that tomorrow at noon and then review");
+        let repeat = line(Speaker::Me, 16.0, 18.0, "we should do that at noon");
+        let mut lines = vec![them.clone(), repeat.clone()];
+        drop_echoes(&mut lines, 0.0);
+        assert_eq!(lines.len(), 2, "said after them: not an echo");
+        // The same words in another order are not an echo either.
+        let mixed = line(Speaker::Me, 10.5, 13.5, "review then noon at tomorrow that do should we");
+        assert!(!is_echo(&mixed, &[&them]));
+        // Chinese: each character is a word, so the rule works without spaces.
+        let zh_them = line(Speaker::Them, 0.0, 3.0, "我们明天中午发布新版本");
+        let zh_echo = line(Speaker::Me, 0.2, 3.1, "我们明天中午发布新版");
+        assert!(is_echo(&zh_echo, &[&zh_them]));
     }
 
     #[test]

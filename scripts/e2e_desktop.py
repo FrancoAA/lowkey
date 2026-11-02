@@ -41,7 +41,8 @@ PREVIEW = os.environ.get("OW_E2E_PREVIEW", "auto")
 SHOTS = ROOT / "docs" / "screenshots"
 SPEECH = ROOT / "tests" / "fixtures" / "hello.ogg"
 # "Them" in the meeting test (the computer's sound): other words than the mic, so no echo rule applies.
-THEM_SPEECH = ROOT / "bench" / ".work" / "samples" / "en_jfk.wav"
+# JFK's inaugural address (1961, public domain), 11 s.
+THEM_SPEECH = ROOT / "tests" / "fixtures" / "jfk.ogg"
 OUTPUT = "OWDESK"
 BENCH_MODELS = ROOT / "bench" / ".work" / "ggml"
 # Live preview engine + model. Filled after the first run that downloads them (17 MB);
@@ -141,8 +142,7 @@ def main() -> None:
     mic = tmp / "mic.wav"
     run(["ffmpeg", "-loglevel", "error", "-y", "-i", SPEECH, "-af", "apad=pad_dur=4", "-ar", "16000", "-ac", "1", mic])
     them = tmp / "them.wav"
-    if THEM_SPEECH.exists():
-        run(["ffmpeg", "-loglevel", "error", "-y", "-i", THEM_SPEECH, "-af", "apad=pad_dur=3", "-ar", "16000", "-ac", "1", them])
+    run(["ffmpeg", "-loglevel", "error", "-y", "-i", THEM_SPEECH, "-af", "apad=pad_dur=3", "-ar", "16000", "-ac", "1", them])
     log = tmp / "events.jsonl"
     typed = tmp / "typed.txt"
     bus = subprocess.Popen(["dbus-daemon", "--session", "--nofork", "--print-address=1", f"--address=unix:path={runtime}/bus"],
@@ -158,9 +158,7 @@ def main() -> None:
         "WAYLAND_DISPLAY": str(Path(outer_runtime) / outer_display),
         "DBUS_SESSION_BUS_ADDRESS": bus_addr,
         "OPENWHISPER_FAKE_MIC": str(mic),
-        # Never your real sound: the test's own file, or (without it) no sound server in the
-        # private XDG_RUNTIME_DIR, so the meeting records the fake mic only.
-        **({"OPENWHISPER_FAKE_SYSTEM": str(them)} if them.exists() else {}),
+        "OPENWHISPER_FAKE_SYSTEM": str(them),  # never your real sound
         "OPENWHISPER_TEST_LOG": str(log),
         "OPENWHISPER_MODELS_DIR": str(models),
     }
@@ -521,53 +519,50 @@ def main() -> None:
 
         # ---------------------------------------------------------------- Meetings
         meetings_dir = tmp / "data" / "open-whisper" / "meetings"
-        if not them.exists():
-            print(f"  SKIP meeting: no {THEM_SPEECH} for the computer's sound")
-        else:
-            press_key("Down")  # Meetings (from the Transcribe tab)
-            press_key("Tab")  # Start recording
-            n_m = len(events("meeting"))
-            press_key("Return")
-            started = wait(lambda: events("meeting-start")[-1:] or None, 15, "meeting started")[0]
-            check("Ok" in started["result"], f"Meetings: recording starts ({started['result']})")
-            mid = started["result"]["Ok"]
+        press_key("Down")  # Meetings (from the Transcribe tab)
+        press_key("Tab")  # Start recording
+        n_m = len(events("meeting"))
+        press_key("Return")
+        started = wait(lambda: events("meeting-start")[-1:] or None, 15, "meeting started")[0]
+        check("Ok" in started["result"], f"Meetings: recording starts ({started['result']})")
+        mid = started["result"]["Ok"]
 
-            def lines_of(m: dict, who: str) -> list[str]:
-                return [x["text"] for x in m["meeting"]["lines"] if x["speaker"] == who]
+        def lines_of(m: dict, who: str) -> list[str]:
+            return [x["text"] for x in m["meeting"]["lines"] if x["speaker"] == who]
 
-            def both():
-                ms = [m for m in events("meeting")[n_m:] if m["meeting"]["id"] == mid]
-                last = ms[-1] if ms else None
-                return last if last and lines_of(last, "me") and any("country" in t.lower() for t in lines_of(last, "them")) else None
+        def both():
+            ms = [m for m in events("meeting")[n_m:] if m["meeting"]["id"] == mid]
+            last = ms[-1] if ms else None
+            return last if last and lines_of(last, "me") and any("country" in t.lower() for t in lines_of(last, "them")) else None
 
-            t0 = time.monotonic()
-            live = wait(both, 90, "live text from the mic and from the computer's sound")
-            check(live["meeting"]["system_audio"] and live["state"] == "recording",
-                  f"live transcript from both sources after {time.monotonic() - t0:.1f} s: me {lines_of(live, 'me')[:1]}, them {lines_of(live, 'them')[:1]}")
-            # Into the notes (they have the focus after Start). Hyprland can move the focus to
-            # the window under the pointer meanwhile: focus the app first, check it after.
-            focus(main_win["address"])
-            for ch in "hello":
-                press_key(ch)
-            check((hj("activewindow") or {}).get("address") == main_win["address"], "the app kept the focus while typing the notes")
-            time.sleep(1.2)  # the page saves the notes after 0.6 s without typing
-            shot("21-desktop-meeting-live.png")
-            for st in ("down", "up"):  # Shift+Tab: from the notes to Stop
-                run(["hyprctl", "dispatch", f'hl.dsp.send_key_state({{ mods = "SHIFT", key = "Tab", state = "{st}" }})'], env)
-                time.sleep(0.05)
-            press_key("Return")
-            wait(lambda: next((m for m in events("meeting")[n_m:] if m["meeting"]["id"] == mid and m["state"] == "done"), None), 60, "meeting saved")
-            saved = json.loads((meetings_dir / f"{mid}.json").read_text())
-            me_text = " ".join(x["text"] for x in saved["lines"] if x["speaker"] == "me").lower()
-            them_text = " ".join(x["text"] for x in saved["lines"] if x["speaker"] == "them").lower()
-            check(saved["state"] == "done" and saved["notes"] == "hello" and saved["duration"] > 5,
-                  f"Stop saves the meeting with your notes ({saved['duration']:.0f} s, {len(saved['lines'])} lines)")
-            check("test" in me_text and "country" in them_text and "country" not in me_text,
-                  "Me = the microphone, Them = the computer's sound")
-            check(saved["lines"] == sorted(saved["lines"], key=lambda x: x["start"]), "lines in time order")
-            check(oct(meetings_dir.stat().st_mode & 0o777) == "0o700", "the meetings folder is private (0700)")
-            time.sleep(1.0)
-            shot("22-desktop-meeting-saved.png")
+        t0 = time.monotonic()
+        live = wait(both, 90, "live text from the mic and from the computer's sound")
+        check(live["meeting"]["system_audio"] and live["state"] == "recording",
+              f"live transcript from both sources after {time.monotonic() - t0:.1f} s: me {lines_of(live, 'me')[:1]}, them {lines_of(live, 'them')[:1]}")
+        # Into the notes (they have the focus after Start). Hyprland can move the focus to
+        # the window under the pointer meanwhile: focus the app first, check it after.
+        focus(main_win["address"])
+        for ch in "hello":
+            press_key(ch)
+        check((hj("activewindow") or {}).get("address") == main_win["address"], "the app kept the focus while typing the notes")
+        time.sleep(1.2)  # the page saves the notes after 0.6 s without typing
+        shot("21-desktop-meeting-live.png")
+        for st in ("down", "up"):  # Shift+Tab: from the notes to Stop
+            run(["hyprctl", "dispatch", f'hl.dsp.send_key_state({{ mods = "SHIFT", key = "Tab", state = "{st}" }})'], env)
+            time.sleep(0.05)
+        press_key("Return")
+        wait(lambda: next((m for m in events("meeting")[n_m:] if m["meeting"]["id"] == mid and m["state"] == "done"), None), 60, "meeting saved")
+        saved = json.loads((meetings_dir / f"{mid}.json").read_text())
+        me_text = " ".join(x["text"] for x in saved["lines"] if x["speaker"] == "me").lower()
+        them_text = " ".join(x["text"] for x in saved["lines"] if x["speaker"] == "them").lower()
+        check(saved["state"] == "done" and saved["notes"] == "hello" and saved["duration"] > 5,
+              f"Stop saves the meeting with your notes ({saved['duration']:.0f} s, {len(saved['lines'])} lines)")
+        check("test" in me_text and "country" in them_text and "country" not in me_text,
+              "Me = the microphone, Them = the computer's sound")
+        check(saved["lines"] == sorted(saved["lines"], key=lambda x: x["start"]), "lines in time order")
+        check(oct(meetings_dir.stat().st_mode & 0o777) == "0o700", "the meetings folder is private (0700)")
+        time.sleep(1.0)
+        shot("22-desktop-meeting-saved.png")
 
         # ---------------------------------------------------------------- close, quit, key starts the app
         run(["hyprctl", "dispatch", f'hl.dsp.window.close({{ window = "address:{main_win["address"]}" }})'], env)
