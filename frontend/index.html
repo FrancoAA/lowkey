@@ -177,32 +177,28 @@
               <button id="meeting-stop" type="button" class="btn btn-default btn-sm btn-stop"><span class="stop-square" aria-hidden="true"></span>Stop</button>
             </div>
             <ul id="meeting-notices" class="notices" role="status" hidden></ul>
-            <section id="ai-card" class="ai-card" aria-labelledby="ai-title" hidden>
-              <div class="ai-head">
-                <div class="ai-heading">
-                  <svg class="icon ai-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z" /><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z" /></svg>
-                  <h3 id="ai-title" class="ai-title">AI notes</h3>
-                  <span id="ai-meta" class="ai-meta"></span>
-                </div>
-                <div class="actions">
-                  <button id="ai-write" type="button" class="btn btn-outline btn-sm">Write notes</button>
-                  <button id="ai-cancel" type="button" class="btn btn-ghost btn-sm" hidden>Cancel</button>
-                </div>
-              </div>
-              <div id="ai-progress" class="progress" hidden>
-                <div class="progress-track"><div id="ai-progress-fill" class="progress-fill"></div></div>
-                <span id="ai-progress-text" class="progress-text"></span>
-              </div>
-              <div id="ai-body" class="ai-body" aria-live="off"></div>
-              <p id="ai-error" class="ai-error" role="alert" hidden></p>
-            </section>
             <div class="meeting-body">
-              <div class="pane">
-                <label for="meeting-notes" class="pane-title">Notes</label>
-                <textarea id="meeting-notes" class="notes" placeholder="Short notes while you listen: decisions, names, things to do…"></textarea>
-              </div>
-              <div class="pane">
-                <div class="pane-title">Transcript <span id="meeting-pending" class="pending"></span></div>
+              <section id="ai-card" class="ai-card" aria-labelledby="ai-title" hidden>
+                <div class="ai-head">
+                  <div class="ai-heading">
+                    <svg class="icon ai-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z" /><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z" /></svg>
+                    <h3 id="ai-title" class="ai-title">AI notes</h3>
+                    <span id="ai-meta" class="ai-meta"></span>
+                  </div>
+                  <div class="actions">
+                    <button id="ai-write" type="button" class="btn btn-outline btn-sm">Write notes</button>
+                    <button id="ai-cancel" type="button" class="btn btn-ghost btn-sm" hidden>Cancel</button>
+                  </div>
+                </div>
+                <div id="ai-progress" class="progress" hidden>
+                  <div class="progress-track"><div id="ai-progress-fill" class="progress-fill"></div></div>
+                  <span id="ai-progress-text" class="progress-text"></span>
+                </div>
+                <div id="ai-body" class="ai-body" aria-live="off"></div>
+                <p id="ai-error" class="ai-error" role="alert" hidden></p>
+              </section>
+              <div class="pane transcript-pane">
+                <div class="pane-head"><h3 class="pane-title">Transcript</h3><span id="meeting-pending" class="pending"></span></div>
                 <div id="meeting-transcript" class="meeting-transcript" tabindex="0" aria-label="Transcript"></div>
               </div>
             </div>
@@ -330,7 +326,7 @@
           <div class="field">
             <div class="field-text">
               <label for="ai-auto">Write AI notes when a meeting stops</label>
-              <p class="field-desc">Only when the model is ready. The first download always starts from "Write notes" in a meeting.</p>
+              <p class="field-desc">On by default. The first time, the built-in model downloads (2.7 GB, once), with its progress in the meeting.</p>
             </div>
             <input id="ai-auto" type="checkbox" role="switch" class="switch" />
           </div>

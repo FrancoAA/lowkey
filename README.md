@@ -131,19 +131,18 @@ Record a call or a talk, as text next to your notes (Linux for now). No bot join
 - **Start recording** (in the window) does the same. It records two sources: your microphone (**Me**) and the computer's sound
   (**Them**: the others in Zoom, Meet, Teams…, through PipeWire or PulseAudio).
 - The text comes a few seconds after someone speaks: each source is cut at pauses (4–20 s
-  pieces) and the speech model of the Model section writes them. Write your notes on the left
-  while you listen; they save while you type.
+  pieces) and the speech model of the Model section writes them.
 - **Stop** transcribes the last seconds and saves. The list shows all meetings; open one to read
-  it, change the title or notes, **Copy** or **Export .md** (AI notes, your notes, then the transcript), or
+  it (AI notes and transcript side by side), change the title, **Copy** or **Export .md** (AI notes, then the transcript), or
   **Delete** it (two clicks).
 - **AI notes**: a language model writes the meeting's notes (summary, decisions, tasks with
   who and when, open questions, numbers) from your notes and the transcript. Built in:
   **Qwen3.5 4B** (Apache-2.0), run by llama.cpp on this computer (a 2.7 GB download the first
   time; ~25 s for 8 minutes of meeting on the Radeon 780M, ~1 min on a CPU). Or your own
   server in Settings → AI notes (Ollama, LM Studio, any OpenAI-compatible API; a warning shows
-  when it is not on this computer). They are written when a meeting stops (once the model is
-  there), or with **Write notes**; they are a draft next to the transcript, and Copy/Export
-  include them. Measurements: [bench/summary/results.md](bench/summary/results.md).
+  when it is not on this computer). They are written by themselves when a meeting stops (the
+  first time, after the model's download), and again with **Write again**; they are a draft
+  next to the transcript, and Copy/Export include them. Measurements: [bench/summary/results.md](bench/summary/results.md).
 - Use headphones. Without them the microphone also hears the others; the app removes a "Me"
   line when most of its words are in a "Them" line at the same time.
 - Tell the others that you record. Meetings are saved as JSON in
@@ -164,7 +163,7 @@ hotkey = "SUPER + CTRL + X"
 meeting_hotkey = "SUPER + CTRL + M"   # start/stop a meeting recording; "" = no key
 ai_engine = "builtin"           # AI notes: builtin (Qwen3.5 4B) | server
 ai_url = "http://localhost:11434/v1"   # own server (OpenAI-compatible); ai_model, ai_key too
-ai_auto = true                  # write AI notes when a meeting stops (when the model is there)
+ai_auto = true                  # write AI notes when a meeting stops
 live_preview = true             # words in the overlay while you talk
 preview_engine = "auto"         # auto (Parakeet when on disk, else Whistle) | whistle | parakeet
 ```

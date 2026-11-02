@@ -267,7 +267,9 @@ def main() -> None:
 
         # ---------------------------------------------------------------- start
         (tmp / "config" / "open-whisper").mkdir(parents=True)
-        (tmp / "config" / "open-whisper" / "config.toml").write_text(f'idle_unload_minutes = 5\npreview_engine = "{PREVIEW}"\n')
+        # AI notes after Stop only with the cached model: the test never downloads 2.7 GB.
+        ai_auto = "true" if (models / "llm").is_dir() else "false"
+        (tmp / "config" / "open-whisper" / "config.toml").write_text(f'idle_unload_minutes = 5\npreview_engine = "{PREVIEW}"\nai_auto = {ai_auto}\n')
         app = subprocess.Popen([APP], env=env, stdout=open(tmp / "app.log", "w"), stderr=subprocess.STDOUT)
         main_win = wait(lambda: win("open-whisper"), 30, "main window")
         print("  ok  main window opened")
@@ -572,24 +574,16 @@ def main() -> None:
         live = wait(both, 90, "live text from the mic and from the computer's sound")
         check(live["meeting"]["system_audio"] and live["state"] == "recording",
               f"live transcript from both sources after {time.monotonic() - t0:.1f} s: me {lines_of(live, 'me')[:1]}, them {lines_of(live, 'them')[:1]}")
-        # Into the notes (they have the focus after Start). Hyprland can move the focus to
-        # the window under the pointer meanwhile: focus the app first, check it after.
-        focus(main_win["address"])
-        for ch in "hello":
-            press_key(ch)
-        check((hj("activewindow") or {}).get("address") == main_win["address"], "the app kept the focus while typing the notes")
-        time.sleep(1.2)  # the page saves the notes after 0.6 s without typing
+        time.sleep(0.8)
         shot("21-desktop-meeting-live.png")
-        for st in ("down", "up"):  # Shift+Tab: from the notes to Stop
-            run(["hyprctl", "dispatch", f'hl.dsp.send_key_state({{ mods = "SHIFT", key = "Tab", state = "{st}" }})'], env)
-            time.sleep(0.05)
-        press_key("Return")
+        focus(main_win["address"])
+        press_key("Return")  # Stop: it has the focus after Start
         wait(lambda: next((m for m in events("meeting")[n_m:] if m["meeting"]["id"] == mid and m["state"] == "done"), None), 60, "meeting saved")
         saved = json.loads((meetings_dir / f"{mid}.json").read_text())
         me_text = " ".join(x["text"] for x in saved["lines"] if x["speaker"] == "me").lower()
         them_text = " ".join(x["text"] for x in saved["lines"] if x["speaker"] == "them").lower()
-        check(saved["state"] == "done" and saved["notes"] == "hello" and saved["duration"] > 5,
-              f"Stop saves the meeting with your notes ({saved['duration']:.0f} s, {len(saved['lines'])} lines)")
+        check(saved["state"] == "done" and saved["duration"] > 5,
+              f"Stop saves the meeting ({saved['duration']:.0f} s, {len(saved['lines'])} lines)")
         check("test" in me_text and "country" in them_text and "country" not in me_text,
               "Me = the microphone, Them = the computer's sound")
         check(saved["lines"] == sorted(saved["lines"], key=lambda x: x["start"]), "lines in time order")
@@ -604,16 +598,31 @@ def main() -> None:
             check(ai["state"] == "done", f"AI notes written by themselves after Stop in {time.monotonic() - t_ai:.0f} s ({ai['detail']}): {ai['text'][:80]!r}")
             check(any(e["state"] == "writing" and e["text"] for e in events("ai-notes") if e["id"] == mid), "the notes stream in while they are written")
             saved = json.loads((meetings_dir / f"{mid}.json").read_text())
-            check(saved["ai_notes"] == ai["text"] and saved["ai_model"] == "Qwen3.5 4B" and saved["notes"] == "hello", "the AI notes are saved with the meeting; your notes stay")
+            check(saved["ai_notes"] == ai["text"] and saved["ai_model"] == "Qwen3.5 4B", "the AI notes are saved with the meeting")
             low = saved["ai_notes"].lower()
             check("## " in low and ("openwhisper" in low or "open whisper" in low), "the notes have sections and use the transcript")
             time.sleep(1.0)
             shot("25-desktop-meeting-ai-notes.png")
         else:
             print(f"  SKIP AI notes: no cached Qwen3.5 4B and runner in {BENCH_LLM}")
-        press_key("Escape")  # back to the list (grouped by day)
-        time.sleep(0.8)
-        shot("26-desktop-meetings-list.png")
+        # A wide window: AI notes and transcript side by side (the nested window, full screen).
+        def fullscreen() -> bool:
+            before = win("open-whisper")["size"]
+            run(["hyprctl", "dispatch", f'hl.dsp.window.fullscreen({{ window = "address:{main_win["address"]}" }})'], env, check=False)
+            time.sleep(1.0)
+            return (win("open-whisper") or {}).get("size") != before
+
+        if fullscreen():
+            shot("27-desktop-meeting-wide.png")
+            press_key("Escape")
+            time.sleep(0.8)
+            shot("26-desktop-meetings-list.png")
+            fullscreen()  # back
+        else:
+            print("  SKIP the wide screenshots: full screen did not work in the nested Hyprland")
+            press_key("Escape")  # back to the list (grouped by day)
+            time.sleep(0.8)
+            shot("26-desktop-meetings-list.png")
 
         # ---------------------------------------------------------------- Meetings: the key, from another app
         focus(target["address"])  # the terminal has the focus

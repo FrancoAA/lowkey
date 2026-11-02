@@ -1,7 +1,8 @@
 /**
  * Meetings section: record the microphone ("Me") and the computer's sound ("Them"), see the
- * transcript as it comes, and write notes next to it. The app records, transcribes and saves
- * (desktop/src-tauri/src/meeting.rs); this page shows it and sends the notes.
+ * transcript as it comes; when it stops, the AI notes are written next to the transcript. The
+ * app records, transcribes, writes and saves (desktop/src-tauri/src/meeting.rs, llm.rs); this
+ * page shows it and sends the title.
  */
 import type { AiNotesEvent, Meeting, MeetingLine, MeetingLive, MeetingSummary } from "./api";
 import type { Backend } from "./backend";
@@ -82,7 +83,6 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): void {
   const exportBtn = $<HTMLButtonElement>("meeting-export");
   const deleteBtn = $<HTMLButtonElement>("meeting-delete");
   const notices = $<HTMLUListElement>("meeting-notices");
-  const notes = $<HTMLTextAreaElement>("meeting-notes");
   const transcript = $<HTMLDivElement>("meeting-transcript");
   const pending = $<HTMLElement>("meeting-pending");
   const aiCard = $<HTMLElement>("ai-card");
@@ -102,7 +102,7 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): void {
   let live: MeetingLive | null = null;
   let liveAt = 0; // performance.now() when `live` arrived (for the timer)
   let saveTimer = 0;
-  let unsaved: { title?: string; notes?: string } = {};
+  let unsaved: { title?: string } = {};
   let deleteArmed = 0;
   /** The Stop button is waiting for the app (it opens the saved meeting itself). */
   let stopping = false;
@@ -117,37 +117,32 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): void {
   // ---------------------------------------------------------------- saving what you type
   async function flush(): Promise<void> {
     clearTimeout(saveTimer);
-    if (!shown || (unsaved.title === undefined && unsaved.notes === undefined)) return;
+    if (!shown || unsaved.title === undefined) return;
     const patch = unsaved;
     unsaved = {};
     try {
       await api.update(shown.id, patch);
     } catch (err) {
       unsaved = { ...patch, ...unsaved }; // kept: the next change or Back tries again
-      showError(`Your notes were not saved: ${String(err)}`);
+      showError(`The title was not saved: ${String(err)}`);
     }
   }
 
-  function later(patch: { title?: string; notes?: string }): void {
+  function later(patch: { title?: string }): void {
     unsaved = { ...unsaved, ...patch };
     clearTimeout(saveTimer);
     saveTimer = window.setTimeout(() => void flush(), 600);
   }
 
-  notes.addEventListener("input", () => {
-    if (shown) shown.notes = notes.value;
-    later({ notes: notes.value });
-  });
   title.addEventListener("input", () => {
     if (shown) shown.title = title.value;
     later({ title: title.value });
   });
-  notes.addEventListener("blur", () => void flush());
   title.addEventListener("blur", () => void flush());
   title.addEventListener("keydown", (e) => {
     if (e.key === "Enter") {
       e.preventDefault();
-      notes.focus();
+      title.blur(); // saves it
     }
   });
 
@@ -229,11 +224,16 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): void {
   const aiRunning = () => !!aiJob && ["preparing", "downloading", "writing"].includes(aiJob.state);
 
   function renderAi(): void {
-    if (!shown || isLive()) {
-      aiCard.hidden = true;
+    if (!shown) return;
+    aiCard.hidden = false;
+    if (isLive()) {
+      // The same place as later: the notes come here when the recording stops.
+      aiWrite.hidden = aiCancel.hidden = aiProgress.hidden = aiError.hidden = true;
+      aiMeta.textContent = "";
+      aiBody.replaceChildren("Written here when the recording stops: summary, decisions, tasks and open questions.");
+      aiBody.classList.add("ai-empty");
       return;
     }
-    aiCard.hidden = false;
     const mine = aiJob?.id === shown.id ? aiJob : null;
     const running = !!mine && aiRunning();
     aiWrite.hidden = running;
@@ -253,7 +253,7 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): void {
       renderMarkdown(aiBody, text);
       aiBody.classList.remove("ai-empty");
     } else {
-      aiBody.replaceChildren(running ? "Writing…" : "Summary, decisions, tasks and open questions, from your notes and the transcript. On this computer.");
+      aiBody.replaceChildren(running ? "Writing…" : "Summary, decisions, tasks and open questions, from the transcript. On this computer.");
       aiBody.classList.add("ai-empty");
     }
     aiMeta.textContent = running
@@ -269,7 +269,7 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): void {
     aiWrite.disabled = true; // no second job from a double click
     aiJob = { id, state: "preparing", detail: "Getting ready…", progress: 0, text: "" };
     renderAi();
-    await flush(); // the model reads your latest notes
+    await flush(); // the model reads the latest title
     try {
       await api.aiNotes(id);
     } catch (err) {
@@ -296,7 +296,6 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): void {
   function open(m: Meeting): void {
     shown = m;
     title.value = m.title;
-    notes.value = m.notes;
     unsaved = {};
     disarmDelete();
     home.hidden = true;
@@ -425,9 +424,9 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): void {
       live = await api.start(defaultTitle());
       liveAt = performance.now();
       ui.onRecording(true);
-      ui.announce("Recording. Write your notes while you listen.");
+      ui.announce("Recording. The AI notes are written when it stops.");
       open({ ...live.meeting });
-      notes.focus();
+      stopBtn.focus();
     } catch (err) {
       showError(String(err));
       startBtn.disabled = false;
@@ -445,12 +444,13 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): void {
       ui.onRecording(false);
       ui.announce("Meeting saved.");
       if (!shown || shown.id === saved.id) {
-        // Only what you typed while it finished (not saved yet) goes over the saved meeting.
+        // A title typed while it finished (not saved yet) goes over the saved meeting.
         const typed = unsaved;
         open(saved);
-        if (typed.title !== undefined) title.value = typed.title;
-        if (typed.notes !== undefined) notes.value = typed.notes;
-        if (typed.title !== undefined || typed.notes !== undefined) later(typed);
+        if (typed.title !== undefined) {
+          title.value = typed.title;
+          later(typed);
+        }
       }
       void renderList();
     } catch (err) {
@@ -510,7 +510,7 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): void {
 
   // ---------------------------------------------------------------- saved meeting actions
   back.addEventListener("click", () => void showHome());
-  // Esc: back to the list (the notes are saved first). A recording goes on.
+  // Esc: back to the list (the title is saved first). A recording goes on.
   document.addEventListener("keydown", (e) => {
     // Only while this view is on screen (its section shown), and not while keys are chosen.
     if (e.key !== "Escape" || e.defaultPrevented || view.hidden || !view.offsetParent) return;

@@ -812,10 +812,11 @@ fn stop_meeting(app: &AppRef) -> Result<meeting::Meeting, String> {
     app.emit_status();
     // The strip says "saved" for a moment, then goes (unless a new meeting started).
     app.hide_meeting_strip_later(3);
-    // AI notes right away, when the model is ready (never a first 2.7 GB download unasked).
+    // AI notes right away. The built-in model downloads first when it is not there yet
+    // (progress in the meeting; Cancel stops it).
     if let Ok(m) = &r {
         let cfg = app.config.lock().clone();
-        let ready = if cfg.ai_engine == "server" { !cfg.ai_url.is_empty() } else { llm::builtin_status().downloaded };
+        let ready = if cfg.ai_engine == "server" { !cfg.ai_url.is_empty() } else { llm::builtin_status().supported };
         if cfg.ai_auto && ready && !m.lines.is_empty() {
             if let Err(why) = start_ai_notes(app, m.id.clone()) {
                 // e.g. another meeting's notes are being written: say so in this meeting.

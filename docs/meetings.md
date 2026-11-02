@@ -38,9 +38,13 @@ macOS and Windows, a prompt when a call starts, and questions over past meetings
 - The list is grouped by day (Today, Yesterday, then dates), newest first, with the time, the
   length, the first words, and marks for "Recording", "Interrupted" and "AI notes". With no
   meetings, it says how to start, and names the meeting key.
-- While a meeting records, a panel shows the clock, the two-colour wave (the same colours as
-  the transcript's Me and Them) and Stop. Notes and transcript stand side by side when the
-  view is 720 px wide or more, else one above the other. Esc goes back to the list.
+- One meeting: **AI notes | Transcript**, side by side and the full height of the window,
+  each scrolling on its own (the section has no width limit; lines stay under ~75 characters);
+  under 720 px one above the other. While it records, a panel shows the clock, the two-colour
+  wave (the same colours as the transcript's Me and Them) and Stop (it has the focus after
+  Start), and the AI notes column says the notes come when it stops. Esc goes back to the list.
+- There is no notes field: the AI notes take its place. Notes typed in older versions stay in
+  the file, in the export and in what the model reads.
 
 ## Two sources
 
@@ -125,8 +129,8 @@ models wrote English notes for a Spanish meeting (bench/summary/results.md).
   One job at a time; deleting the meeting cancels its job. Notes cut at the length limit say so.
 - The model reads the title, the length, your notes and the transcript, but not the date (the
   app does not always know your time zone, and a wrong date would end up in the notes).
-- **Automatic**: when a meeting stops, if `ai_auto` is on and the model is there (never a first
-  2.7 GB download unasked).
+- **Automatic**: when a meeting stops (`ai_auto`, on by default). The first time, the built-in
+  model downloads first (2.7 GB, progress in the meeting; Cancel stops it).
 - The notes are saved in the meeting file (`ai_notes`, `ai_model`, `ai_at`); Copy and Export put
   them first, as "AI notes (model, a draft)", their headings one level down.
 - The e2e test (cached model): notes written 7–9 s after Stop for a 16-s test meeting, streamed,

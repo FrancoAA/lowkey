@@ -71,7 +71,7 @@ pub struct Config {
     pub ai_url: String,
     pub ai_model: String,
     pub ai_key: String,
-    /// Write the AI notes when a meeting stops (when the model is ready, without asking to download).
+    /// Write the AI notes when a meeting stops (the first time, the built-in model downloads).
     pub ai_auto: bool,
 }
 

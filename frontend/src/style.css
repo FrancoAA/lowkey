@@ -327,7 +327,10 @@ h1 { font-size: 20px; font-weight: 600; }
 .meetings-empty-text { margin: 0; color: var(--muted-foreground); font-size: 13px; max-width: 40ch; }
 
 /* One meeting */
-.meeting-view { container-type: inline-size; display: flex; flex-direction: column; gap: 14px; min-height: calc(100vh - 56px); }
+/* Meetings use the whole width; one meeting fills the window's height, its two columns scroll
+   on their own. */
+#section-meetings { max-width: none; }
+.meeting-view { container-type: inline-size; display: flex; flex-direction: column; gap: 14px; height: calc(100vh - 56px); min-height: 480px; }
 .back { margin-left: -10px; color: var(--muted-foreground); }
 .back:hover { color: var(--foreground); }
 .meeting-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
@@ -373,24 +376,29 @@ h1 { font-size: 20px; font-weight: 600; }
 .notices { margin: 0; padding: 10px 14px 10px 30px; border-radius: var(--radius); font-size: 13px;
   border: 1px solid color-mix(in srgb, #d97706 45%, transparent); background: color-mix(in srgb, #d97706 8%, var(--background)); }
 
-/* Notes and transcript: side by side when there is room */
-.meeting-body { flex: 1; display: grid; grid-template-columns: 1fr; gap: 16px; }
-@container (min-width: 720px) {
-  .meeting-body { grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); }
-  .meeting-transcript { max-height: calc(100vh - 250px); }
+/* AI notes | Transcript, side by side from 720 px; one above the other below that. */
+.meeting-body {
+  flex: 1; min-height: 0; display: grid; gap: 16px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr);
 }
-.pane { display: flex; flex-direction: column; gap: 6px; min-height: 0; }
-.pane-title { font-size: 12px; font-weight: 600; color: var(--muted-foreground); letter-spacing: 0.02em; }
-.pending { font-weight: 400; }
-.notes {
-  flex: 1; min-height: 200px; resize: vertical; font: inherit; font-size: 14px; line-height: 1.6; color: var(--foreground);
-  background: var(--card); border: 1px solid var(--input); border-radius: var(--radius); padding: 12px 14px; caret-color: var(--brand);
+/* One above the other: the AI notes at their full height, the view scrolls as a whole. */
+@container (max-width: 719px) {
+  .meeting-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(360px, auto); overflow-y: auto; }
+  /* (inside .meeting-body: these win over the card's own rules further down) */
+  .meeting-body .ai-body { flex: none; overflow: visible; }
+  .meeting-body .ai-card { min-height: auto; } /* never shorter than its notes here */
 }
-.notes::placeholder { color: var(--muted-foreground); }
-.notes:focus { outline: none; border-color: var(--ring); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 30%, transparent); }
+.pane { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+/* The transcript: a card like the AI notes, its title inside, the lines scroll below it. */
+.transcript-pane {
+  padding: 14px 6px 0 16px; border-radius: calc(var(--radius) + 2px);
+  border: 1px solid var(--border); background: color-mix(in srgb, var(--muted) 28%, var(--card));
+}
+.pane-head { display: flex; align-items: center; gap: 8px; min-height: 32px; padding-right: 10px; }
+.pane-title { font-size: 14px; font-weight: 600; color: var(--foreground); }
+.pending { font-size: 12px; color: var(--muted-foreground); }
 .meeting-transcript {
-  flex: 1; min-height: 220px; max-height: 48vh; overflow-y: auto; padding: 4px 16px 14px;
-  border: 1px solid var(--border); border-radius: var(--radius); background: color-mix(in srgb, var(--muted) 30%, var(--background));
+  flex: 1; min-height: 0; overflow-y: auto; padding: 0 10px 14px 0;
   scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--muted-foreground) 45%, transparent) transparent;
 }
 .meeting-transcript:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 35%, transparent); }
@@ -401,7 +409,7 @@ h1 { font-size: 20px; font-weight: 600; }
 .tline[data-speaker="me"] .who { color: var(--me); }
 .tline[data-speaker="them"] .who { color: var(--them); }
 .tline .when { font-size: 11px; color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
-.tline p { grid-column: 1 / -1; margin: 3px 0 0; line-height: 1.6; overflow-wrap: anywhere; text-wrap: pretty; }
+.tline p { grid-column: 1 / -1; margin: 3px 0 0; line-height: 1.6; overflow-wrap: anywhere; text-wrap: pretty; max-width: 75ch; }
 
 @media (max-width: 560px) {
   .meetings-hero-action { align-items: stretch; width: 100%; }
@@ -417,16 +425,22 @@ h1 { font-size: 20px; font-weight: 600; }
 .ai-server { display: flex; flex-direction: column; gap: 14px; }
 .field-desc[data-kind="warn"] { color: #d97706; font-weight: 500; }
 .ai-card {
-  display: flex; flex-direction: column; gap: 10px; padding: 14px 16px; border-radius: calc(var(--radius) + 2px);
+  display: flex; flex-direction: column; gap: 10px; min-height: 0; padding: 14px 16px; border-radius: calc(var(--radius) + 2px);
   background: linear-gradient(180deg, color-mix(in srgb, var(--brand-soft) 85%, var(--background)), var(--card) 70%);
   border: 1px solid color-mix(in srgb, var(--brand) 22%, var(--border));
 }
 .ai-icon { color: var(--brand); }
 .ai-title { font-weight: 600; font-size: 14px; white-space: nowrap; letter-spacing: 0; }
-.ai-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
-.ai-heading { display: flex; align-items: center; gap: 8px; min-width: 0; flex-wrap: wrap; }
+/* The title (and the model, which wraps under it) on the left; the button always on the right. */
+.ai-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.ai-head .actions { flex: none; flex-wrap: nowrap; }
+.ai-heading { display: flex; align-items: center; column-gap: 8px; row-gap: 0; min-width: 0; flex: 1; flex-wrap: wrap; min-height: 32px; }
 .ai-meta { font-size: 12px; color: var(--muted-foreground); }
-.ai-body { font-size: 14px; line-height: 1.55; max-height: 46vh; overflow-y: auto; overflow-wrap: anywhere; }
+.ai-body {
+  flex: 1; min-height: 0; font-size: 14px; line-height: 1.6; overflow-y: auto; overflow-wrap: anywhere; padding-right: 6px;
+  scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--muted-foreground) 45%, transparent) transparent;
+}
+.ai-body > * { max-width: 75ch; }
 .ai-body.ai-empty { color: var(--muted-foreground); font-size: 13px; }
 .ai-body h4 { margin: 10px 0 2px; font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; color: var(--muted-foreground); }
 .ai-body h4:first-child { margin-top: 0; }
