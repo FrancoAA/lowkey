@@ -4,19 +4,20 @@
 //! Built in: Qwen3.5 4B (Apache-2.0, 2.7 GB) run by llama.cpp's `llama-server`. Both are
 //! downloaded once and checked with SHA-256 (pinned llama.cpp release builds: Vulkan on Linux and
 //! Windows, Metal on macOS). The server runs in its own process, only while notes are written
-//! (and 2 minutes after, for a second try), on 127.0.0.1 with a random key: no other program
-//! and no web page can use it.
+//! (and 2 minutes after, for a second try), on 127.0.0.1 with a random key given through its
+//! environment (not its command line, which other users can read): no web page and no other
+//! user can use it. A pid file lets the next start stop a server that a crash left behind.
 //!
 //! Own server: any OpenAI-compatible API (Ollama, LM Studio, a cloud API). Settings shows a
 //! warning when the address is not on this computer.
 //!
 //! Measured on the development machine: bench/summary/results.md.
 
-use std::io::{BufRead, BufReader, Read};
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, OnceLock};
+use std::sync::{mpsc, Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
@@ -130,13 +131,13 @@ fn find_file(dir: &Path, name: &str, depth: u32) -> Option<PathBuf> {
 pub type ProgressFn<'a> = &'a mut dyn FnMut(&str, u64, u64);
 
 /// The server and the model, downloaded and checked once. Returns (server, model).
-pub fn ensure_builtin(progress: ProgressFn) -> anyhow::Result<(PathBuf, PathBuf)> {
+pub fn ensure_builtin(progress: ProgressFn, cancel: &AtomicBool) -> anyhow::Result<(PathBuf, PathBuf)> {
     let rt = RUNTIME.as_ref().ok_or_else(|| anyhow::anyhow!("the built-in model is not available for this system; use your own server in Settings → AI notes"))?;
     let rdir = runtime_dir();
     if server_exe(&rdir).is_none() {
         let archive = dir().join(rt.url.rsplit('/').next().unwrap_or("llama.archive"));
         let _ = std::fs::remove_file(&archive);
-        crate::models::download(rt.url, &archive, |d, t| progress("the model runner", d, t))?;
+        crate::models::download_cancellable(rt.url, &archive, |d, t| progress("the model runner", d, t), cancel)?;
         let sum = crate::models::sha256_file(&archive)?;
         if sum != rt.sha256 {
             let _ = std::fs::remove_file(&archive);
@@ -156,7 +157,7 @@ pub fn ensure_builtin(progress: ProgressFn) -> anyhow::Result<(PathBuf, PathBuf)
     if !model_ok_quick(&model) {
         let _ = std::fs::remove_file(&model);
         let part = dir().join(format!("{MODEL_FILE}.download"));
-        crate::models::download(MODEL_URL, &part, |d, t| progress(MODEL_LABEL, d, t))?;
+        crate::models::download_cancellable(MODEL_URL, &part, |d, t| progress(MODEL_LABEL, d, t), cancel)?;
         progress("checking the download", 0, 0);
         if crate::models::sha256_file(&part)? != MODEL_SHA256 {
             let _ = std::fs::remove_file(&part);
@@ -277,35 +278,76 @@ fn runner() -> &'static Runner {
         // Stop the server after a while without use: it holds about 3 GB.
         std::thread::spawn(|| loop {
             std::thread::sleep(Duration::from_secs(15));
-            let r = runner();
-            if !r.in_use.load(Ordering::SeqCst) && r.last_used.lock().elapsed() >= IDLE_STOP {
-                stop_builtin();
-            }
+            stop_if_idle();
         });
         Runner { running: Mutex::new(None), last_used: Mutex::new(Instant::now()), in_use: AtomicBool::new(false) }
     })
 }
 
-/// Stop the built-in server (idle, or the app quits).
+/// Stop the built-in server (idle, cancel, or the app quits).
 pub fn stop_builtin() {
     if let Some(mut r) = runner().running.lock().take() {
         let _ = r.child.kill();
         let _ = r.child.wait();
+        let _ = std::fs::remove_file(pid_file());
     }
 }
 
-fn random_key() -> String {
-    let mut bytes = [0u8; 24];
-    if std::fs::File::open("/dev/urandom").and_then(|mut f| f.read_exact(&mut bytes)).is_err() {
-        // Windows: no /dev/urandom. The hasher's per-process random seed, mixed with the time.
-        use std::hash::{BuildHasher, Hasher};
-        for chunk in bytes.chunks_mut(8) {
-            let mut h = std::collections::hash_map::RandomState::new().build_hasher();
-            h.write_u128(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos());
-            chunk.copy_from_slice(&h.finish().to_le_bytes()[..chunk.len()]);
+/// The check and the stop under the server's lock: a job that takes the server meanwhile keeps it.
+fn stop_if_idle() {
+    let r = runner();
+    let mut slot = r.running.lock();
+    if slot.is_some() && !r.in_use.load(Ordering::SeqCst) && r.last_used.lock().elapsed() >= IDLE_STOP {
+        if let Some(mut run) = slot.take() {
+            let _ = run.child.kill();
+            let _ = run.child.wait();
+            let _ = std::fs::remove_file(pid_file());
         }
     }
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+fn pid_file() -> PathBuf {
+    dir().join("llama-server.pid")
+}
+
+/// A server that an earlier run left behind (a crash, a kill, a logout): stop it. Only a
+/// process that is our llama-server is stopped, never another program that got the same pid.
+pub fn stop_stale() {
+    let Ok(text) = std::fs::read_to_string(pid_file()) else { return };
+    let _ = std::fs::remove_file(pid_file());
+    let Ok(pid) = text.trim().parse::<u32>() else { return };
+    if pid == std::process::id() {
+        return;
+    }
+    #[cfg(target_os = "linux")]
+    let ours = std::fs::read_link(format!("/proc/{pid}/exe"))
+        .ok()
+        .zip(std::fs::canonicalize(runtime_dir()).ok())
+        .is_some_and(|(exe, rt)| exe.starts_with(rt));
+    #[cfg(target_os = "macos")]
+    let ours = Command::new("ps").args(["-p", &pid.to_string(), "-o", "comm="]).output().is_ok_and(|o| {
+        let comm = String::from_utf8_lossy(&o.stdout).to_string();
+        comm.trim_end().ends_with("llama-server") && comm.contains(&*dir().to_string_lossy())
+    });
+    #[cfg(windows)]
+    let ours = Command::new("tasklist").args(["/FI", &format!("PID eq {pid}"), "/NH"]).output().is_ok_and(|o| String::from_utf8_lossy(&o.stdout).contains("llama-server.exe"));
+    #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+    let ours = false;
+    if !ours {
+        return;
+    }
+    eprintln!("  Stopping a model runner left by an earlier run (pid {pid})");
+    #[cfg(unix)]
+    let _ = Command::new("kill").arg(pid.to_string()).status();
+    #[cfg(windows)]
+    let _ = Command::new("taskkill").args(["/F", "/PID", &pid.to_string()]).status();
+}
+
+/// 192 bits from the system's random generator (getrandom / BCryptGenRandom).
+fn random_key() -> anyhow::Result<String> {
+    let mut bytes = [0u8; 24];
+    getrandom::fill(&mut bytes).map_err(|e| anyhow::anyhow!("no random numbers from the system: {e}"))?;
+    Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
 }
 
 fn free_port() -> anyhow::Result<u16> {
@@ -325,10 +367,13 @@ fn builtin_endpoint(exe: &Path, model: &Path, gpu: bool, cancel: &AtomicBool) ->
         let _ = run.child.wait();
         *slot = None;
     }
-    let (port, key) = (free_port()?, random_key());
+    stop_stale();
+    let (port, key) = (free_port()?, random_key()?);
     let log = dir().join("llama-server.log");
     let mut cmd = Command::new(exe);
-    cmd.args(["-m", &model.to_string_lossy(), "--host", "127.0.0.1", "--port", &port.to_string(), "--api-key", &key]);
+    // The key through the environment: /proc/<pid>/environ is private, the command line is not.
+    cmd.env("LLAMA_API_KEY", &key);
+    cmd.args(["-m", &model.to_string_lossy(), "--host", "127.0.0.1", "--port", &port.to_string()]);
     cmd.args(["-c", &CONTEXT.to_string(), "-np", "1", "-fa", "on", "--jinja", "--no-webui"]);
     cmd.args(["-ngl", if gpu { "99" } else { "0" }]);
     cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(std::fs::File::create(&log).map(Stdio::from).unwrap_or_else(|_| Stdio::null()));
@@ -338,15 +383,22 @@ fn builtin_endpoint(exe: &Path, model: &Path, gpu: bool, cancel: &AtomicBool) ->
         cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
     }
     let mut child = cmd.spawn().map_err(|e| anyhow::anyhow!("could not start the model runner: {e}"))?;
+    let _ = std::fs::write(pid_file(), child.id().to_string());
+    let fail = |child: &mut Child| {
+        let _ = child.kill();
+        let _ = child.wait();
+        let _ = std::fs::remove_file(pid_file());
+    };
     let base = format!("http://127.0.0.1:{port}/v1");
     let client = reqwest::blocking::Client::builder().timeout(Duration::from_secs(2)).build()?;
     let started = Instant::now();
     loop {
         if cancel.load(Ordering::SeqCst) {
-            let _ = child.kill();
+            fail(&mut child);
             anyhow::bail!("cancelled");
         }
         if let Ok(Some(status)) = child.try_wait() {
+            let _ = std::fs::remove_file(pid_file());
             let tail = std::fs::read_to_string(&log).unwrap_or_default();
             let last: Vec<&str> = tail.lines().rev().take(3).collect();
             anyhow::bail!("the model runner stopped ({status}): {}", last.into_iter().rev().collect::<Vec<_>>().join(" | "));
@@ -361,7 +413,7 @@ fn builtin_endpoint(exe: &Path, model: &Path, gpu: bool, cancel: &AtomicBool) ->
             break;
         }
         if started.elapsed() > Duration::from_secs(180) {
-            let _ = child.kill();
+            fail(&mut child);
             anyhow::bail!("the model runner did not start in 3 minutes (log: {})", log.display());
         }
         std::thread::sleep(Duration::from_millis(250));
@@ -413,13 +465,18 @@ pub fn language_of(text: &str) -> &'static str {
 }
 
 /// True when the address is on this computer (the transcript does not leave it).
+/// Parsed as the HTTP client parses it (WHATWG URL), so the host checked is the host reached.
 pub fn is_local(url: &str) -> bool {
-    let rest = url.split("://").nth(1).unwrap_or(url);
-    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
-    let host_port = authority.rsplit('@').next().unwrap_or("");
-    let host = if let Some(v6) = host_port.strip_prefix('[') { v6.split(']').next().unwrap_or("") } else { host_port.split(':').next().unwrap_or("") };
-    let host = host.to_ascii_lowercase();
-    host == "localhost" || host.ends_with(".localhost") || host.parse::<std::net::IpAddr>().is_ok_and(|ip| ip.is_loopback())
+    use reqwest::Url;
+    match Url::parse(url.trim()).ok().and_then(|u| u.host().map(|h| h.to_owned())) {
+        Some(url::Host::Domain(d)) => {
+            let d = d.to_ascii_lowercase();
+            d == "localhost" || d.ends_with(".localhost")
+        }
+        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+        None => false,
+    }
 }
 
 /// Write the notes for `input` (the meeting as Markdown). `on_text` gets the text so far, as it
@@ -432,12 +489,12 @@ pub fn write_notes(
     on_text: &mut dyn FnMut(&str),
     cancel: &AtomicBool,
 ) -> anyhow::Result<String> {
-    anyhow::ensure!(input.len() <= MAX_INPUT_CHARS, "this meeting is too long for AI notes for now (over about four hours)");
+    anyhow::ensure!(input.chars().count() <= MAX_INPUT_CHARS, "this meeting is too long for AI notes for now (over about four hours)");
     let mut _in_use = None;
     let (base, key, model, builtin) = match engine {
         Engine::Builtin { gpu } => {
             _in_use = Some(InUse::new()); // from the start of the server to the last word
-            let (exe, model) = ensure_builtin(&mut *progress)?;
+            let (exe, model) = ensure_builtin(&mut *progress, cancel)?;
             progress("starting", 0, 0);
             let (base, key) = builtin_endpoint(&exe, &model, *gpu, cancel)?;
             (base, key, MODEL_LABEL.to_string(), true)
@@ -456,20 +513,52 @@ pub fn write_notes(
         // Qwen3.5 thinks first by default: not needed for notes, and much slower.
         body["chat_template_kwargs"] = json!({"enable_thinking": false});
     }
-    let client = reqwest::blocking::Client::builder().connect_timeout(Duration::from_secs(10)).timeout(None).build()?;
-    let mut req = client.post(format!("{base}/chat/completions")).json(&body);
-    if !key.is_empty() {
-        req = req.bearer_auth(&key);
+    // The request runs on its own thread, so Cancel works at any moment: also while the model
+    // reads a long meeting before its first word, or while a server never answers.
+    enum Msg {
+        Text(String),
+        Done(anyhow::Result<String>),
     }
-    let resp = req.send().map_err(|e| anyhow::anyhow!("could not reach {base}: {e}"))?;
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let text: String = resp.text().unwrap_or_default().chars().take(300).collect();
-        anyhow::bail!("{base} answered {status}: {text}");
+    let (tx, rx) = mpsc::channel::<Msg>();
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop2 = stop.clone();
+    std::thread::Builder::new().name("ai-notes-request".into()).spawn(move || {
+        let r = (|| -> anyhow::Result<String> {
+            let client = reqwest::blocking::Client::builder().connect_timeout(Duration::from_secs(10)).timeout(None).build()?;
+            let mut req = client.post(format!("{base}/chat/completions")).json(&body);
+            if !key.is_empty() {
+                req = req.bearer_auth(&key);
+            }
+            let resp = req.send().map_err(|e| anyhow::anyhow!("could not reach {base}: {e}"))?;
+            if !resp.status().is_success() {
+                let status = resp.status();
+                let text: String = resp.text().unwrap_or_default().chars().take(300).collect();
+                anyhow::bail!("{base} answered {status}: {text}");
+            }
+            let tx2 = tx.clone();
+            read_stream(BufReader::new(resp), &mut |t| drop(tx2.send(Msg::Text(t.to_string()))), &stop2)
+        })();
+        let _ = tx.send(Msg::Done(r));
+    })?;
+    loop {
+        match rx.recv_timeout(Duration::from_millis(150)) {
+            Ok(Msg::Text(t)) => on_text(&t),
+            Ok(Msg::Done(r)) => {
+                let text = r?;
+                anyhow::ensure!(!text.trim().is_empty(), "the model wrote nothing");
+                return Ok(text.trim().to_string());
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) if cancel.load(Ordering::SeqCst) => {
+                stop.store(true, Ordering::SeqCst);
+                if builtin {
+                    stop_builtin(); // ends its stream at once and frees the memory
+                }
+                anyhow::bail!("cancelled");
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => anyhow::bail!("the request ended without an answer"),
+        }
     }
-    let text = read_stream(BufReader::new(resp), on_text, cancel)?;
-    anyhow::ensure!(!text.trim().is_empty(), "the model wrote nothing");
-    Ok(text.trim().to_string())
 }
 
 /// Server-sent events: `data: {json}` lines with `choices[0].delta.content`, then `data: [DONE]`.
@@ -477,20 +566,16 @@ pub fn write_notes(
 pub fn read_stream(reader: impl BufRead, on_text: &mut dyn FnMut(&str), cancel: &AtomicBool) -> anyhow::Result<String> {
     let mut text = String::new();
     let mut plain = String::new();
+    let mut event: Vec<String> = Vec::new(); // the data lines of one event
+    let mut cut = false;
+    let mut done = false;
     let mut last_emit = Instant::now() - Duration::from_secs(1);
-    for line in reader.lines() {
-        if cancel.load(Ordering::SeqCst) {
-            anyhow::bail!("cancelled");
-        }
-        let line = line?;
-        let Some(data) = line.strip_prefix("data:").map(str::trim) else {
-            plain.push_str(&line);
-            continue;
-        };
+    // One event: its data lines joined with "\n" (SSE allows a value over several lines).
+    let mut dispatch = |data: &str, text: &mut String, cut: &mut bool| -> anyhow::Result<bool> {
         if data == "[DONE]" {
-            break;
+            return Ok(true);
         }
-        let Ok(v) = serde_json::from_str::<Value>(data) else { continue };
+        let Ok(v) = serde_json::from_str::<Value>(data) else { return Ok(false) };
         if let Some(err) = v.get("error") {
             anyhow::bail!("the model failed: {}", err["message"].as_str().unwrap_or(&err.to_string()));
         }
@@ -498,15 +583,46 @@ pub fn read_stream(reader: impl BufRead, on_text: &mut dyn FnMut(&str), cancel: 
             text.push_str(piece);
             if last_emit.elapsed() >= Duration::from_millis(120) {
                 last_emit = Instant::now();
-                on_text(&text);
+                on_text(text);
             }
         }
+        if v["choices"][0]["finish_reason"] == "length" {
+            *cut = true;
+        }
+        Ok(false)
+    };
+    for line in reader.lines() {
+        if cancel.load(Ordering::SeqCst) {
+            anyhow::bail!("cancelled");
+        }
+        let line = line?;
+        if line.is_empty() {
+            if !event.is_empty() && dispatch(&event.join("\n"), &mut text, &mut cut)? {
+                done = true;
+                break;
+            }
+            event.clear();
+        } else if let Some(data) = line.strip_prefix("data:") {
+            event.push(data.strip_prefix(' ').unwrap_or(data).to_string());
+        } else if line.starts_with(':') || line.starts_with("event:") || line.starts_with("id:") || line.starts_with("retry:") {
+            // a keep-alive comment or another SSE field
+        } else {
+            plain.push_str(&line);
+            plain.push('\n');
+        }
+    }
+    if !done && !event.is_empty() {
+        dispatch(&event.join("\n"), &mut text, &mut cut)?;
     }
     if text.is_empty() && !plain.trim().is_empty() {
         let v: Value = serde_json::from_str(&plain).map_err(|_| anyhow::anyhow!("the server's answer is not an OpenAI-compatible one"))?;
         text = v["choices"][0]["message"]["content"].as_str().unwrap_or_default().to_string();
+        cut = v["choices"][0]["finish_reason"] == "length";
     }
-    let text = strip_thinking(&text);
+    let mut text = strip_thinking(&text);
+    if cut {
+        text.push_str("\n\n_(The model stopped at its length limit: the end may be missing.)_");
+    }
     on_text(&text);
     Ok(text)
 }
@@ -537,14 +653,14 @@ impl Drop for Busy {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
+    use std::io::{Read, Write};
 
     #[test]
     fn local_addresses() {
         for u in ["http://localhost:11434/v1", "http://127.0.0.1:1234/v1", "http://[::1]:8080/v1", "http://LOCALHOST/v1", "http://user@localhost:1/v1"] {
             assert!(is_local(u), "{u}");
         }
-        for u in ["https://api.openai.com/v1", "http://192.168.1.5:11434/v1", "http://localhost.evil.com/v1", "http://127.0.0.1.evil.com/v1x", "https://evil.com/?localhost"] {
+        for u in ["https://api.openai.com/v1", "http://192.168.1.5:11434/v1", "http://localhost.evil.com/v1", "http://127.0.0.1.evil.com/v1x", "https://evil.com/?localhost", "http://evil.com\\@localhost/v1", "not a url"] {
             assert!(!is_local(u), "{u}");
         }
     }
@@ -562,6 +678,10 @@ mod tests {
         // A server that does not stream; reasoning before the answer is dropped.
         let plain = "{\"choices\":[{\"message\":{\"content\":\"<think>hmm</think>\\n## Summary\\nOk.\"}}]}";
         assert_eq!(read_stream(plain.as_bytes(), &mut |_| {}, &AtomicBool::new(false)).unwrap(), "## Summary\nOk.");
+        // A value over two data lines, a keep-alive comment, CRLF, a cut answer.
+        let multi = ": ping\r\ndata: {\"choices\":[{\"delta\":\r\ndata: {\"content\":\"Hola\"}}]}\r\n\r\ndata: {\"choices\":[{\"delta\":{},\"finish_reason\":\"length\"}]}\r\n\r\n";
+        let t = read_stream(multi.as_bytes(), &mut |_| {}, &AtomicBool::new(false)).unwrap();
+        assert!(t.starts_with("Hola") && t.contains("length limit"), "{t}");
         let err = "data: {\"error\":{\"message\":\"context too long\"}}\n";
         assert!(read_stream(err.as_bytes(), &mut |_| {}, &AtomicBool::new(false)).unwrap_err().to_string().contains("context too long"));
         assert!(read_stream(sse.as_bytes(), &mut |_| {}, &AtomicBool::new(true)).is_err(), "cancel stops it");
@@ -605,20 +725,61 @@ mod tests {
     /// started with its key, and writes Spanish notes. The model comes from the bench cache
     /// (bench/.work/llm), linked into a temporary models folder. Run with --ignored.
     #[test]
+    fn a_zip_is_unpacked_inside_its_folder_and_a_bad_path_is_refused() {
+        // A stored zip, written by hand: one file in a folder.
+        fn zip(name: &str, data: &[u8]) -> Vec<u8> {
+            let (mut out, mut central) = (Vec::new(), Vec::new());
+            out.extend(0x0403_4b50u32.to_le_bytes());
+            out.extend([20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+            out.extend((data.len() as u32).to_le_bytes());
+            out.extend((data.len() as u32).to_le_bytes());
+            out.extend((name.len() as u16).to_le_bytes());
+            out.extend([0, 0]);
+            out.extend(name.as_bytes());
+            out.extend(data);
+            central.extend(0x0201_4b50u32.to_le_bytes());
+            central.extend([20, 0, 20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+            central.extend((data.len() as u32).to_le_bytes());
+            central.extend((data.len() as u32).to_le_bytes());
+            central.extend((name.len() as u16).to_le_bytes());
+            central.extend([0; 12]);
+            central.extend(0u32.to_le_bytes());
+            central.extend(name.as_bytes());
+            let cd_at = out.len() as u32;
+            out.extend(&central);
+            out.extend(0x0605_4b50u32.to_le_bytes());
+            out.extend([0, 0, 0, 0, 1, 0, 1, 0]);
+            out.extend((central.len() as u32).to_le_bytes());
+            out.extend(cd_at.to_le_bytes());
+            out.extend([0, 0]);
+            out
+        }
+        let dir = std::env::temp_dir().join(format!("ow-zip-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        extract_zip(&zip("llama/llama-server.exe", b"MZ"), &dir).unwrap();
+        assert_eq!(std::fs::read(dir.join("llama").join("llama-server.exe")).unwrap(), b"MZ");
+        assert_eq!(server_exe(&dir).is_some(), cfg!(windows));
+        assert!(extract_zip(&zip("../evil.dll", b"x"), &dir).is_err());
+        assert!(!dir.parent().unwrap().join("evil.dll").exists());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
     #[ignore]
+    #[cfg(unix)]
     fn real_builtin_first_use_downloads_the_runner_and_writes_notes() {
         let bench = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../bench/.work/llm").canonicalize().expect("cached model");
         let tmp = std::env::temp_dir().join(format!("ow-llm-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(tmp.join("llm")).unwrap();
-        #[cfg(unix)]
         std::os::unix::fs::symlink(bench.join(MODEL_FILE), tmp.join("llm").join(MODEL_FILE)).unwrap();
         std::env::set_var("OPENWHISPER_MODELS_DIR", &tmp);
         assert!(!builtin_status().downloaded);
         let mut steps = Vec::new();
         let input = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../bench/summary/meeting-es.md")).unwrap();
-        let text = write_notes(&Engine::Builtin { gpu: true }, &input, "Spanish", &mut |w, _, _| steps.push(w.to_string()), &mut |_| {}, &AtomicBool::new(false)).unwrap();
+        let text = write_notes(&Engine::Builtin { gpu: true }, &input, "Spanish", &mut |w, _, _| steps.push(w.to_string()), &mut |_| {}, &AtomicBool::new(false));
         stop_builtin();
+        let text = text.unwrap();
         assert!(steps.iter().any(|s| s == "the model runner"), "{steps:?}");
         assert!(builtin_status().downloaded);
         assert!(text.contains("Martín") && text.contains("14"), "{text}");

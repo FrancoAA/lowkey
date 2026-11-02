@@ -42,9 +42,6 @@ export interface Status {
     model: string;
     has_key: boolean;
     auto: boolean;
-    /** The server address is on this computer. */
-    local: boolean;
-    busy: boolean;
     builtin: { supported: boolean; downloaded: boolean; model: string; download_mb: number };
   };
   options?: { model: string; language: string; idle_unload_minutes: number; live_preview?: boolean; preview_engine?: string };

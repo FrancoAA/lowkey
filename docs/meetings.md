@@ -100,13 +100,21 @@ models wrote English notes for a Spanish meeting (bench/summary/results.md).
   llama.cpp's `llama-server` from the pinned release b12047 (Vulkan on Linux and Windows, Metal
   on macOS; SHA-256 as GitHub publishes it). Both download on the first **Write notes** with
   progress in the meeting, into `~/.local/share/open-whisper/models/llm`. The server runs in its
-  own process on 127.0.0.1 with a random API key (no other program and no web page can use
-  it), 64K context (about four hours of meeting), all layers on the GPU when the app found one.
-  It stops 2 minutes after the last use and when the app quits.
+  own process on 127.0.0.1 with a random 192-bit API key from the system's random generator,
+  given through its environment (`LLAMA_API_KEY`; the command line is readable by other users,
+  the environment is not), so no web page and no other user can use it. 64K context (about four
+  hours of meeting), all layers on the GPU when the app found one. It stops 2 minutes after the
+  last use (never during a job), on Cancel, and when the app quits; a pid file lets the next
+  start stop one that a crash or a kill left behind (only if that pid is our llama-server).
 - **Own server**: any OpenAI-compatible API (`ai_url`, `ai_model`, `ai_key`). Ollama:
   `http://localhost:11434/v1`, LM Studio: `http://localhost:1234/v1`. Settings warns when the
-  address is not on this computer. The key stays in config.toml (0600) and never goes to the page.
-- The text streams into the meeting while it is written; Cancel stops it. One job at a time.
+  address is not on this computer (the address is parsed as the HTTP client parses it). The key
+  stays in config.toml (written 0600 from its first byte) and never goes to the page.
+- The text streams into the meeting while it is written. **Cancel** works at every step: the
+  download (the partial file stays and resumes), the start, the model's reading, the writing.
+  One job at a time; deleting the meeting cancels its job. Notes cut at the length limit say so.
+- The model reads the title, the length, your notes and the transcript, but not the date (the
+  app does not always know your time zone, and a wrong date would end up in the notes).
 - **Automatic**: when a meeting stops, if `ai_auto` is on and the model is there (never a first
   2.7 GB download unasked).
 - The notes are saved in the meeting file (`ai_notes`, `ai_model`, `ai_at`); Copy and Export put

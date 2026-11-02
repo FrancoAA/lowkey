@@ -58,6 +58,8 @@ pub struct App {
     /// AI notes: one job at a time, and its cancel flag.
     ai_busy: Arc<AtomicBool>,
     ai_cancel: Arc<AtomicBool>,
+    /// The meeting whose AI notes are being written.
+    ai_job: Mutex<Option<String>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -239,7 +241,7 @@ impl App {
             "recording": self.meeting.lock().is_some(),
             "ai": {
                 "engine": cfg.ai_engine, "url": cfg.ai_url, "model": cfg.ai_model, "has_key": !cfg.ai_key.is_empty(),
-                "auto": cfg.ai_auto, "local": llm::is_local(&cfg.ai_url), "busy": self.ai_busy.load(Ordering::SeqCst),
+                "auto": cfg.ai_auto,
                 "builtin": llm::builtin_status(),
             },
         })
@@ -815,7 +817,10 @@ fn stop_meeting(app: &AppRef) -> Result<meeting::Meeting, String> {
         let cfg = app.config.lock().clone();
         let ready = if cfg.ai_engine == "server" { !cfg.ai_url.is_empty() } else { llm::builtin_status().downloaded };
         if cfg.ai_auto && ready && !m.lines.is_empty() {
-            let _ = start_ai_notes(app, m.id.clone());
+            if let Err(why) = start_ai_notes(app, m.id.clone()) {
+                // e.g. another meeting's notes are being written: say so in this meeting.
+                emit_logged(&app.handle, "ai-notes", json!({"id": m.id, "state": "error", "detail": format!("Not written: {why} Then use Write notes."), "progress": 0.0, "text": ""}));
+            }
         }
     }
     r.map_err(|_| {
@@ -900,14 +905,22 @@ fn ai_notes_cancel(app: State<'_, AppRef>) {
 }
 
 fn start_ai_notes(app: &AppRef, id: String) -> Result<(), String> {
-    let busy = llm::Busy::take(&app.ai_busy).ok_or("AI notes are being written for another meeting. Wait for them, or cancel them.")?;
+    let busy = llm::Busy::take(&app.ai_busy).ok_or_else(|| {
+        if app.ai_job.lock().as_deref() == Some(id.as_str()) {
+            "The AI notes of this meeting are being written.".to_string()
+        } else {
+            "AI notes are being written for another meeting. Wait for them, or cancel them.".to_string()
+        }
+    })?;
     app.ai_cancel.store(false, Ordering::SeqCst);
+    *app.ai_job.lock() = Some(id.clone());
     let app = app.clone();
     std::thread::Builder::new()
         .name("ai-notes".into())
         .spawn(move || {
             let _busy = busy;
             run_ai_notes(&app, &id);
+            *app.ai_job.lock() = None;
             app.emit_status();
         })
         .map_err(|e| e.to_string())?;
@@ -966,7 +979,7 @@ fn run_ai_notes(app: &AppRef, id: &str) {
                 Err(e) => send("error", &format!("The notes were written but not saved: {e:#}"), 0.0, &text),
             }
         }
-        Err(e) if format!("{e}") == "cancelled" => send("cancelled", "Cancelled", 0.0, ""),
+        Err(_) if app.ai_cancel.load(Ordering::SeqCst) => send("cancelled", "Cancelled", 0.0, ""),
         Err(e) => send("error", &format!("{e:#}"), 0.0, ""),
     }
 }
@@ -976,10 +989,13 @@ fn meeting_delete(app: State<'_, AppRef>, id: String) -> Result<(), String> {
     if live_session(app.inner(), &id).is_some() {
         return Err("Stop the recording first.".into());
     }
+    if app.ai_job.lock().as_deref() == Some(id.as_str()) {
+        app.ai_cancel.store(true, Ordering::SeqCst); // its notes would have no meeting
+    }
     meeting::delete_in(&meeting::dir(), &id).map_err(|e| format!("{e:#}"))
 }
 
-/// The meeting as Markdown (notes, then the transcript), for Copy and Export.
+/// The meeting as Markdown (AI notes, your notes, then the transcript), for Copy and Export.
 #[tauri::command]
 fn meeting_markdown(app: State<'_, AppRef>, id: String, utc_offset_minutes: i32) -> Result<String, String> {
     let m = match live_session(app.inner(), &id) {
@@ -1307,7 +1323,10 @@ pub fn run() {
                 overlay_wants: [AtomicBool::new(false), AtomicBool::new(false)],
                 ai_busy: Arc::new(AtomicBool::new(false)),
                 ai_cancel: Arc::new(AtomicBool::new(false)),
+                ai_job: Mutex::new(None),
             });
+            // A model runner that a crash left behind holds ~3 GB: stop it.
+            std::thread::spawn(llm::stop_stale);
             let io = Arc::new(TauriIo { app: Arc::downgrade(&app), handle: handle.clone() });
             *app.dictation.lock() = Some(Dictation::new(io, jobs));
             let weak = Arc::downgrade(&app);

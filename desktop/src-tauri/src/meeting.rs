@@ -143,8 +143,11 @@ pub fn save_in(dir: &Path, m: &Meeting) -> anyhow::Result<()> {
 
 /// Read, change and save a saved meeting, one change at a time (the page's notes and the AI
 /// notes can arrive together).
+/// Edits and deletes of saved meetings, one at a time (a delete never loses to an edit that
+/// writes the meeting back).
+static ONE_EDIT: Mutex<()> = Mutex::new(());
+
 pub fn edit_in(dir: &Path, id: &str, change: impl FnOnce(&mut Meeting)) -> anyhow::Result<Meeting> {
-    static ONE_EDIT: Mutex<()> = Mutex::new(());
     let _one = ONE_EDIT.lock();
     let mut m = load_in(dir, id)?;
     change(&mut m);
@@ -158,6 +161,7 @@ pub fn load_in(dir: &Path, id: &str) -> anyhow::Result<Meeting> {
 }
 
 pub fn delete_in(dir: &Path, id: &str) -> anyhow::Result<()> {
+    let _one = ONE_EDIT.lock();
     std::fs::remove_file(file_in(dir, id)?).map_err(|e| anyhow::anyhow!("meeting {id}: {e}"))
 }
 
@@ -456,14 +460,23 @@ fn duration_text(seconds: f64) -> String {
 }
 
 /// What the language model reads: the title, your notes and the transcript (no AI notes).
+/// No date: the app may not know the time zone here, and a wrong date would end up in the notes.
 pub fn model_input(m: &Meeting) -> String {
     let mut plain = m.clone();
     plain.ai_notes.clear();
-    to_markdown(&plain, 0)
+    markdown(&plain, None)
 }
 
 pub fn to_markdown(m: &Meeting, offset_min: i32) -> String {
-    let mut s = format!("# {}\n\n{} · {}\n\n", m.title, local_time(m.started_at, offset_min), duration_text(m.duration));
+    markdown(m, Some(offset_min))
+}
+
+fn markdown(m: &Meeting, offset_min: Option<i32>) -> String {
+    let when = match offset_min {
+        Some(o) => format!("{} · {}", local_time(m.started_at, o), duration_text(m.duration)),
+        None => duration_text(m.duration),
+    };
+    let mut s = format!("# {}\n\n{when}\n\n", m.title);
     if !m.ai_notes.trim().is_empty() {
         // The model's own "## …" headings go one level down, under this one.
         let body: String = m.ai_notes.trim().lines().map(|l| if l.starts_with('#') { format!("#{l}\n") } else { format!("{l}\n") }).collect();
@@ -1012,6 +1025,7 @@ mod tests {
         let md = to_markdown(&m, 60);
         assert!(md.contains("## AI notes (Qwen3.5 4B, a draft)\n\n### Resumen\nTodo bien.\n\n### Decisiones\n- Jueves 14\n\n## Notes"), "{md}");
         assert!(!model_input(&m).contains("Todo bien"));
+        assert!(model_input(&m).starts_with("# Planning\n\n31 min\n\n"), "no date for the model: {}", model_input(&m));
         assert!(model_input(&m).contains("- ship Friday"));
     }
 }

@@ -134,7 +134,7 @@ Record a call or a talk, as text next to your notes (Linux for now). No bot join
   pieces) and the speech model of the Model section writes them. Write your notes on the left
   while you listen; they save while you type.
 - **Stop** transcribes the last seconds and saves. The list shows all meetings; open one to read
-  it, change the title or notes, **Copy** or **Export .md** (notes, then the transcript), or
+  it, change the title or notes, **Copy** or **Export .md** (AI notes, your notes, then the transcript), or
   **Delete** it (two clicks).
 - **AI notes**: a language model writes the meeting's notes (summary, decisions, tasks with
   who and when, open questions, numbers) from your notes and the transcript. Built in:

@@ -39,6 +39,10 @@ sha2 = "0.10"
 flate2 = "1"
 # AI notes: unpack the pinned llama.cpp release (.tar.gz), name the meeting's language.
 tar = "0.4"
+# The built-in server's key, from the system's random generator.
+getrandom = "0.3"
+# The host of an own server's address, parsed as reqwest parses it (the same crate).
+url = "2"
 whatlang = "0.16"
 
 log = "0.4"

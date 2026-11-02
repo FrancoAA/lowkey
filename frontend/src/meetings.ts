@@ -252,14 +252,19 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): void {
   }
 
   aiWrite.addEventListener("click", async () => {
-    if (!shown) return;
+    if (!shown || aiRunning()) return;
+    const id = shown.id;
+    aiWrite.disabled = true; // no second job from a double click
+    aiJob = { id, state: "preparing", detail: "Getting ready…", progress: 0, text: "" };
+    renderAi();
     await flush(); // the model reads your latest notes
     try {
-      aiJob = { id: shown.id, state: "preparing", detail: "Getting ready…", progress: 0, text: "" };
-      renderAi();
-      await api.aiNotes(shown.id);
+      await api.aiNotes(id);
     } catch (err) {
-      aiJob = { id: shown.id, state: "error", detail: String(err), progress: 0, text: "" };
+      // A job that runs already (this meeting or another) keeps its card; only a real error shows.
+      if (aiJob?.id === id && aiJob.state === "preparing" && !aiJob.text) {
+        aiJob = { id, state: "error", detail: String(err), progress: 0, text: "" };
+      }
       renderAi();
     }
   });

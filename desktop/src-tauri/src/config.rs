@@ -109,6 +109,12 @@ impl Config {
             }),
             Err(_) => Self::default(),
         };
+        // A key typed into an older file (0644): readable by you only.
+        #[cfg(unix)]
+        if !cfg.ai_key.is_empty() {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+        }
         // A model that is gone (e.g. the faster-whisper "fw:" models): back to the default.
         if !cfg.model.is_empty() && crate::models::spec(&cfg.model).is_none() {
             eprintln!("  The model {:?} in {} is not available any more; using the default.", cfg.model, path.display());
@@ -124,13 +130,26 @@ impl Config {
             "# open-whisper settings. Every line is optional; delete the file to go back to defaults.\n{}",
             toml::to_string_pretty(self)?
         );
-        std::fs::write(&path, body)?;
-        #[cfg(unix)]
+        // It can hold an API key: readable by you only, from its first byte (a new file, then a rename).
+        let tmp = path.with_extension("toml.tmp");
         {
-            // It can hold an API key: readable by you only.
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+            use std::io::Write;
+            let mut opts = std::fs::OpenOptions::new();
+            opts.write(true).create(true).truncate(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                opts.mode(0o600);
+            }
+            let mut f = opts.open(&tmp)?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                f.set_permissions(std::fs::Permissions::from_mode(0o600))?; // an old tmp file kept its mode
+            }
+            f.write_all(body.as_bytes())?;
         }
+        std::fs::rename(&tmp, &path)?;
         Ok(())
     }
 }
@@ -253,6 +272,11 @@ mod tests {
         assert!(path.starts_with(&dir));
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(text.starts_with("# open-whisper settings"));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+        }
         assert_eq!(Config::load_from(&path), c);
     }
 

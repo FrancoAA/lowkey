@@ -178,7 +178,14 @@ pub fn model_url(spec: &ModelSpec) -> String {
 
 /// Download `url` to `dest` with resume, retries for network errors, and byte progress.
 /// `progress(done, total)`. The file appears under its final name only when complete.
-pub fn download(url: &str, dest: &Path, mut progress: impl FnMut(u64, u64)) -> anyhow::Result<()> {
+pub fn download(url: &str, dest: &Path, progress: impl FnMut(u64, u64)) -> anyhow::Result<()> {
+    static NEVER: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    download_cancellable(url, dest, progress, &NEVER)
+}
+
+/// `download` that stops (with an error "cancelled") when `cancel` is set. The partial file
+/// stays: the next download resumes it.
+pub fn download_cancellable(url: &str, dest: &Path, mut progress: impl FnMut(u64, u64), cancel: &std::sync::atomic::AtomicBool) -> anyhow::Result<()> {
     // One download per file: the start-up preload and a first job can ask for the same model.
     static ACTIVE: std::sync::Mutex<Vec<PathBuf>> = std::sync::Mutex::new(Vec::new());
     static DONE: std::sync::Condvar = std::sync::Condvar::new();
@@ -192,13 +199,13 @@ pub fn download(url: &str, dest: &Path, mut progress: impl FnMut(u64, u64)) -> a
         }
         active.push(dest.to_path_buf());
     }
-    let result = download_locked(url, dest, &mut progress);
+    let result = download_locked(url, dest, &mut progress, cancel);
     ACTIVE.lock().unwrap().retain(|p| p != dest);
     DONE.notify_all();
     result
 }
 
-fn download_locked(url: &str, dest: &Path, progress: &mut impl FnMut(u64, u64)) -> anyhow::Result<()> {
+fn download_locked(url: &str, dest: &Path, progress: &mut impl FnMut(u64, u64), cancel: &std::sync::atomic::AtomicBool) -> anyhow::Result<()> {
     std::fs::create_dir_all(dest.parent().unwrap())?;
     let part = dest.with_extension("part");
     let client = reqwest::blocking::Client::builder()
@@ -208,7 +215,7 @@ fn download_locked(url: &str, dest: &Path, progress: &mut impl FnMut(u64, u64)) 
         .build()?;
     let mut last_err = None;
     for attempt in 1..=4u32 {
-        match download_once(&client, url, &part, progress) {
+        match download_once(&client, url, &part, progress, cancel) {
             Ok(()) => {
                 std::fs::rename(&part, dest)?;
                 return Ok(());
@@ -234,6 +241,7 @@ fn download_once(
     url: &str,
     part: &Path,
     progress: &mut impl FnMut(u64, u64),
+    cancel: &std::sync::atomic::AtomicBool,
 ) -> Result<(), DlError> {
     let have = std::fs::metadata(part).map(|m| m.len()).unwrap_or(0);
     let mut req = client.get(url);
@@ -262,6 +270,9 @@ fn download_once(
     progress(done, total);
     let mut buf = vec![0u8; 1 << 16];
     loop {
+        if cancel.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(DlError::Fatal(anyhow::anyhow!("cancelled")));
+        }
         let n = resp.read(&mut buf).map_err(|e| DlError::Retry(e.into()))?;
         if n == 0 {
             break;
