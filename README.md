@@ -11,7 +11,20 @@ It is one native program (Rust + Tauri v2) with whisper.cpp inside: on the GPU t
 
 ![Desktop app](docs/screenshots/10-desktop-transcript.png)
 
-## Install
+## Download
+
+Installers for Linux (AppImage, .deb, .rpm), Windows (.exe, .msi) and macOS on Apple Silicon
+(.dmg) are on the repository's **Releases** page, one release per version. They are not signed:
+Windows SmartScreen asks once (More info → Run anyway); on macOS run
+`xattr -dr com.apple.quarantine /Applications/open-whisper.app` after copying the app. Each push
+also leaves them as artifacts of its run (Actions → the run → Artifacts, kept 90 days).
+
+**Make a release:** set the version in `desktop/src-tauri/tauri.conf.json` and `Cargo.toml`,
+commit with `[release]` in the message, then `git tag v<version>` and push the tag and the
+branch. The tag's run builds the three systems and creates the release (a tag that does not
+match the version fails).
+
+## Install from source
 
 **You need** Rust (`rustup`), Node.js 20+, and on Linux the WebKitGTK 4.1, GTK 3,
 libappindicator, Vulkan loader and `glslc` packages (Omarchy has them). `make desktop` fetches
