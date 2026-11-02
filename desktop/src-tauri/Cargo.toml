@@ -46,7 +46,7 @@ whisper-rs = { version = "0.16", features = ["vulkan", "openmp"] }
 
 # Parakeet (NVIDIA, CC-BY-4.0 weights) through sherpa-onnx (Apache-2.0), linked statically with
 # onnxruntime. Exact version: desktop/scripts/sherpa-onnx.sh pins the archive of this release.
-[target.'cfg(all(target_os = "linux", target_arch = "x86_64"))'.dependencies]
+[target.'cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))'.dependencies]
 sherpa-onnx = "=2.0.1"
 
 [target.'cfg(target_os = "macos")'.dependencies]

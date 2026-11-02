@@ -285,7 +285,7 @@ mod tests {
         assert_eq!(auto_model(&Hardware { gpu: Some("AMD Radeon 780M".into()) }), "large-v3-turbo-q5_0");
         assert_eq!(auto_model(&Hardware { gpu: None }), "small");
         assert!(CATALOG.iter().all(|m| !m.id.starts_with("fw:")), "no Python engine any more");
-        assert_eq!(spec("parakeet-v3").unwrap().engine, EngineKind::Parakeet);
+        assert_eq!(spec("parakeet-v3").map(|m| m.engine), cfg!(parakeet).then_some(EngineKind::Parakeet));
         assert_eq!(PARAKEET_FILES.iter().map(|f| f.1).sum::<u64>() / 1_000_000, 670);
     }
 

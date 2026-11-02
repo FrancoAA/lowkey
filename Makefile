@@ -37,7 +37,8 @@ install-desktop: desktop  ## the app in ~/.local/bin, plus its launcher entry an
 	install -Dm755 $(DESKTOP_BIN) $(HOME)/.local/bin/open-whisper
 	install -Dm644 desktop/src-tauri/icons/128x128.png $(HOME)/.local/share/icons/hicolor/128x128/apps/open-whisper.png
 	mkdir -p $(HOME)/.local/share/applications
-	sed 's|@BIN@|$(HOME)/.local/bin/open-whisper|' desktop/open-whisper.desktop > $(HOME)/.local/share/applications/open-whisper.desktop
+	bin='$(HOME)/.local/bin/open-whisper'; esc=$$(printf '%s' "$$bin" | sed 's/[\\&|]/\\&/g'); \
+	  sed "s|@BIN@|$$esc|" desktop/open-whisper.desktop > $(HOME)/.local/share/applications/open-whisper.desktop
 
 bench:          ## research: benchmark models on this machine (docs/benchmark.md; Python via uv, not used by the app)
 	HF_HUB_DISABLE_XET=1 uv run bench/make_samples.py

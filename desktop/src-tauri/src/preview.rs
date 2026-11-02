@@ -137,32 +137,52 @@ pub trait Asr {
 }
 
 enum Msg {
+    /// Load this engine (dropping another one first). Only the worker touches engines.
+    Use { engine: &'static str },
+    /// Preview turned off: drop the engine.
+    Off,
     Begin { id: u64, language: Option<String>, on_text: TextFn },
     Audio { id: u64, pcm: Vec<f32>, rate: u32 },
     End { id: u64, flush: bool },
 }
 
+pub type Opener = Arc<dyn Fn(&str) -> anyhow::Result<Box<dyn Asr>> + Send + Sync>;
+/// How long without a dictation before Parakeet is freed (None = never).
+pub type IdleAfter = Arc<dyn Fn() -> Option<std::time::Duration> + Send + Sync>;
+
+/// The live preview. One worker thread for the whole app owns the engine: switching engines,
+/// turning the preview off and freeing memory are messages to it, so two engines never run at
+/// once (Whistle's C engine is process-global and not thread-safe).
 pub struct Preview {
     tx: Mutex<Option<Sender<Msg>>>,
     status: Arc<Mutex<Status>>,
+    /// The engine asked for last: only its result is written to the status.
+    wanted: Arc<Mutex<&'static str>>,
     next: std::sync::atomic::AtomicU64,
-    /// Counts workers: an old worker (engine switched) never writes the status again.
-    generation: Arc<std::sync::atomic::AtomicU64>,
+    opener: Opener,
+    idle_after: IdleAfter,
 }
 
 impl Default for Preview {
     fn default() -> Self {
-        Self::new()
+        Self::new(Arc::new(|| None))
     }
 }
 
 impl Preview {
-    pub fn new() -> Self {
+    /// `idle_after`: after that long without a dictation, Parakeet is freed.
+    pub fn new(idle_after: IdleAfter) -> Self {
+        Self::with_opener(Arc::new(|engine: &str| open(engine)), idle_after)
+    }
+
+    pub fn with_opener(opener: Opener, idle_after: IdleAfter) -> Self {
         Self {
             tx: Mutex::new(None),
             status: Arc::new(Mutex::new(Status { state: "off".into(), error: None, engine: String::new() })),
+            wanted: Arc::new(Mutex::new("")),
             next: std::sync::atomic::AtomicU64::new(1),
-            generation: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            opener,
+            idle_after,
         }
     }
 
@@ -170,60 +190,62 @@ impl Preview {
         self.status.lock().clone()
     }
 
-    /// Download (first time) and load the engine for `choice` in the background. Safe to call
-    /// again: nothing happens when that engine is ready or on its way; another engine replaces
-    /// the running one (a dictation in progress keeps the old one until it ends).
+    /// Get the engine for `choice` ready in the background (download the first time). Safe to
+    /// call again: the worker does nothing when that engine is already loaded.
     pub fn prepare(&self, choice: &str, on_change: Arc<dyn Fn() + Send + Sync>) {
-        use std::sync::atomic::Ordering;
         let engine = resolve(choice);
-        let my_gen = {
+        {
             let mut st = self.status.lock();
-            if matches!(st.state.as_str(), "preparing" | "ready") && st.engine == engine {
-                return;
+            *self.wanted.lock() = engine;
+            if !(st.state == "ready" && st.engine == engine) {
+                *st = Status { state: "preparing".into(), error: None, engine: engine.into() };
             }
-            *st = Status { state: "preparing".into(), error: None, engine: engine.into() };
-            self.generation.fetch_add(1, Ordering::SeqCst) + 1
-        };
+        }
         on_change();
+        let _ = self.sender(on_change).send(Msg::Use { engine });
+    }
+
+    /// Preview turned off: the worker drops its engine (and its memory).
+    pub fn off(&self, on_change: Arc<dyn Fn() + Send + Sync>) {
+        *self.wanted.lock() = "";
+        *self.status.lock() = Status { state: "off".into(), error: None, engine: String::new() };
+        on_change();
+        if let Some(tx) = self.tx.lock().as_ref() {
+            let _ = tx.send(Msg::Off);
+        }
+    }
+
+    /// The worker's channel; the worker starts on first use and lives as long as the app.
+    fn sender(&self, on_change: Arc<dyn Fn() + Send + Sync>) -> Sender<Msg> {
+        let mut slot = self.tx.lock();
+        if let Some(tx) = slot.as_ref() {
+            return tx.clone();
+        }
         let (tx, rx) = mpsc::channel();
-        *self.tx.lock() = Some(tx); // the old worker ends when its last sender is gone
-        let (status, generation) = (self.status.clone(), self.generation.clone());
+        let (status, wanted, opener, idle_after) = (self.status.clone(), self.wanted.clone(), self.opener.clone(), self.idle_after.clone());
         std::thread::Builder::new()
-            .name(format!("preview-{engine}"))
+            .name("preview".into())
             .spawn(move || {
-                let current = || generation.load(Ordering::SeqCst) == my_gen;
-                // Whistle's engine is process-global and not thread-safe: this thread owns it.
-                match open(engine) {
-                    Ok(asr) if current() => {
-                        *status.lock() = Status { state: "ready".into(), error: None, engine: engine.into() };
-                        on_change();
-                        run(asr, rx);
-                    }
-                    Ok(_) => {}
-                    Err(e) if current() => {
-                        eprintln!("  Live preview ({engine}) not available: {e:#}");
-                        *status.lock() = Status { state: "unavailable".into(), error: Some(format!("{e:#}")), engine: engine.into() };
-                        on_change();
-                    }
-                    Err(_) => {}
-                }
+                // Engines are made, used and dropped on this thread only.
+                let w = Worker { status, wanted, opener, idle_after, on_change, engine: None, kind: "", released: false };
+                w.run(rx)
             })
             .expect("spawn preview thread");
+        *slot = Some(tx.clone());
+        tx
     }
 
     /// A preview stream for one dictation, or None (not ready, or a language Whistle lacks;
-    /// Parakeet finds the language itself).
+    /// Parakeet finds the language itself). The worker checks the language again against the
+    /// engine it really has when the stream begins.
     pub fn stream(&self, language: Option<&str>, on_text: TextFn) -> Option<Stream> {
-        {
+        let tx = {
             let st = self.status.lock();
-            if st.state != "ready" {
+            if st.state != "ready" || (st.engine == "whistle" && language.is_some_and(|l| !LANGUAGES.contains(&l))) {
                 return None;
             }
-            if st.engine == "whistle" && language.is_some_and(|l| !LANGUAGES.contains(&l)) {
-                return None;
-            }
-        }
-        let tx = self.tx.lock().clone()?;
+            self.tx.lock().clone()?
+        };
         let id = self.next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         tx.send(Msg::Begin { id, language: language.map(String::from), on_text }).ok()?;
         let tx_audio = tx.clone();
@@ -234,6 +256,153 @@ impl Preview {
             let _ = tx.send(Msg::End { id, flush });
         });
         Some(Stream::new(audio, end))
+    }
+}
+
+struct Worker {
+    status: Arc<Mutex<Status>>,
+    wanted: Arc<Mutex<&'static str>>,
+    opener: Opener,
+    idle_after: IdleAfter,
+    on_change: Arc<dyn Fn() + Send + Sync>,
+    engine: Option<Box<dyn Asr>>,
+    /// The engine this worker serves ("" = none).
+    kind: &'static str,
+    /// Parakeet freed after idle time: loaded again when the next dictation begins.
+    released: bool,
+}
+
+impl Worker {
+    /// Write the status for `kind`, unless another engine has been asked for since.
+    fn report(&self, kind: &'static str, state: &str, error: Option<String>) {
+        {
+            let mut st = self.status.lock();
+            if *self.wanted.lock() != kind {
+                return;
+            }
+            *st = Status { state: state.into(), error, engine: kind.into() };
+        }
+        (self.on_change)();
+    }
+
+    fn load(&mut self, kind: &'static str) {
+        self.engine = None; // drop the old engine before the new one loads
+        self.kind = "";
+        self.released = false;
+        match (self.opener)(kind) {
+            Ok(e) => {
+                self.engine = Some(e);
+                self.kind = kind;
+                self.report(kind, "ready", None);
+            }
+            Err(e) => {
+                eprintln!("  Live preview ({kind}) not available: {e:#}");
+                self.report(kind, "unavailable", Some(format!("{e:#}")));
+            }
+        }
+    }
+
+    /// The worker loop: one stream at a time, newest wins. Audio that queued up during a pass
+    /// is fed in one call, so the preview never falls far behind the speaker.
+    fn run(mut self, rx: Receiver<Msg>) {
+        let mut cur: Option<Current> = None;
+        loop {
+            let idle = (self.idle_after)().filter(|_| self.kind == "parakeet" && cur.is_none() && !self.released);
+            let first = if let Some(idle) = idle {
+                match rx.recv_timeout(idle) {
+                    Ok(m) => m,
+                    Err(mpsc::RecvTimeoutError::Timeout) => {
+                        eprintln!("  Live preview: freed Parakeet after {} idle minutes (it loads again on the next dictation).", idle.as_secs() / 60);
+                        self.engine = None;
+                        self.released = true;
+                        continue;
+                    }
+                    Err(mpsc::RecvTimeoutError::Disconnected) => return,
+                }
+            } else {
+                match rx.recv() {
+                    Ok(m) => m,
+                    Err(_) => return,
+                }
+            };
+            let mut msgs = vec![first];
+            msgs.extend(rx.try_iter());
+            for msg in msgs {
+                self.handle(msg, &mut cur);
+            }
+            if let Some(c) = cur.as_mut().filter(|c| c.buf.len() >= PASS_SAMPLES) {
+                if let Some(e) = self.engine.as_mut() {
+                    pass(e.as_mut(), c);
+                }
+            }
+        }
+    }
+
+    fn discard(&mut self, cur: &mut Option<Current>) {
+        if let Some(old) = cur.take() {
+            if old.opened {
+                if let Some(e) = self.engine.as_mut() {
+                    let _ = e.stop();
+                }
+            }
+        }
+    }
+
+    fn handle(&mut self, msg: Msg, cur: &mut Option<Current>) {
+        match msg {
+            Msg::Use { engine } => {
+                if self.kind == engine && (self.engine.is_some() || self.released) {
+                    self.report(engine, "ready", None);
+                } else {
+                    self.discard(cur);
+                    self.load(engine);
+                }
+            }
+            Msg::Off => {
+                self.discard(cur);
+                self.engine = None;
+                self.kind = "";
+                self.released = false;
+            }
+            Msg::Begin { id, language, on_text } => {
+                self.discard(cur);
+                if self.released {
+                    let kind = self.kind;
+                    self.load(kind); // freed after idle time: load it again now
+                }
+                let unsupported = self.kind == "whistle" && language.as_deref().is_some_and(|l| !LANGUAGES.contains(&l));
+                if self.engine.is_some() && !unsupported {
+                    *cur = Some(Current { id, language, on_text, buf: Vec::new(), committed: String::new(), opened: false });
+                }
+            }
+            Msg::Audio { id, pcm, rate } => {
+                if let Some(c) = cur.as_mut().filter(|c| c.id == id) {
+                    c.buf.extend(audio::resample(&pcm, rate, audio::RATE));
+                }
+            }
+            Msg::End { id, flush } => {
+                let Some(mut c) = cur.take_if(|c| c.id == id) else { return };
+                let Some(engine) = self.engine.as_mut() else { return };
+                if !flush {
+                    if c.opened {
+                        let _ = engine.stop();
+                    }
+                    return;
+                }
+                if !c.buf.is_empty() {
+                    pass(engine.as_mut(), &mut c);
+                }
+                if c.opened {
+                    match engine.stop() {
+                        Ok(step) => {
+                            c.committed = join(&c.committed, &step.text);
+                            (c.on_text)(c.committed.clone());
+                        }
+                        Err(e) => eprintln!("  live preview: {e:#}"),
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -251,57 +420,6 @@ fn join(a: &str, b: &str) -> String {
         ("", b) => b.to_string(),
         (a, "") => a.to_string(),
         (a, b) => format!("{a} {b}"),
-    }
-}
-
-/// The worker loop: one stream at a time, newest wins. Audio that queued up during a pass is
-/// fed in one call, so the preview never falls far behind the speaker.
-fn run(mut engine: Box<dyn Asr>, rx: Receiver<Msg>) {
-    let mut cur: Option<Current> = None;
-    while let Ok(first) = rx.recv() {
-        let mut msgs = vec![first];
-        msgs.extend(rx.try_iter());
-        for msg in msgs {
-            match msg {
-                Msg::Begin { id, language, on_text } => {
-                    if let Some(old) = cur.take() {
-                        if old.opened {
-                            let _ = engine.stop();
-                        }
-                    }
-                    cur = Some(Current { id, language, on_text, buf: Vec::new(), committed: String::new(), opened: false });
-                }
-                Msg::Audio { id, pcm, rate } => {
-                    if let Some(c) = cur.as_mut().filter(|c| c.id == id) {
-                        c.buf.extend(audio::resample(&pcm, rate, audio::RATE));
-                    }
-                }
-                Msg::End { id, flush } => {
-                    let Some(mut c) = cur.take_if(|c| c.id == id) else { continue };
-                    if !flush {
-                        if c.opened {
-                            let _ = engine.stop();
-                        }
-                        continue;
-                    }
-                    if !c.buf.is_empty() {
-                        pass(engine.as_mut(), &mut c);
-                    }
-                    if c.opened {
-                        match engine.stop() {
-                            Ok(step) => {
-                                c.committed = join(&c.committed, &step.text);
-                                (c.on_text)(c.committed.clone());
-                            }
-                            Err(e) => eprintln!("  live preview: {e:#}"),
-                        }
-                    }
-                }
-            }
-        }
-        if let Some(c) = cur.as_mut().filter(|c| c.buf.len() >= PASS_SAMPLES) {
-            pass(engine.as_mut(), c);
-        }
     }
 }
 
@@ -620,19 +738,39 @@ mod tests {
         }
     }
 
-    fn ready_preview() -> (Preview, Arc<Mutex<Vec<String>>>, std::thread::JoinHandle<()>) {
-        let p = Preview::new();
-        let (tx, rx) = mpsc::channel();
-        *p.tx.lock() = Some(tx);
-        {
-            let mut st = p.status.lock();
-            st.state = "ready".into();
-            st.engine = "whistle".into();
-        }
+    /// A preview whose engines are fakes: each open is logged ("open <engine>"); every engine
+    /// writes to the same log.
+    fn preview_with(idle: Option<std::time::Duration>) -> (Preview, Arc<Mutex<Vec<String>>>) {
         let log = Arc::new(Mutex::new(vec![]));
-        let engine = FakeAsr { log: log.clone(), n: 0 };
-        let t = std::thread::spawn(move || run(Box::new(engine), rx));
-        (p, log, t)
+        let l = log.clone();
+        let opener: Opener = Arc::new(move |kind: &str| {
+            l.lock().push(format!("open {kind}"));
+            Ok(Box::new(FakeAsr { log: l.clone(), n: 0 }) as Box<dyn Asr>)
+        });
+        (Preview::with_opener(opener, Arc::new(move || idle)), log)
+    }
+
+    fn noop() -> Arc<dyn Fn() + Send + Sync> {
+        Arc::new(|| {})
+    }
+
+    fn wait_ready(p: &Preview, engine: &str) {
+        for _ in 0..200 {
+            let st = p.status();
+            if st.state == "ready" && st.engine == engine {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        panic!("status {:?}", p.status());
+    }
+
+    fn ready_preview() -> (Preview, Arc<Mutex<Vec<String>>>, ()) {
+        let (p, log) = preview_with(None);
+        p.prepare("whistle", noop());
+        wait_ready(&p, "whistle");
+        log.lock().clear();
+        (p, log, ())
     }
 
     fn texts() -> (TextFn, Arc<Mutex<Vec<String>>>) {
@@ -726,7 +864,7 @@ mod tests {
 
     #[test]
     fn no_stream_when_not_ready_or_language_unsupported() {
-        let p = Preview::new();
+        let (p, _) = preview_with(None);
         let (on_text, _) = texts();
         assert!(p.stream(None, on_text.clone()).is_none());
         let (p, _log, _t) = ready_preview();
@@ -734,6 +872,57 @@ mod tests {
         assert!(p.stream(Some("pl"), on_text.clone()).is_some());
         p.status.lock().engine = "parakeet".into(); // finds the language itself: any language
         assert!(p.stream(Some("ja"), on_text).is_some());
+    }
+
+    #[cfg(parakeet)] // needs a second engine to switch to
+    #[test]
+    fn switching_engines_during_a_dictation_never_runs_two_engines() {
+        let (p, log, _) = ready_preview();
+        let (on_text, seen) = texts();
+        let s = p.stream(Some("es"), on_text).unwrap();
+        (s.audio)(&vec![0.0; 16_000], 16_000);
+        wait_for(&seen, 1);
+        // Switch while the key is held: the open stream is stopped, the old engine dropped,
+        // then the new one opens; the old stream's later audio and end are ignored.
+        p.prepare("parakeet", noop());
+        let other = resolve("parakeet");
+        wait_ready(&p, other);
+        (s.audio)(&vec![0.0; 16_000], 16_000);
+        s.finish();
+        let (on_text2, seen2) = texts();
+        let s2 = p.stream(None, on_text2).unwrap();
+        (s2.audio)(&vec![0.0; 16_000], 16_000);
+        wait_for(&seen2, 1);
+        let log = log.lock().clone();
+        assert_eq!(log, vec!["process 16000 es".to_string(), "stop".into(), format!("open {other}"), "process 16000 -".into()]);
+        assert_eq!(seen.lock().len(), 1);
+    }
+
+    #[test]
+    fn off_drops_the_engine_and_on_loads_it_again() {
+        let (p, log, _) = ready_preview();
+        p.off(noop());
+        assert_eq!(p.status().state, "off");
+        let (on_text, _) = texts();
+        assert!(p.stream(None, on_text).is_none());
+        p.prepare("whistle", noop());
+        wait_ready(&p, "whistle");
+        assert_eq!(*log.lock(), vec!["open whistle"]);
+    }
+
+    #[cfg(parakeet)]
+    #[test]
+    fn parakeet_is_freed_when_idle_and_loaded_again_for_the_next_dictation() {
+        let (p, log) = preview_with(Some(std::time::Duration::from_millis(30)));
+        p.prepare("parakeet", noop());
+        wait_ready(&p, "parakeet");
+        std::thread::sleep(std::time::Duration::from_millis(120)); // idle: freed
+        let (on_text, seen) = texts();
+        let s = p.stream(Some("ja"), on_text).unwrap(); // Parakeet: any language
+        (s.audio)(&vec![0.0; 16_000], 16_000);
+        wait_for(&seen, 1);
+        assert_eq!(log.lock().iter().filter(|l| *l == "open parakeet").count(), 2, "{:?}", log.lock());
+        assert_eq!(p.status().state, "ready");
     }
 
     #[test]

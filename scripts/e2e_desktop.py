@@ -34,6 +34,8 @@ APP = Path(os.environ.get("OW_E2E_APP") or ROOT / "desktop" / "src-tauri" / "tar
 # check that the overlay has no bar. Omarchy's window controls use it.
 HYPRBARS = os.environ.get("OW_E2E_HYPRBARS")
 # OW_E2E_PREVIEW=whistle|parakeet: the live preview engine (default "auto": Parakeet when cached).
+# Parakeet needs its cached model (bench/.work/parakeet-tdt-0.6b-v3-int8); without it the run
+# uses Whistle (17 MB) instead of downloading 670 MB.
 PREVIEW = os.environ.get("OW_E2E_PREVIEW", "auto")
 SHOTS = ROOT / "docs" / "screenshots"
 SPEECH = ROOT / "tests" / "fixtures" / "hello.ogg"
@@ -43,6 +45,9 @@ BENCH_MODELS = ROOT / "bench" / ".work" / "ggml"
 # later runs link them, so they work offline like the ggml models above.
 BENCH_WHISTLE = ROOT / "bench" / ".work" / "whistle"
 BENCH_PARAKEET = ROOT / "bench" / ".work" / "parakeet-tdt-0.6b-v3-int8"  # Parakeet files (670 MB), if cached
+if PREVIEW == "parakeet" and not BENCH_PARAKEET.is_dir():
+    print(f"  note: OW_E2E_PREVIEW=parakeet but no {BENCH_PARAKEET}: using whistle")
+    PREVIEW = "whistle"
 RUNTIME_DESC = "Dictate (open-whisper, added by the app)"
 NESTED_CONFIG = """
 hl.monitor({ output = "", mode = "preferred", position = "auto", scale = 1 })

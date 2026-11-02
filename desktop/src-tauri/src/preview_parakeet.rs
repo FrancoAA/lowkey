@@ -1,6 +1,7 @@
 //! Live preview with Parakeet: every pass transcribes the audio not yet confirmed (at most
-//! `MAX_TAIL_S`); when that tail grows past it, the older part is confirmed, cut at its
-//! quietest moment. So a pass never handles more than ~12 s, however long the dictation.
+//! `MAX_TAIL_S`); when that tail grows past it, older parts are confirmed, each cut at its
+//! quietest moment and at most `MAX_TAIL_S` long. So no decode handles more than 12 s, however
+//! long the dictation, even after the worker fell behind.
 
 use std::sync::Arc;
 
@@ -16,11 +17,15 @@ const KEEP_S: f64 = 2.0;
 pub struct ParakeetStream {
     rec: Arc<OfflineRecognizer>,
     tail: Vec<f32>,
+    /// The tail's text from the last pass, while no audio came since: `stop` reuses it
+    /// instead of decoding the same audio again (that runs at key release, next to the final
+    /// transcription).
+    last_pending: Option<String>,
 }
 
 impl ParakeetStream {
     pub fn new(rec: Arc<OfflineRecognizer>) -> Self {
-        Self { rec, tail: Vec::new() }
+        Self { rec, tail: Vec::new(), last_pending: None }
     }
 
     fn decode(&self, pcm: &[f32]) -> anyhow::Result<String> {
@@ -32,6 +37,16 @@ impl ParakeetStream {
         self.rec.decode(&stream);
         Ok(stream.get_result().map(|r| r.text.trim().to_string()).unwrap_or_default())
     }
+}
+
+/// Where to confirm the tail, when it is longer than `max` samples: the quietest 100 ms between
+/// half of `max` and `max` (and at least `keep` before the end). None: short enough.
+pub fn cut_point(tail: &[f32], max: usize, keep: usize) -> Option<usize> {
+    if tail.len() <= max {
+        return None;
+    }
+    let to = max.min(tail.len().saturating_sub(keep)).max(max / 2 + 1);
+    Some(quietest(tail, max / 2, to))
 }
 
 /// The quietest 100 ms between `from` and `to` (sample indexes), as a cut point.
@@ -51,20 +66,23 @@ impl Asr for ParakeetStream {
     fn process(&mut self, pcm: &[f32], _language: Option<&str>) -> anyhow::Result<Step> {
         self.tail.extend_from_slice(pcm);
         let rate = audio::RATE as f64;
+        let (max, keep) = ((MAX_TAIL_S * rate) as usize, (KEEP_S * rate) as usize);
         let mut text = String::new();
-        if self.tail.len() as f64 > MAX_TAIL_S * rate {
-            let from = (MAX_TAIL_S / 2.0 * rate) as usize;
-            let to = self.tail.len() - (KEEP_S * rate) as usize;
-            let cut = quietest(&self.tail, from, to);
-            text = self.decode(&self.tail[..cut])?;
+        while let Some(cut) = cut_point(&self.tail, max, keep) {
+            let part = self.decode(&self.tail[..cut])?;
+            text = format!("{text} {part}").trim().to_string();
             self.tail.drain(..cut);
         }
         let pending = self.decode(&self.tail)?;
+        self.last_pending = Some(pending.clone());
         Ok(Step { text, pending })
     }
 
     fn stop(&mut self) -> anyhow::Result<Step> {
-        let text = self.decode(&self.tail)?;
+        let text = match self.last_pending.take() {
+            Some(t) => t, // no audio since the last pass: same audio, same text
+            None => self.decode(&self.tail)?,
+        };
         self.tail.clear();
         Ok(Step { text, pending: String::new() })
     }
@@ -75,6 +93,29 @@ mod tests {
     use super::*;
     use std::path::Path;
     use std::time::Instant;
+
+    #[test]
+    fn the_tail_is_cut_at_a_pause_and_never_left_longer_than_the_limit() {
+        let r = 16_000usize;
+        let (max, keep) = (12 * r, 2 * r);
+        let speech = |n: usize| vec![0.5f32; n];
+        assert_eq!(cut_point(&speech(12 * r), max, keep), None, "exactly at the limit: no cut");
+        assert_eq!(cut_point(&speech(2 * r), max, keep), None);
+        // One sample over: cut between 6 s and 12 s, at the pause at 8 s.
+        let mut t = speech(12 * r + 1);
+        t[8 * r..8 * r + r / 5].fill(0.0);
+        let c = cut_point(&t, max, keep).unwrap();
+        assert!(c >= 8 * r && c <= 8 * r + r / 5, "{c}");
+        // A worker that fell behind (a 30 s tail): repeated cuts, each part ≤ 12 s, the rest ≤ 12 s.
+        let mut t = speech(30 * r);
+        let mut parts = vec![];
+        while let Some(c) = cut_point(&t, max, keep) {
+            assert!(c > 0 && c <= max);
+            parts.push(c);
+            t.drain(..c);
+        }
+        assert!(t.len() <= max && parts.len() >= 2, "{parts:?} rest {}", t.len());
+    }
 
     fn norm(t: &str) -> Vec<String> {
         t.to_lowercase()

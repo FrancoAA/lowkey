@@ -77,14 +77,18 @@ impl App {
         (!lang.is_empty() && lang != "auto").then_some(lang)
     }
 
-    fn prepare_preview(self: &Arc<Self>) {
+    fn status_emitter(self: &Arc<Self>) -> Arc<dyn Fn() + Send + Sync> {
         let weak = Arc::downgrade(self);
-        let choice = self.config.lock().preview_engine.clone();
-        self.preview.prepare(&choice, Arc::new(move || {
+        Arc::new(move || {
             if let Some(a) = weak.upgrade() {
                 a.emit_status();
             }
-        }));
+        })
+    }
+
+    fn prepare_preview(self: &Arc<Self>) {
+        let choice = self.config.lock().preview_engine.clone();
+        self.preview.prepare(&choice, self.status_emitter());
     }
 
     fn status(&self) -> Value {
@@ -386,6 +390,8 @@ fn set_options(app: State<'_, AppRef>, options: OptionsIn) -> Result<Value, Stri
     }
     if preview_on && app.config.lock().live_preview {
         app.prepare_preview(); // turned on (again), or another engine: get it ready
+    } else if options.live_preview == Some(false) {
+        app.preview.off(app.status_emitter()); // frees its engine (Parakeet: ~1.1 GB)
     }
     if model_changed {
         let app2 = app.inner().clone();
@@ -600,7 +606,14 @@ pub fn run() {
                 started: Instant::now(),
                 overlay_ready: AtomicBool::new(false),
                 overlay_pending: AtomicBool::new(false),
-                preview: Preview::new(),
+                // Parakeet in the preview is freed after the same idle time as the main model.
+                preview: Preview::new({
+                    let e = engines.clone();
+                    Arc::new(move || match e.idle_minutes.load(Ordering::Relaxed) {
+                        0 => None,
+                        m => Some(Duration::from_secs(m * 60)),
+                    })
+                }),
             });
             let io = Arc::new(TauriIo { app: Arc::downgrade(&app), handle: handle.clone() });
             *app.dictation.lock() = Some(Dictation::new(io, jobs));

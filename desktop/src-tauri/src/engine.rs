@@ -231,22 +231,8 @@ impl Engines {
     }
 
     #[cfg(parakeet)]
-    /// tokens.txt is checked before every load (a wrong one can end the process). If the model
-    /// still fails to load, all files are checked: wrong ones are downloaded again, once.
     fn load_parakeet_checked(&self, spec: &ModelSpec) -> anyhow::Result<sherpa_onnx::OfflineRecognizer> {
-        let dir = models::models_dir().join(models::PARAKEET_DIR);
-        if !models::parakeet_verify_in(&dir, true) {
-            self.redownload_parakeet(spec)?;
-        }
-        match load_parakeet() {
-            Ok(r) => Ok(r),
-            Err(e) if !models::parakeet_verify_in(&dir, false) => {
-                eprintln!("  Parakeet: {e:#}; a file was damaged, downloading it again");
-                self.redownload_parakeet(spec)?;
-                load_parakeet()
-            }
-            Err(e) => Err(e),
-        }
+        load_parakeet_recovering(|| self.redownload_parakeet(spec))
     }
 
     #[cfg(parakeet)]
@@ -334,13 +320,27 @@ fn shared_parakeet(load: impl FnOnce() -> anyhow::Result<sherpa_onnx::OfflineRec
 /// Options; the preview shows "Getting it ready…"), and shared with it.
 #[cfg(parakeet)]
 pub fn parakeet_for_preview() -> anyhow::Result<Arc<sherpa_onnx::OfflineRecognizer>> {
-    shared_parakeet(|| {
-        let dir = models::models_dir().join(models::PARAKEET_DIR);
-        if !models::parakeet_present_in(&dir) || !models::parakeet_verify_in(&dir, true) {
-            models::download_parakeet(|_, _| {})?;
+    shared_parakeet(|| load_parakeet_recovering(|| models::download_parakeet(|_, _| {})))
+}
+
+/// Missing files are downloaded; tokens.txt is checked before every load (a wrong one can end
+/// the process). If the model still fails to load, all files are checked: the wrong ones are
+/// downloaded again, once. Used by the transcription and by the preview alike.
+#[cfg(parakeet)]
+fn load_parakeet_recovering(mut redownload: impl FnMut() -> anyhow::Result<()>) -> anyhow::Result<sherpa_onnx::OfflineRecognizer> {
+    let dir = models::models_dir().join(models::PARAKEET_DIR);
+    if !models::parakeet_present_in(&dir) || !models::parakeet_verify_in(&dir, true) {
+        redownload()?;
+    }
+    match load_parakeet() {
+        Ok(r) => Ok(r),
+        Err(e) if !models::parakeet_verify_in(&dir, false) => {
+            eprintln!("  Parakeet: {e:#}; a file was damaged, downloading it again");
+            redownload()?;
+            load_parakeet()
         }
-        load_parakeet()
-    })
+        Err(e) => Err(e),
+    }
 }
 
 #[cfg(parakeet)]

@@ -82,13 +82,22 @@ the memory is freed at the next start).
 
 `src/preview_parakeet.rs`. Each pass (about once a second, in the same worker as Whistle)
 transcribes the audio not yet confirmed. When that tail is longer than 12 s, the part before
-its quietest 100 ms (between 6 s and 2 s before the end) is transcribed once more and
-confirmed; the rest stays the tail. So a pass never handles more than ~12 s of audio, however
-long the dictation. On release the tail is transcribed once more.
+its quietest 100 ms between 6 s and 12 s (at least 2 s before the end) is transcribed once
+more and confirmed, again until the rest is at most 12 s. So no decode handles more than 12 s
+of audio, however long the dictation, even after the worker fell behind.
 
 The model is shared: `engine.rs` keeps one Parakeet for the app (a `Weak` slot), so with
 Parakeet as the main model the preview costs no extra memory; with Whisper as the main model
-it adds about 1.1 GB. It stays loaded while the app runs (the preview keeps it).
+it adds about 1.1 GB. The preview frees it after the idle time set in Options (the same as the
+main model; it loads again, about 1 s, when the next dictation begins) and when the preview is
+turned off.
+
+One worker thread owns the preview engine for the whole app: switching engines, turning the
+preview off and freeing memory are messages to it, so two engines never run at the same time
+(Whistle's C engine is process-global and not thread-safe). A dictation that is running when
+the engine changes loses its preview; the next one uses the new engine. At key release the
+last pass's text is reused, so the same audio is not decoded twice next to the final
+transcription.
 "auto" never downloads Parakeet just for the preview; choosing "parakeet" does (670 MB).
 Parakeet finds the language itself, so the preview works in every language Parakeet knows.
 
