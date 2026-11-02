@@ -48,7 +48,7 @@ jobs:
       # macOS: whisper.cpp uses std::filesystem (macOS 10.15+); Apple Silicon starts at 11.
       MACOSX_DEPLOYMENT_TARGET: "11.0"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: The tag matches the app's version
         if: startsWith(github.ref, 'refs/tags/v')
@@ -59,7 +59,7 @@ jobs:
           echo "tag $tag, tauri.conf.json $conf, Cargo.toml $cargo"
           [ "$tag" = "$conf" ] && [ "$tag" = "$cargo" ] || { echo "::error::tag v$tag does not match the app's version ($conf / $cargo)"; exit 1; }
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -92,7 +92,7 @@ jobs:
         working-directory: desktop
         run: node ../frontend/node_modules/@tauri-apps/cli/tauri.js build --bundles ${{ matrix.bundles }}
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: open-whisper-${{ runner.os }}-${{ runner.arch }}
           if-no-files-found: error
@@ -113,7 +113,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
