@@ -1,0 +1,25 @@
+{
+  "decisions": [
+    "Version 2.4 ships on Thursday 14 November (not Monday 11)",
+    "Salesforce integration postponed to January",
+    "Invoice service uses Postgres, not MongoDB",
+    "Hire a freelance designer for 3 months (9,000 dollars)"
+  ],
+  "action_items": [
+    "Martín: fix duplicate payments, ticket 412, before the release (before Wednesday)",
+    "Lucía: release notes before Wednesday",
+    "Me: call Acme on Friday about the Salesforce delay",
+    "Martín: draft of the Postgres schema and migration in two weeks",
+    "Sofía: publish the designer job offer this week"
+  ],
+  "open_questions": [
+    "Team plan price: per user or per team; back on 20 November with Lucía's revenue table (Lucía brings the table)",
+    "Security review of the tax data: pending, after the schema draft"
+  ],
+  "numbers": ["41 new customers", "churn 3.2%", "9,000 dollars (3,000 per month)", "ticket 412", "Thursday 14 November", "20 November"],
+  "traps": [
+    "Them is several people: Lucía, Martín, Sofía. A note that gives a task to 'Them' or to the wrong person loses the point",
+    "The reports panel ships in 2.4 behind a flag (beta): not a separate decision of its own, but true",
+    "Salesforce partial sync was discussed and dropped: it must not appear as a decision"
+  ]
+}
