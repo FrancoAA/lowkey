@@ -581,6 +581,31 @@ mod tests {
         assert!(!req.contains("chat_template_kwargs"), "only the built-in server gets llama.cpp options");
     }
 
+    /// The first use for real: the runner is downloaded from GitHub (36 MB), checked, unpacked,
+    /// started with its key, and writes Spanish notes. The model comes from the bench cache
+    /// (bench/.work/llm), linked into a temporary models folder. Run with --ignored.
+    #[test]
+    #[ignore]
+    fn real_builtin_first_use_downloads_the_runner_and_writes_notes() {
+        let bench = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../bench/.work/llm").canonicalize().expect("cached model");
+        let tmp = std::env::temp_dir().join(format!("ow-llm-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(tmp.join("llm")).unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(bench.join(MODEL_FILE), tmp.join("llm").join(MODEL_FILE)).unwrap();
+        std::env::set_var("OPENWHISPER_MODELS_DIR", &tmp);
+        assert!(!builtin_status().downloaded);
+        let mut steps = Vec::new();
+        let input = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../bench/summary/meeting-es.md")).unwrap();
+        let text = write_notes(&Engine::Builtin { gpu: true }, &input, "Spanish", &mut |w, _, _| steps.push(w.to_string()), &mut |_| {}, &AtomicBool::new(false)).unwrap();
+        stop_builtin();
+        assert!(steps.iter().any(|s| s == "the model runner"), "{steps:?}");
+        assert!(builtin_status().downloaded);
+        assert!(text.contains("Martín") && text.contains("14"), "{text}");
+        eprintln!("{text}");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
     #[test]
     fn the_language_is_named_and_zip_paths_stay_inside() {
         assert_eq!(language_of("Hola a todos, hoy vamos a ver la fecha de la versión y lo que falta para el lanzamiento."), "Spanish");
