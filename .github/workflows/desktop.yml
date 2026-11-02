@@ -38,6 +38,8 @@ jobs:
     env:
       # AppImage tools run without FUSE on the runner.
       APPIMAGE_EXTRACT_AND_RUN: "1"
+      # macOS: whisper.cpp uses std::filesystem (macOS 10.15+); Apple Silicon starts at 11.
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
     steps:
       - uses: actions/checkout@v4
 
@@ -58,7 +60,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf \
-            libvulkan-dev glslc spirv-headers libssl-dev
+            libvulkan-dev glslc spirv-headers libssl-dev libasound2-dev
 
       - name: Linux build inputs (Vulkan SDK layout, checked sherpa-onnx archive)
         if: runner.os == 'Linux'

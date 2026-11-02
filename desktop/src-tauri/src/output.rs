@@ -79,7 +79,10 @@ fn type_text(text: &str) -> bool {
     use enigo::{Enigo, Keyboard, Settings};
     // macOS asks once for Accessibility permission; until then this fails and the
     // text is still on the clipboard.
-    Enigo::new(&Settings::default()).and_then(|mut e| e.text(text).map_err(Into::into)).is_ok()
+    match Enigo::new(&Settings::default()) {
+        Ok(mut e) => e.text(text).is_ok(),
+        Err(_) => false,
+    }
 }
 
 pub fn notify(message: &str) {
