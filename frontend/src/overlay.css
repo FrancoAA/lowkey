@@ -49,3 +49,25 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: transparent;
 @keyframes ring { 0% { box-shadow: 0 0 0 0 rgba(232, 121, 249, 0.5); } 100% { box-shadow: 0 0 0 10px transparent; } }
 @keyframes pulse { 50% { opacity: 0.4; } }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
+
+/* Meeting: a red recording dot, the time, the Me/Them levels, then the newest line. */
+.levels { display: none; }
+.overlay[data-mode="meeting"] {
+  display: grid; grid-template-columns: 40px 1fr auto; grid-template-rows: 26px 22px;
+  column-gap: 12px; align-content: center;
+}
+.overlay[data-mode="meeting"] .dot { grid-row: 1 / 3; align-self: center; }
+.overlay[data-mode="meeting"] .dot svg { display: none; }
+.overlay[data-mode="meeting"] .dot::after { content: ""; width: 14px; height: 14px; border-radius: 50%; background: #f87171; }
+.overlay[data-mode="meeting"][data-state="recording"] .dot { animation: rec 1.6s ease-in-out infinite; }
+.overlay[data-mode="meeting"][data-state="done"] .dot::after { background: #4ade80; }
+.overlay[data-mode="meeting"] .text { display: contents; }
+.overlay[data-mode="meeting"] .label { grid-column: 2; grid-row: 1; align-self: end; font-variant-numeric: tabular-nums; }
+.overlay[data-mode="meeting"] .detail { grid-column: 2 / 4; grid-row: 2; display: block; color: #e4e4e7; }
+.overlay[data-mode="meeting"] #wave, .overlay[data-mode="meeting"] .timer, .overlay[data-mode="meeting"] .preview { display: none; }
+.overlay[data-mode="meeting"][data-state="recording"] .levels { display: flex; grid-column: 3; grid-row: 1; align-self: end; gap: 10px; }
+.lv { display: flex; align-items: center; gap: 4px; font-size: 0.7rem; color: #a1a1aa; }
+.lv b { font-weight: 500; }
+.lv i { display: block; width: 34px; height: 5px; border-radius: 5px; background: #3f3f46; overflow: hidden; }
+.lv em { display: block; height: 100%; width: 0; background: var(--accent); transition: width 0.08s linear; }
+@keyframes rec { 50% { box-shadow: 0 0 0 4px rgba(248, 113, 113, 0.25); } }

@@ -42,8 +42,37 @@ pub struct App {
     preview: Preview,
     /// The meeting being recorded (Meetings section), until it is saved.
     meeting: Mutex<Option<Arc<meeting::Session>>>,
-    /// A meeting's devices are opening.
+    /// A meeting's devices are opening / it is being stopped.
     meeting_starting: AtomicBool,
+    meeting_stopping: AtomicBool,
+    /// The meeting key (same three parts as the dictation key's).
+    meeting_hotkey: Mutex<Option<Arc<hyprland::Hotkey>>>,
+    meeting_hotkey_text: Mutex<String>,
+    meeting_os_key: Mutex<Option<String>>,
+    /// Who wants the overlay: [dictation, meeting]. It shows while either does.
+    overlay_wants: [AtomicBool; 2],
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum KeyKind {
+    Dictation,
+    Meeting,
+}
+
+impl KeyKind {
+    fn other(self) -> Self {
+        match self {
+            KeyKind::Dictation => KeyKind::Meeting,
+            KeyKind::Meeting => KeyKind::Dictation,
+        }
+    }
+}
+
+/// One global key's parts: the Hyprland key, the text shown in Options, the OS shortcut.
+struct KeySlot<'a> {
+    hotkey: &'a Mutex<Option<Arc<hyprland::Hotkey>>>,
+    text: &'a Mutex<String>,
+    os_key: &'a Mutex<Option<String>>,
 }
 
 type AppRef = Arc<App>;
@@ -84,12 +113,42 @@ impl App {
         (!lang.is_empty() && lang != "auto").then_some(lang)
     }
 
-    /// The dictation key as it is now ("" = none).
-    fn hotkey_key(&self) -> String {
-        if let Some(h) = self.hotkey.lock().as_ref() {
+    fn slot(&self, kind: KeyKind) -> KeySlot<'_> {
+        match kind {
+            KeyKind::Dictation => KeySlot { hotkey: &self.hotkey, text: &self.hotkey_text, os_key: &self.os_key },
+            KeyKind::Meeting => KeySlot { hotkey: &self.meeting_hotkey, text: &self.meeting_hotkey_text, os_key: &self.meeting_os_key },
+        }
+    }
+
+    /// A key as it is now ("" = none).
+    fn key_of(&self, kind: KeyKind) -> String {
+        let slot = self.slot(kind);
+        if let Some(h) = slot.hotkey.lock().as_ref() {
             return h.key();
         }
-        self.os_key.lock().clone().unwrap_or_default()
+        slot.os_key.lock().clone().unwrap_or_default()
+    }
+
+    /// The dictation key as it is now ("" = none).
+    fn hotkey_key(&self) -> String {
+        self.key_of(KeyKind::Dictation)
+    }
+
+    /// "app", "manual" or "none" (the meeting key never comes from the user's config).
+    fn source_of(&self, kind: KeyKind) -> &'static str {
+        if kind == KeyKind::Dictation {
+            return self.hotkey_source();
+        }
+        if keys_are_manual() {
+            return "manual";
+        }
+        if let Some(h) = self.meeting_hotkey.lock().as_ref() {
+            return h.source();
+        }
+        if self.meeting_os_key.lock().is_some() {
+            return "app";
+        }
+        "none"
     }
 
     /// Where the key lives: "app" (the app adds it and can change it), "config" (the user's
@@ -160,6 +219,10 @@ impl App {
             // Why the key is not active (source "none"): shown in Options.
             "hotkey_problem": if self.hotkey_source() == "none" && !self.hotkey_key().is_empty() { self.hotkey_text.lock().clone() } else { String::new() },
             "start_at_login": self.start_at_login(),
+            "meeting_key": self.key_of(KeyKind::Meeting),
+            "meeting_key_source": self.source_of(KeyKind::Meeting),
+            "meeting_key_problem": if self.source_of(KeyKind::Meeting) == "none" && !self.key_of(KeyKind::Meeting).is_empty() { self.meeting_hotkey_text.lock().clone() } else { String::new() },
+            "recording": self.meeting.lock().is_some(),
         })
     }
 
@@ -167,8 +230,17 @@ impl App {
         emit_logged(&self.handle, "status", self.status());
     }
 
+    /// The dictation's wish (see `want_overlay`).
     fn overlay(&self, visible: bool) {
-        let usable = self.hotkey.lock().as_ref().map(|h| h.rule_installed()).unwrap_or(false) || !hyprland::running();
+        self.want_overlay(0, visible);
+    }
+
+    /// 0 = dictation, 1 = meeting: the strip shows while either wants it.
+    fn want_overlay(&self, who: usize, on: bool) {
+        self.overlay_wants[who].store(on, Ordering::SeqCst);
+        let visible = self.overlay_wants.iter().any(|w| w.load(Ordering::SeqCst));
+        let rule = |h: &Mutex<Option<Arc<hyprland::Hotkey>>>| h.lock().as_ref().map(|h| h.rule_installed()).unwrap_or(false);
+        let usable = rule(&self.hotkey) || rule(&self.meeting_hotkey) || !hyprland::running();
         self.overlay_pending.store(visible && usable, Ordering::SeqCst);
         if visible && !self.overlay_ready.load(Ordering::SeqCst) {
             return; // shown by overlay_ready() once the page has drawn
@@ -185,6 +257,12 @@ impl App {
     }
 
     fn handle_cli(self: &Arc<Self>, cli: &Cli, first: bool) {
+        if let Some(action) = cli.meeting.clone() {
+            // Opening the devices or finishing takes a moment: not on this thread.
+            let me = self.clone();
+            std::thread::spawn(move || me.meeting_key(&action));
+            return;
+        }
         if let Some(action) = cli.dictate.as_deref() {
             let d = self.dictation.lock().clone();
             let Some(d) = d else { return };
@@ -221,6 +299,35 @@ impl App {
         }
     }
 
+    /// The meeting key (or `--meeting`): start, stop or toggle the recording.
+    fn meeting_key(self: &Arc<Self>, action: &str) {
+        if self.meeting_starting.load(Ordering::SeqCst) || self.meeting_stopping.load(Ordering::SeqCst) {
+            return; // a press while it starts or stops: nothing more to do
+        }
+        let recording = self.meeting.lock().is_some();
+        match (action, recording) {
+            ("toggle" | "start", false) => {
+                if let Err(e) = meeting_start_inner(self, "") {
+                    // The strip says why for a moment (it reads the meeting-start event).
+                    self.want_overlay(1, true);
+                    output::notify(&format!("Meeting not started: {e}"));
+                    let me = self.clone();
+                    std::thread::spawn(move || {
+                        std::thread::sleep(Duration::from_secs(4));
+                        if me.meeting.lock().is_none() {
+                            me.want_overlay(1, false);
+                        }
+                    });
+                }
+            }
+            ("toggle" | "stop", true) => {
+                let _ = stop_meeting(self);
+            }
+            ("start" | "stop", _) => {} // already as asked
+            other => eprintln!("  unknown --meeting action {other:?}"),
+        }
+    }
+
     fn show_main(&self) {
         if let Some(w) = self.handle.get_webview_window("main") {
             let _ = w.show();
@@ -234,6 +341,9 @@ impl App {
             m.abandon(); // keep what is transcribed
         }
         if let Some(h) = self.hotkey.lock().take() {
+            h.uninstall();
+        }
+        if let Some(h) = self.meeting_hotkey.lock().take() {
             h.uninstall();
         }
         let f = runtime_dir().join("desktop.json");
@@ -558,8 +668,9 @@ fn meeting_open(app: &AppRef, title: &str) -> Result<meeting::Live, String> {
     let h = app.handle.clone();
     let emit: meeting::EmitFn = Arc::new(move |ev| match ev {
         meeting::Event::Live(live) => emit_logged(&h, "meeting", live),
+        // To the window and the strip.
         meeting::Event::Levels { me, them } => {
-            let _ = h.emit_to("main", "meeting-level", json!({"me": me, "them": them}));
+            let _ = h.emit("meeting-level", json!({"me": me, "them": them}));
         }
     });
     let doc = meeting::Meeting::new(title, &model);
@@ -571,6 +682,8 @@ fn meeting_open(app: &AppRef, title: &str) -> Result<meeting::Live, String> {
         return Err(format!("{e:#}"));
     }
     *app.meeting.lock() = Some(session.clone());
+    app.want_overlay(1, true); // the strip shows the recording, in every app
+    app.emit_status();
     // The first piece comes after a few seconds: have the model loaded by then.
     let e2 = app.engines.clone();
     std::thread::spawn(move || {
@@ -583,13 +696,30 @@ fn meeting_open(app: &AppRef, title: &str) -> Result<meeting::Live, String> {
 #[tauri::command]
 async fn meeting_stop(app: State<'_, AppRef>) -> Result<meeting::Meeting, String> {
     let app = app.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || stop_meeting(&app)).await.map_err(|e| e.to_string())?
+}
+
+/// Stop, transcribe the last seconds, save (blocking). The page's Stop and the meeting key.
+fn stop_meeting(app: &AppRef) -> Result<meeting::Meeting, String> {
     let session = app.meeting.lock().clone().ok_or("No meeting is being recorded.")?;
-    let s2 = session.clone();
-    let r = tauri::async_runtime::spawn_blocking(move || s2.finish()).await;
+    if app.meeting_stopping.swap(true, Ordering::SeqCst) {
+        return Err("The meeting is being saved.".into());
+    }
+    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| session.finish()));
     app.meeting.lock().take(); // only now: no second meeting while this one finishes
-    r.map_err(|e| {
+    app.meeting_stopping.store(false, Ordering::SeqCst);
+    app.emit_status();
+    // The strip says "saved" for a moment, then goes (unless a new meeting started).
+    let a2 = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_secs(3));
+        if a2.meeting.lock().is_none() {
+            a2.want_overlay(1, false);
+        }
+    });
+    r.map_err(|_| {
         session.abandon(); // keep what is transcribed; the next meeting can start
-        format!("Stopping failed ({e}); the meeting is saved as it was.")
+        "Stopping failed; the meeting is saved as it was.".to_string()
     })
 }
 
@@ -661,63 +791,82 @@ fn keys_are_manual() -> bool {
     wayland_other || (hyprland::running() && !hyprland::lua_config())
 }
 
-/// Options → Dictation key → Change: the key moves now and is saved to config.toml.
+/// Options → Keys → Dictation key → Change: the key moves now and is saved to config.toml.
 #[tauri::command]
 fn set_hotkey(app: State<'_, AppRef>, key: String) -> Result<Value, String> {
     let app = app.inner().clone();
-    let r = set_hotkey_inner(&app, &key);
+    let r = set_key_inner(&app, &key, KeyKind::Dictation);
     emit_logged(&app.handle, "hotkey-change", json!({"key": key, "result": r.as_ref().map(|_| "ok").map_err(|e| e.clone())}));
     r
 }
 
-fn set_hotkey_inner(app: &AppRef, key: &str) -> Result<Value, String> {
+/// Options → Keys → Meeting key → Change.
+#[tauri::command]
+fn set_meeting_hotkey(app: State<'_, AppRef>, key: String) -> Result<Value, String> {
+    let app = app.inner().clone();
+    let r = set_key_inner(&app, &key, KeyKind::Meeting);
+    emit_logged(&app.handle, "meeting-key-change", json!({"key": key, "result": r.as_ref().map(|_| "ok").map_err(|e| e.clone())}));
+    r
+}
+
+fn set_key_inner(app: &AppRef, key: &str, kind: KeyKind) -> Result<Value, String> {
     let app = app.clone();
+    let slot = app.slot(kind);
     let new = hyprland::normalize_key(key)
         .ok_or_else(|| format!("{key} cannot be used: hold Super, Ctrl or Alt and press a letter, a digit, F1-F24 or Space."))?;
+    if app.key_of(kind.other()) == new {
+        let other = if kind == KeyKind::Meeting { "dictation" } else { "meeting" };
+        return Err(format!("{new} is already the {other} key."));
+    }
     let text = if keys_are_manual() {
-        return Err("This desktop does not let apps add keys: bind `open-whisper --dictate toggle` in its keyboard settings.".into());
+        let flag = if kind == KeyKind::Meeting { "--meeting toggle" } else { "--dictate toggle" };
+        return Err(format!("This desktop does not let apps add keys: bind `open-whisper {flag}` in its keyboard settings."));
     } else if hyprland::running() {
-        let existing = app.hotkey.lock().clone();
+        let existing = slot.hotkey.lock().clone();
         match existing {
             Some(hk) => hk.change(&new).map_err(|e| format!("{e:#}"))?,
             None => {
                 // Started without a key: install it (the bind and the overlay's window rule).
-                let hk = hyprland::Hotkey::new(&new, &std::env::current_exe().unwrap_or_default());
+                let exe = std::env::current_exe().unwrap_or_default();
+                let hk = if kind == KeyKind::Meeting { hyprland::Hotkey::new_meeting(&new, &exe) } else { hyprland::Hotkey::new(&new, &exe) };
                 let t = hk.install(false).map_err(|e| format!("{e:#}"))?;
                 if hk.source() != "app" {
                     return Err(t);
                 }
                 hk.watch_reloads();
-                *app.hotkey.lock() = Some(hk);
+                *slot.hotkey.lock() = Some(hk);
                 t
             }
         }
     } else {
         use tauri_plugin_global_shortcut::GlobalShortcutExt;
-        let old = app.os_key.lock().clone();
+        let old = slot.os_key.lock().clone();
         if old.as_deref() != Some(new.as_str()) {
             if let Some(sc) = old.as_deref().and_then(crate::config::to_plugin_shortcut) {
                 let _ = app.handle.global_shortcut().unregister(sc.as_str());
             }
-            let t = register_global_shortcut(&app, &new);
+            let t = register_global_shortcut(&app, &new, kind);
             if t.starts_with("not added") {
                 // Put the old key back, so the user is never left without one.
                 if let Some(o) = old.as_deref() {
-                    register_global_shortcut(&app, o);
+                    register_global_shortcut(&app, o, kind);
                 }
                 return Err(t);
             }
             t
         } else {
-            app.hotkey_text.lock().clone()
+            slot.text.lock().clone()
         }
     };
     {
         let mut cfg = app.config.lock();
-        cfg.hotkey = new;
+        match kind {
+            KeyKind::Dictation => cfg.hotkey = new,
+            KeyKind::Meeting => cfg.meeting_hotkey = new,
+        }
         cfg.save().map_err(|e| e.to_string())?;
     }
-    *app.hotkey_text.lock() = text;
+    *slot.text.lock() = text;
     app.emit_status();
     Ok(app.status())
 }
@@ -763,7 +912,7 @@ fn set_start_at_login(app: &AppRef, on: bool) -> Result<(), String> {
 }
 
 /// X11, macOS, Windows: the OS lets a running app own a key (press and release).
-fn register_global_shortcut(app: &AppRef, key: &str) -> String {
+fn register_global_shortcut(app: &AppRef, key: &str, kind: KeyKind) -> String {
     use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
     let Some(sc) = crate::config::to_plugin_shortcut(key) else {
         return format!("not added: cannot read the key {key:?}");
@@ -771,6 +920,12 @@ fn register_global_shortcut(app: &AppRef, key: &str) -> String {
     let weak = Arc::downgrade(app);
     let result = app.handle.global_shortcut().on_shortcut(sc.as_str(), move |_h, _s, ev| {
         let Some(app) = weak.upgrade() else { return };
+        if kind == KeyKind::Meeting {
+            if ev.state == ShortcutState::Pressed {
+                std::thread::spawn(move || app.meeting_key("toggle"));
+            }
+            return;
+        }
         let Some(d) = app.dictation.lock().clone() else { return };
         match ev.state {
             ShortcutState::Pressed => {
@@ -783,8 +938,12 @@ fn register_global_shortcut(app: &AppRef, key: &str) -> String {
     });
     match result {
         Ok(()) => {
-            *app.os_key.lock() = Some(key.to_string());
-            format!("{key} — hold to talk, tap to start/stop (while open-whisper runs)")
+            *app.slot(kind).os_key.lock() = Some(key.to_string());
+            if kind == KeyKind::Meeting {
+                format!("{key} — tap to start or stop a meeting recording (while open-whisper runs)")
+            } else {
+                format!("{key} — hold to talk, tap to start/stop (while open-whisper runs)")
+            }
         }
         Err(e) => format!("not added: {key} ({e}); it may be taken by another app. Choose another key in Options."),
     }
@@ -872,6 +1031,7 @@ pub fn run() {
             save_export,
             set_options,
             set_hotkey,
+            set_meeting_hotkey,
             adopt_hotkey,
             dictation_state,
             overlay_ready,
@@ -888,7 +1048,7 @@ pub fn run() {
         .setup(move |tauri_app| {
             let cli = first_cli.clone();
             // A key release / cancel / quit with no app running: nothing to do.
-            if matches!(cli.dictate.as_deref(), Some("release" | "cancel" | "quit")) {
+            if matches!(cli.dictate.as_deref(), Some("release" | "cancel" | "quit")) || cli.meeting.as_deref() == Some("stop") {
                 std::process::exit(0);
             }
             let handle = tauri_app.handle().clone();
@@ -923,6 +1083,11 @@ pub fn run() {
                 }),
                 meeting: Mutex::new(None),
                 meeting_starting: AtomicBool::new(false),
+                meeting_stopping: AtomicBool::new(false),
+                meeting_hotkey: Mutex::new(None),
+                meeting_hotkey_text: Mutex::new(String::new()),
+                meeting_os_key: Mutex::new(None),
+                overlay_wants: [AtomicBool::new(false), AtomicBool::new(false)],
             });
             let io = Arc::new(TauriIo { app: Arc::downgrade(&app), handle: handle.clone() });
             *app.dictation.lock() = Some(Dictation::new(io, jobs));
@@ -937,7 +1102,7 @@ pub fn run() {
             tauri_app.manage(app.clone());
 
             // Windows: the main window, and the dictation overlay (hidden; never focused).
-            let background = cli.background || cli.dictate.is_some();
+            let background = cli.background || cli.dictate.is_some() || cli.meeting.is_some();
             let main = WebviewWindowBuilder::new(tauri_app, "main", WebviewUrl::App("index.html".into()))
                 .title("open-whisper")
                 .inner_size(860.0, 820.0)
@@ -1009,7 +1174,7 @@ pub fn run() {
                 // GNOME/KDE/sway: apps cannot grab keys on Wayland; the desktop binds them.
                 "this Wayland desktop does not let apps add keys: bind `open-whisper --dictate press` (and `--dictate release` on key release, or `--dictate toggle`) in your desktop's keyboard settings".to_string()
             } else if !hyprland::running() {
-                register_global_shortcut(&app, &key)
+                register_global_shortcut(&app, &key, KeyKind::Dictation)
             } else if cli.no_hotkey || key.trim().is_empty() {
                 let removed = hyprland::remove_app_binds();
                 let mut t = "not added (--no-hotkey)".to_string();
@@ -1034,6 +1199,29 @@ pub fn run() {
             println!("  open-whisper {}: {}, model {}", env!("CARGO_PKG_VERSION"), app.engines.hw.gpu.clone().map(|g| format!("GPU {g}")).unwrap_or("CPU".into()), app.current_model());
             println!("  Global dictation key: {text}");
             *app.hotkey_text.lock() = text;
+
+            // The meeting key: the same ways as the dictation key, one bind (a tap).
+            let mkey = config.meeting_hotkey.clone();
+            let mtext = if cli.no_hotkey || mkey.trim().is_empty() {
+                "not added".to_string()
+            } else if wayland_other {
+                "this Wayland desktop does not let apps add keys: bind `open-whisper --meeting toggle` in your desktop's keyboard settings".to_string()
+            } else if mkey == app.hotkey_key() {
+                format!("not added: {mkey} is the dictation key. Choose another key in Options.")
+            } else if !hyprland::running() {
+                register_global_shortcut(&app, &mkey, KeyKind::Meeting)
+            } else {
+                let hk = hyprland::Hotkey::new_meeting(&mkey, &std::env::current_exe().unwrap_or_default());
+                let t = match hk.install(cli.meeting.is_some()) {
+                    Ok(t) => t,
+                    Err(e) => format!("could not add it ({e})"),
+                };
+                hk.watch_reloads();
+                *app.meeting_hotkey.lock() = Some(hk);
+                t
+            };
+            println!("  Meeting key: {mtext}");
+            *app.meeting_hotkey_text.lock() = mtext;
 
             // Load the model now, so the first transcription is quick.
             let (e2, model) = (engines.clone(), app.current_model());

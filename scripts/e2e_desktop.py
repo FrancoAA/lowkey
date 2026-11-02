@@ -53,6 +53,7 @@ if PREVIEW == "parakeet" and not BENCH_PARAKEET.is_dir():
     print(f"  note: OW_E2E_PREVIEW=parakeet but no {BENCH_PARAKEET}: using whistle")
     PREVIEW = "whistle"
 RUNTIME_DESC = "Dictate (open-whisper, added by the app)"
+MEETING_DESC = "Meeting recording (open-whisper, added by the app)"
 NESTED_CONFIG = """
 hl.monitor({ output = "", mode = "preferred", position = "auto", scale = 1 })
 -- A taken key: Options must refuse it for the dictation key.
@@ -497,6 +498,29 @@ def main() -> None:
         press_combo("SUPER CTRL", "X")
         wait(lambda: 'hotkey = "SUPER + CTRL + X"' in cfg_file.read_text() and len(x_binds()) == 2 and not binds_on(72, "D"), 15, "key back")
         print("  ok  back to SUPER+CTRL+X")
+        # The meeting key: added at start (one bind); it cannot take the dictation key; it moves.
+        mk = binds_on(68, "M")
+        check(len(mk) == 1 and mk[0]["description"] == MEETING_DESC, "the meeting key SUPER+CTRL+M is added at start (one bind)")
+        press_key("Tab")  # Meeting key → Change
+        n_mk = len(events("meeting-key-change"))
+        press_key("Return")
+        time.sleep(0.3)
+        press_combo("SUPER CTRL", "X")
+        r = wait(lambda: events("meeting-key-change")[n_mk:] or None, 10, "meeting key answer")[0]
+        check("Err" in r["result"] and "dictation key" in r["result"]["Err"], f"the dictation key is refused as the meeting key: {r['result']}")
+        press_key("Return")
+        time.sleep(0.3)
+        press_combo("SUPER ALT", "M")
+        wait(lambda: 'meeting_hotkey = "SUPER + ALT + M"' in cfg_file.read_text(), 15, "meeting key saved to config.toml")
+        wait(lambda: binds_on(72, "M") and not binds_on(68, "M"), 10, "meeting key moved")
+        check(len(binds_on(72, "M")) == 1 and len(x_binds()) == 2, "Options: the meeting key moved to SUPER+ALT+M; the dictation key stays")
+        time.sleep(0.4)
+        shot("24-desktop-settings-keys.png")
+        press_key("Return")
+        time.sleep(0.3)
+        press_combo("SUPER CTRL", "M")
+        wait(lambda: 'meeting_hotkey = "SUPER + CTRL + M"' in cfg_file.read_text() and binds_on(68, "M") and not binds_on(72, "M"), 15, "meeting key back")
+        print("  ok  meeting key back to SUPER+CTRL+M")
         # Start at login: the autostart entry appears and goes (in the test's own XDG_CONFIG_HOME).
         autostart = tmp / "config" / "autostart" / "open-whisper.desktop"
         real_autostart = Path.home() / ".config" / "autostart" / "open-whisper.desktop"
@@ -563,6 +587,29 @@ def main() -> None:
         check(oct(meetings_dir.stat().st_mode & 0o777) == "0o700", "the meetings folder is private (0700)")
         time.sleep(1.0)
         shot("22-desktop-meeting-saved.png")
+
+        # ---------------------------------------------------------------- Meetings: the key, from another app
+        focus(target["address"])  # the terminal has the focus
+        n_k = len(events("meeting"))
+
+        def meeting_key() -> None:  # what SUPER+CTRL+M runs
+            run(["hyprctl", "dispatch", f'hl.dsp.exec_cmd("{APP} --meeting toggle")'], env)
+
+        meeting_key()
+        strip = wait(lambda: win("open-whisper-overlay"), 15, "the recording strip")
+        rec = wait(lambda: next((m for m in reversed(events("meeting")[n_k:]) if m["state"] == "recording" and m["meeting"]["lines"]), None),
+                   90, "lines from the key's meeting")
+        check(strip["pinned"] and (hj("activewindow") or {}).get("address") == target["address"],
+              f"the meeting key records from another app; the strip shows it and takes no focus ({len(rec['meeting']['lines'])} lines)")
+        time.sleep(0.8)
+        shot("23-desktop-meeting-strip.png")
+        meeting_key()
+        done = wait(lambda: next((m for m in events("meeting")[n_k:] if m["state"] == "done"), None), 60, "the key's meeting saved")
+        check(done["meeting"]["lines"] and (meetings_dir / f"{done['meeting']['id']}.json").exists(), "the key again stops and saves it")
+        time.sleep(0.5)
+        check(win("open-whisper-overlay") is not None, "the strip says it is saved")
+        wait(lambda: win("open-whisper-overlay") is None, 10, "the strip goes after the save")
+        print("  ok  the strip goes a moment after the save")
 
         # ---------------------------------------------------------------- close, quit, key starts the app
         run(["hyprctl", "dispatch", f'hl.dsp.window.close({{ window = "address:{main_win["address"]}" }})'], env)

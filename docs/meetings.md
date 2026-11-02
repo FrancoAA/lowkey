@@ -9,6 +9,22 @@ notes written by a language model (a local server such as Ollama or LM Studio by
 cloud API only when you choose it, with a clear warning). Phase 3 adds the computer's sound on
 macOS and Windows, a prompt when a call starts, and questions over past meetings.
 
+## The meeting key and the strip
+
+- Settings → Keys → **Meeting key**: Super+Ctrl+M on Linux, Ctrl+Alt+M on macOS and Windows
+  (`meeting_hotkey` in config.toml). It runs `open-whisper --meeting toggle`: a tap starts a
+  meeting, the next tap stops and saves it. A closed app starts in the background for it.
+- Hyprland: one bind (no release bind), described "Meeting recording (open-whisper, added by
+  the app)". The dictation key and the meeting key never share a combination: each counts the
+  other's bind as someone else's, and the app refuses the dictation key as the meeting key.
+  X11, macOS, Windows: the global-shortcut plugin, as for dictation.
+- The **strip** is the dictation overlay (same window, same Hyprland rule: floating, pinned,
+  never focused). While a meeting records it shows a red dot, the time, the Me/Them levels and
+  the newest line ("Them: …", the speaker always shows). At Stop it says "Saving the
+  meeting…", then "Meeting saved" for 3 s. A dictation during a meeting takes the strip and
+  gives it back when it is done. A meeting started in the window shows the strip too.
+- A meeting started with the key gets the title "Meeting"; the list shows its date.
+
 ## Two sources
 
 | Source | Label | How |

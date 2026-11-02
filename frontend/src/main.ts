@@ -39,6 +39,10 @@ const keyChange = $<HTMLButtonElement>("key-change");
 const keyAdopt = $<HTMLButtonElement>("key-adopt");
 const keyNote = $<HTMLElement>("key-note");
 const loginCheck = $<HTMLInputElement>("login-check");
+const meetingKeyRow = $<HTMLDivElement>("meeting-key-row");
+const meetingKeyCurrent = $<HTMLElement>("meeting-key-current");
+const meetingKeyChange = $<HTMLButtonElement>("meeting-key-change");
+const meetingKeyNote = $<HTMLElement>("meeting-key-note");
 const idleSelect = $<HTMLSelectElement>("idle-select");
 
 const MEDIA_EXT = /\.(mp3|wav|wave|m4a|aac|ogg|oga|opus|flac|webm|weba|wma|aiff?|amr|mp4|m4v|mov|mkv|avi|3gp)$/i;
@@ -390,16 +394,65 @@ function prettyKey(key: string): string {
     .join(" + ");
 }
 
-let capturing = false;
+/** One key row in Settings → Keys (the dictation key, the meeting key). */
+interface KeyUi {
+  row: HTMLElement;
+  current: HTMLElement;
+  change: HTMLButtonElement;
+  note: HTMLElement;
+  save(key: string): Promise<Status>;
+  message: { text: string; kind: "" | "ok" | "error" };
+}
+/** The row that is taking the new keys now. */
+let capturing: KeyUi | null = null;
 /** WebKitGTK does not report Super as a modifier of other keys: follow the key itself. */
 let superHeld = false;
 const SUPER_KEYS = ["Meta", "OS", "Super", "Hyper"];
 const SUPER_CODES = ["MetaLeft", "MetaRight", "OSLeft", "OSRight"];
 const isSuper = (e: KeyboardEvent) => SUPER_KEYS.includes(e.key) || SUPER_CODES.includes(e.code);
-let keyMessage: { text: string; kind: "" | "ok" | "error" } = { text: "", kind: "" };
+const dictationKeyUi: KeyUi = {
+  row: keyRow,
+  current: keyCurrent,
+  change: keyChange,
+  note: keyNote,
+  save: (k) => backend.setHotkey(k),
+  message: { text: "", kind: "" },
+};
+const meetingKeyUi: KeyUi = {
+  row: meetingKeyRow,
+  current: meetingKeyCurrent,
+  change: meetingKeyChange,
+  note: meetingKeyNote,
+  save: (k) => backend.setMeetingHotkey(k),
+  message: { text: "", kind: "" },
+};
 
 function renderKey(): void {
-  if (!status || capturing) return;
+  renderDictationKey();
+  renderMeetingKey();
+}
+
+function renderMeetingKey(): void {
+  if (!status || capturing === meetingKeyUi) return;
+  const key = status.meeting_key ?? "";
+  const source = status.meeting_key_source ?? "none";
+  const inactive = source === "none" && !!key;
+  meetingKeyCurrent.textContent = key ? prettyKey(key) + (inactive ? " (not active)" : "") : "None";
+  meetingKeyChange.textContent = key ? "Change" : "Choose a key";
+  meetingKeyChange.hidden = source === "manual";
+  const explain =
+    source === "manual"
+      ? "This desktop does not let apps add keys: bind `open-whisper --meeting toggle` in its keyboard settings."
+      : inactive
+        ? status.meeting_key_problem || "This key is not active. Choose another one."
+        : "Tap it to start recording a meeting (your mic and the computer's sound), and again to stop. A strip at the bottom of the screen shows the recording.";
+  meetingKeyNote.textContent = meetingKeyUi.message.text || explain;
+  meetingKeyNote.dataset.kind = meetingKeyUi.message.kind || (inactive ? "error" : "");
+}
+
+function renderDictationKey(): void {
+  const keyMessage = dictationKeyUi.message;
+  if (!status || capturing === dictationKeyUi) return;
   const key = status.hotkey_key ?? "";
   const source = status.hotkey_source ?? "none";
   const inactive = source === "none" && !!key;
@@ -443,25 +496,30 @@ function comboOf(e: KeyboardEvent): { key?: string; why?: string } {
 }
 
 function stopCapture(): void {
-  capturing = false;
+  const ui = capturing;
+  capturing = null;
   superHeld = false;
-  delete keyRow.dataset.capturing;
+  if (ui) delete ui.row.dataset.capturing;
   renderKey();
 }
 
-keyChange.addEventListener("click", () => {
-  if (capturing) {
-    keyMessage = { text: "", kind: "" };
+function startCapture(ui: KeyUi): void {
+  if (capturing === ui) {
+    ui.message = { text: "", kind: "" };
     return stopCapture();
   }
-  capturing = true;
+  if (capturing) stopCapture(); // the other row was waiting
+  capturing = ui;
   superHeld = false; // only a Super key pressed from now on counts
-  keyRow.dataset.capturing = "";
-  keyCurrent.textContent = "Press the new keys…";
-  keyChange.textContent = "Cancel";
-  keyNote.dataset.kind = "";
-  keyNote.textContent = "Hold Super, Ctrl or Alt and press a letter, a digit, F1-F24 or Space. Esc cancels. A combination that another shortcut already uses does not reach this window.";
-});
+  ui.row.dataset.capturing = "";
+  ui.current.textContent = "Press the new keys…";
+  ui.change.textContent = "Cancel";
+  ui.note.dataset.kind = "";
+  ui.note.textContent = "Hold Super, Ctrl or Alt and press a letter, a digit, F1-F24 or Space. Esc cancels. A combination that another shortcut already uses does not reach this window.";
+}
+
+keyChange.addEventListener("click", () => startCapture(dictationKeyUi));
+meetingKeyChange.addEventListener("click", () => startCapture(meetingKeyUi));
 
 // Before every other key handler (the Space dictation key, Esc cancel): while choosing a key,
 // keys only choose the key.
@@ -469,30 +527,31 @@ window.addEventListener(
   "keydown",
   (e) => {
     if (isSuper(e)) superHeld = true;
-    if (!capturing) return;
+    const ui = capturing;
+    if (!ui) return;
     e.preventDefault();
     e.stopImmediatePropagation();
     if (e.repeat || isSuper(e) || ["Shift", "Control", "Alt", "AltGraph"].includes(e.key)) return;
     if (e.key === "Escape") {
-      keyMessage = { text: "", kind: "" };
+      ui.message = { text: "", kind: "" };
       return stopCapture();
     }
     const c = comboOf(e);
     if (!c.key) {
-      keyNote.dataset.kind = "error";
-      keyNote.textContent = c.why ?? "";
+      ui.note.dataset.kind = "error";
+      ui.note.textContent = c.why ?? "";
       return;
     }
     const chosen = c.key;
-    keyCurrent.textContent = prettyKey(chosen);
-    void backend.setHotkey(chosen).then(
+    ui.current.textContent = prettyKey(chosen);
+    void ui.save(chosen).then(
       (st) => {
-        keyMessage = { text: `Saved. ${prettyKey(chosen)} works now.`, kind: "ok" };
+        ui.message = { text: `Saved. ${prettyKey(chosen)} works now.`, kind: "ok" };
         stopCapture();
         applyStatus(st);
       },
       (err) => {
-        keyMessage = { text: String(err), kind: "error" };
+        ui.message = { text: String(err), kind: "error" };
         stopCapture();
       },
     );
@@ -521,13 +580,13 @@ keyAdopt.addEventListener("click", () => {
   void backend.adoptHotkey().then(
     (r) => {
       const login = r.start_at_login ? " Start at login is on, so the key works after a restart too." : "";
-      keyMessage = { text: `Done: the app manages the key now. Your old config is saved as ${r.backup}.${login}`, kind: "ok" };
+      dictationKeyUi.message = { text: `Done: the app manages the key now. Your old config is saved as ${r.backup}.${login}`, kind: "ok" };
       keyAdopt.disabled = false;
       applyStatus(r.status);
       keyChange.focus(); // it takes the place of the hidden button
     },
     (err) => {
-      keyMessage = { text: String(err), kind: "error" };
+      dictationKeyUi.message = { text: String(err), kind: "error" };
       keyAdopt.disabled = false;
       renderKey();
     },

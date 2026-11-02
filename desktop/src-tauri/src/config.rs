@@ -13,6 +13,12 @@ pub const DEFAULT_HOTKEY: &str = "SUPER + CTRL + X";
 #[cfg(not(target_os = "linux"))]
 pub const DEFAULT_HOTKEY: &str = "CTRL + ALT + SPACE";
 
+/// The meeting key: Super+Ctrl+M on Linux (free in Omarchy), Ctrl+Alt+M elsewhere.
+#[cfg(target_os = "linux")]
+pub const DEFAULT_MEETING_HOTKEY: &str = "SUPER + CTRL + M";
+#[cfg(not(target_os = "linux"))]
+pub const DEFAULT_MEETING_HOTKEY: &str = "CTRL + ALT + M";
+
 /// "SUPER + CTRL + X" → "super+control+KeyX" (the global-shortcut plugin's syntax).
 pub fn to_plugin_shortcut(key: &str) -> Option<String> {
     let parts: Vec<String> = key.split('+').map(|p| p.trim().to_uppercase()).filter(|p| !p.is_empty()).collect();
@@ -57,11 +63,13 @@ pub struct Config {
     /// The preview's engine: "auto" (Parakeet when it is on disk, else Whistle), "whistle"
     /// (17 MB, light) or "parakeet" (more accurate, about 1.1 GB of memory).
     pub preview_engine: String,
+    /// Global key that starts or stops a meeting recording. Empty = no key.
+    pub meeting_hotkey: String,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Self { model: String::new(), language: "auto".into(), idle_unload_minutes: 15, hotkey: DEFAULT_HOTKEY.into(), live_preview: true, preview_engine: "auto".into() }
+        Self { model: String::new(), language: "auto".into(), idle_unload_minutes: 15, hotkey: DEFAULT_HOTKEY.into(), live_preview: true, preview_engine: "auto".into(), meeting_hotkey: DEFAULT_MEETING_HOTKEY.into() }
     }
 }
 
@@ -114,6 +122,7 @@ pub struct Cli {
     pub hotkey: Option<String>,
     pub no_hotkey: bool,
     pub dictate: Option<String>,
+    pub meeting: Option<String>,
     pub background: bool,
     pub transcribe: Option<PathBuf>,
     pub language: Option<String>,
@@ -133,6 +142,7 @@ Usage: open-whisper [options] [audio or video files…]
   --hotkey \"SUPER + CTRL + X\"   global dictation key (Hyprland)
   --no-hotkey             do not add the global dictation key
   --dictate <action>      press | release | toggle | cancel | quit (used by the key bind)
+  --meeting <action>      toggle | start | stop a meeting recording (used by the meeting key)
   --background            start without opening the window
   --transcribe <file>     transcribe a file without a window and print JSON
   --print-snippet [lua|conf]  print the Hyprland config lines for the key
@@ -151,6 +161,7 @@ impl Cli {
                 "--hotkey" => cli.hotkey = it.next(),
                 "--no-hotkey" => cli.no_hotkey = true,
                 "--dictate" => cli.dictate = it.next(),
+                "--meeting" => cli.meeting = it.next(),
                 "--background" => cli.background = true,
                 "--transcribe" => cli.transcribe = it.next().map(PathBuf::from),
                 "--remove-hotkey" => cli.remove_hotkey = true,
@@ -243,5 +254,6 @@ mod tests {
         assert_eq!(Cli::parse(argv("--model=small")).model.as_deref(), Some("small"));
         assert_eq!(Cli::parse(argv("--print-snippet conf")).print_snippet.as_deref(), Some("conf"));
         assert_eq!(Cli::parse(argv("--print-snippet")).print_snippet.as_deref(), Some("lua"));
+        assert_eq!(Cli::parse(argv("--meeting toggle")).meeting.as_deref(), Some("toggle"));
     }
 }

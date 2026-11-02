@@ -87,6 +87,8 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): void {
   let saveTimer = 0;
   let unsaved: { title?: string; notes?: string } = {};
   let deleteArmed = 0;
+  /** The Stop button is waiting for the app (it opens the saved meeting itself). */
+  let stopping = false;
 
   const isLive = () => !!live && !!shown && live.meeting.id === shown.id && live.state !== "done";
 
@@ -281,6 +283,7 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): void {
   });
 
   stopBtn.addEventListener("click", async () => {
+    stopping = true;
     stopBtn.disabled = true;
     stopBtn.textContent = "Finishing…";
     await flush();
@@ -304,18 +307,36 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): void {
       live = null;
       ui.onRecording(false);
       await showHome();
+    } finally {
+      stopping = false;
     }
   });
 
+  // Also for a meeting started or stopped with the meeting key, in another app.
   api.onLive((l) => {
     if (l.state === "done") {
-      if (live?.meeting.id === l.meeting.id) live = { ...l };
-      return; // the stop button's answer opens the saved meeting
+      live = null;
+      ui.onRecording(false);
+      if (stopping) return; // the Stop button's answer opens the saved meeting
+      if (shown?.id === l.meeting.id) {
+        void (async () => {
+          await flush();
+          try {
+            open(await api.get(l.meeting.id));
+          } catch (err) {
+            showError(String(err));
+          }
+        })();
+      }
+      if (!home.hidden) void renderList();
+      return;
     }
+    const isNew = live?.meeting.id !== l.meeting.id;
     live = l;
     liveAt = performance.now();
     ui.onRecording(true);
     if (shown?.id === l.meeting.id) renderView();
+    else if (isNew && !home.hidden) void renderList();
   });
 
   api.onLevels((lv) => {

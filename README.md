@@ -43,7 +43,7 @@ make desktop-bundle      # AppImage / .deb / .rpm in desktop/src-tauri/target/re
   **.txt**, **.srt** and **.vtt** save the transcript or subtitles.
 - **The window** has sections on the left: **Transcribe** (files, dictation in the window, the
   result; it opens there), **Meetings** (below) and the settings — General (language), Model (model, free memory when
-  idle), Dictation (the key, start at login), Live preview (on/off, engine), About.
+  idle), Keys (the dictation key, the meeting key, start at login), Live preview (on/off, engine), About.
   <kbd>Ctrl</kbd>+<kbd>,</kbd> jumps to the settings, <kbd>Esc</kbd> back to Transcribe.
 - Files given on the command line open in the app. **Closing the window keeps the app
   running** in the tray, so the dictation key stays instant. Quit from the tray or with
@@ -122,7 +122,12 @@ Turn the preview off in Settings (`live_preview = false`). Details and measureme
 
 Record a call or a talk, as text next to your notes (Linux for now). No bot joins the call.
 
-- **Start recording** records two sources: your microphone (**Me**) and the computer's sound
+- **The meeting key** (<kbd>Super</kbd>+<kbd>Ctrl</kbd>+<kbd>M</kbd> on Linux,
+  <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>M</kbd> on macOS and Windows; change it in Settings → Keys)
+  starts a recording from any app, and stops it. It also starts the app when it is closed. A
+  strip at the bottom of the screen shows the time, the Me/Them levels and the newest line,
+  and "saved" at the end. It never takes the keyboard focus.
+- **Start recording** (in the window) does the same. It records two sources: your microphone (**Me**) and the computer's sound
   (**Them**: the others in Zoom, Meet, Teams…, through PipeWire or PulseAudio).
 - The text comes a few seconds after someone speaks: each source is cut at pauses (4–20 s
   pieces) and the speech model of the Model section writes them. Write your notes on the left
@@ -147,13 +152,14 @@ model = "large-v3-turbo-q5_0"   # empty or missing: the default for this machine
 language = "auto"
 idle_unload_minutes = 15        # free the model's memory after 15 idle minutes; 0 = never
 hotkey = "SUPER + CTRL + X"
+meeting_hotkey = "SUPER + CTRL + M"   # start/stop a meeting recording; "" = no key
 live_preview = true             # words in the overlay while you talk
 preview_engine = "auto"         # auto (Parakeet when on disk, else Whistle) | whistle | parakeet
 ```
 
 A model that the app no longer has (the faster-whisper `fw:` models) falls back to the
 default. Command line: `--model <id>` (overrides the file), `--language <code>`, `--hotkey "…"`,
-`--no-hotkey`, `--background`, `--transcribe <file>` (prints JSON, no window),
+`--no-hotkey`, `--background`, `--meeting toggle|start|stop`, `--transcribe <file>` (prints JSON, no window),
 `--print-snippet [lua|conf]`, `--remove-hotkey`, `--dictate press|release|toggle|cancel|quit`.
 
 ## Models
@@ -200,7 +206,7 @@ make desktop-dev   # the app with hot reload (Vite + tauri dev)
 make test          # UI typecheck + build, Rust unit tests
 make e2e-desktop   # the app in a nested Hyprland (your session is not touched): files,
                    # errors, dictation, the global key, live preview, Settings, a meeting;
-                   # screenshots 09-22.
+                   # the meeting key and its strip; screenshots 09-24.
                    # python3 scripts/e2e_desktop.py --first-run: empty model folder
                    # OW_E2E_HYPRBARS=<hyprbars.so>: also checks that title-bar plugins skip the overlay
 make bench         # research only: the model benchmark (docs/benchmark.md), Python via uv

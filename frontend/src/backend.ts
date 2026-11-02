@@ -28,6 +28,8 @@ export interface Backend {
   saveOptions(o: Options): Promise<void>;
   /** Move the dictation key now (Hyprland syntax, "SUPER + ALT + D"). */
   setHotkey(key: string): Promise<Status>;
+  /** Move the meeting key now. */
+  setMeetingHotkey(key: string): Promise<Status>;
   /** Take the key over from the user's Hyprland config block. Returns the backup's path. */
   adoptHotkey(): Promise<{ status: Status; backup: string; start_at_login: boolean }>;
   onStatus(cb: (s: Status) => void): void;
@@ -97,6 +99,7 @@ async function desktopBackend(): Promise<Backend> {
       await invoke("set_options", { options: o });
     },
     setHotkey: (key) => invoke<Status>("set_hotkey", { key }),
+    setMeetingHotkey: (key) => invoke<Status>("set_meeting_hotkey", { key }),
     adoptHotkey: () => invoke<{ status: Status; backup: string; start_at_login: boolean }>("adopt_hotkey"),
     onStatus(cb) {
       void listen<Status>("status", (e) => cb(e.payload));

@@ -39,7 +39,7 @@
           </button>
           <button type="button" role="tab" class="nav-item" data-section="dictation" aria-controls="section-dictation">
             <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect width="20" height="16" x="2" y="4" rx="2" /><path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M8 12h.01M12 12h.01M16 12h.01M7 16h10" /></svg>
-            Dictation
+            Keys
           </button>
           <button type="button" role="tab" class="nav-item" data-section="preview" aria-controls="section-preview">
             <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 10v3M6 6v11M10 3v18M14 8v7M18 5v13M22 10v3" /></svg>
@@ -215,8 +215,8 @@
         <!-- Dictation -->
         <section id="section-dictation" class="section" role="tabpanel" data-section="dictation" hidden>
           <header class="section-head">
-            <h3>Dictation</h3>
-            <p>The key that types what you say into any app.</p>
+            <h3>Keys</h3>
+            <p>Keys that work in any app, also when this window is closed.</p>
           </header>
           <div id="key-row" class="field field-stacked key-row">
             <div class="field-text">
@@ -230,10 +230,21 @@
             </div>
           </div>
           <div class="separator"></div>
+          <div id="meeting-key-row" class="field field-stacked key-row">
+            <div class="field-text">
+              <span class="label">Meeting key</span>
+              <p id="meeting-key-note" class="field-desc key-note" aria-live="polite"></p>
+            </div>
+            <div class="key-line">
+              <kbd id="meeting-key-current" class="key-current">…</kbd>
+              <button id="meeting-key-change" type="button" class="btn btn-outline">Change</button>
+            </div>
+          </div>
+          <div class="separator"></div>
           <div class="field">
             <div class="field-text">
               <label for="login-check">Start when you log in</label>
-              <p class="field-desc">open-whisper starts in the background (no window), so the dictation key always works.</p>
+              <p class="field-desc">open-whisper starts in the background (no window), so the keys always work.</p>
             </div>
             <input id="login-check" type="checkbox" role="switch" class="switch" />
           </div>

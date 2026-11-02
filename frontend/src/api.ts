@@ -29,6 +29,12 @@ export interface Status {
   /** Why the key is not active (source "none" with a key). */
   hotkey_problem?: string;
   start_at_login?: boolean;
+  /** The meeting key ("SUPER + CTRL + M"; "" = none), where it lives, why it is not active. */
+  meeting_key?: string;
+  meeting_key_source?: "app" | "manual" | "none";
+  meeting_key_problem?: string;
+  /** A meeting is being recorded. */
+  recording?: boolean;
   options?: { model: string; language: string; idle_unload_minutes: number; live_preview?: boolean; preview_engine?: string };
   /** Live preview: state off | preparing | ready | unavailable; engine whistle | parakeet. */
   preview?: { state: string; error: string | null; engine?: string };

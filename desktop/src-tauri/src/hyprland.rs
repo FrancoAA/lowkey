@@ -22,6 +22,8 @@ use serde_json::Value;
 /// Binds that the app adds say so; the permanent config snippet says just "Dictate (open-whisper)".
 pub const RUNTIME_DESC: &str = "Dictate (open-whisper, added by the app)";
 pub const CONFIG_DESC: &str = "Dictate (open-whisper)";
+/// The meeting key (one bind: a tap starts or stops the recording). Only the app adds it.
+pub const MEETING_DESC: &str = "Meeting recording (open-whisper, added by the app)";
 /// The overlay window's title; the window rule matches it.
 pub const OVERLAY_TITLE: &str = "open-whisper-overlay";
 
@@ -117,6 +119,16 @@ pub fn bind_lua(key: &str, command: &str, description: &str) -> String {
     )
 }
 
+/// One bind, on press only (the meeting key).
+pub fn bind_once_lua(key: &str, command: &str, description: &str) -> String {
+    format!("hl.bind({}, hl.dsp.exec_cmd({}), {{ description = {} }})", lua_str(key), lua_str(command), lua_str(description))
+}
+
+/// The meeting key's command: this executable with --meeting toggle.
+pub fn meeting_command(exe: &Path) -> String {
+    format!("{} --meeting toggle", shell_quote(&exe.to_string_lossy()))
+}
+
 /// The command a bind runs: this executable with --dictate.
 pub fn dictate_command(exe: &Path) -> String {
     format!("{} --dictate", shell_quote(&exe.to_string_lossy()))
@@ -184,12 +196,12 @@ pub fn removable_app_keys(binds: &[Value]) -> Vec<String> {
     let names = [(64u64, "SUPER"), (4, "CTRL"), (8, "ALT"), (1, "SHIFT")];
     let user: std::collections::HashSet<_> = binds
         .iter()
-        .filter(|b| !matches!(b["description"].as_str().unwrap_or(""), "" | RUNTIME_DESC))
+        .filter(|b| !matches!(b["description"].as_str().unwrap_or(""), "" | RUNTIME_DESC | MEETING_DESC))
         .map(combo)
         .collect();
     let mut out = Vec::new();
     for b in binds {
-        if b["description"].as_str() == Some(RUNTIME_DESC) && !user.contains(&combo(b)) && b["submap"].as_str().unwrap_or("").is_empty() {
+        if matches!(b["description"].as_str(), Some(RUNTIME_DESC | MEETING_DESC)) && !user.contains(&combo(b)) && b["submap"].as_str().unwrap_or("").is_empty() {
             let (mask, key) = combo(b);
             let mut parts: Vec<String> = names.iter().filter(|(m, _)| mask & m != 0).map(|(_, n)| n.to_string()).collect();
             parts.push(key);
@@ -371,10 +383,16 @@ pub fn binds_on_key(binds: &[Value], key: &str) -> Vec<BindInfo> {
 /// description, and a release bind without description on the same key. Anything else on the
 /// key (an undescribed press bind included) is someone else's.
 pub fn foreign_binds(on_key: &[BindInfo]) -> Vec<String> {
-    let ours_here = on_key.iter().any(|b| b.description == RUNTIME_DESC);
+    foreign_binds_for(on_key, RUNTIME_DESC)
+}
+
+/// The same for the key whose binds carry `ours` (the dictation or the meeting key). The other
+/// key of the app counts as someone else's: the two keys never share a combination.
+pub fn foreign_binds_for(on_key: &[BindInfo], ours: &str) -> Vec<String> {
+    let ours_here = on_key.iter().any(|b| b.description == ours);
     on_key
         .iter()
-        .filter(|b| !(b.description == RUNTIME_DESC || (ours_here && b.release && b.description.is_empty())))
+        .filter(|b| !(b.description == ours || (ours_here && b.release && b.description.is_empty())))
         .map(|b| if b.description.is_empty() { "another shortcut".to_string() } else { b.description.clone() })
         .collect()
 }
@@ -382,6 +400,11 @@ pub fn foreign_binds(on_key: &[BindInfo]) -> Vec<String> {
 pub struct Hotkey {
     key: Mutex<String>,
     command: String,
+    /// The description on the app's binds for this key.
+    desc: &'static str,
+    /// Dictation: press and release binds, and the user's config block can hold the key.
+    /// Meeting: one bind on press.
+    dictation: bool,
     state: Mutex<State>,
     stop: Arc<AtomicBool>,
     /// Held by change, install and adopt: one bind operation at a time (the reload watcher too).
@@ -397,7 +420,40 @@ struct State {
 
 impl Hotkey {
     pub fn new(key: &str, exe: &Path) -> Arc<Self> {
-        Arc::new(Self { key: Mutex::new(key.to_string()), command: dictate_command(exe), state: Mutex::default(), stop: Arc::default(), op: Mutex::new(()) })
+        Arc::new(Self {
+            key: Mutex::new(key.to_string()),
+            command: dictate_command(exe),
+            desc: RUNTIME_DESC,
+            dictation: true,
+            state: Mutex::default(),
+            stop: Arc::default(),
+            op: Mutex::new(()),
+        })
+    }
+
+    /// The meeting key: a tap starts or stops a meeting recording.
+    pub fn new_meeting(key: &str, exe: &Path) -> Arc<Self> {
+        Arc::new(Self {
+            key: Mutex::new(key.to_string()),
+            command: meeting_command(exe),
+            desc: MEETING_DESC,
+            dictation: false,
+            state: Mutex::default(),
+            stop: Arc::default(),
+            op: Mutex::new(()),
+        })
+    }
+
+    fn bind(&self, key: &str) -> String {
+        if self.dictation {
+            bind_lua(key, &self.command, self.desc)
+        } else {
+            bind_once_lua(key, &self.command, self.desc)
+        }
+    }
+
+    fn foreign(&self, on_key: &[BindInfo]) -> Vec<String> {
+        foreign_binds_for(on_key, self.desc)
     }
 
     pub fn key(&self) -> String {
@@ -430,16 +486,16 @@ impl Hotkey {
         if new == old && self.state.lock().added {
             return Ok(self.active_text());
         }
-        if let Some(other) = foreign_binds(&binds_on_key(&all, &new)).into_iter().next() {
+        if let Some(other) = self.foreign(&binds_on_key(&all, &new)).into_iter().next() {
             anyhow::bail!("{new} is already used by: {other}");
         }
         // A leftover of ours on the new key (an earlier run): replace it, never doubled.
         if !binds_on_key(&all, &new).is_empty() {
             eval(&format!("hl.unbind({})", lua_str(&new)))?;
         }
-        eval(&bind_lua(&new, &self.command, RUNTIME_DESC))?;
+        eval(&self.bind(&new))?;
         // The old key: only when every bind on it is ours (hl.unbind removes all binds of a key).
-        if new != old && foreign_binds(&binds_on_key(&all, &old)).is_empty() && !binds_on_key(&all, &old).is_empty() {
+        if new != old && self.foreign(&binds_on_key(&all, &old)).is_empty() && !binds_on_key(&all, &old).is_empty() {
             let _ = eval(&format!("hl.unbind({})", lua_str(&old)));
         }
         *self.key.lock() = new;
@@ -496,9 +552,9 @@ impl Hotkey {
         let mut st = State { rule: true, ..State::default() };
         let key = self.key();
         let on_key = binds_on_key(&binds(), &key);
-        let foreign = foreign_binds(&on_key);
-        let ours = on_key.iter().any(|b| b.description == RUNTIME_DESC);
-        let text = if on_key.iter().any(|b| b.description == CONFIG_DESC) {
+        let foreign = self.foreign(&on_key);
+        let ours = on_key.iter().any(|b| b.description == self.desc);
+        let text = if self.dictation && on_key.iter().any(|b| b.description == CONFIG_DESC) {
             st.from_config = true;
             format!("{key} (from your Hyprland config)")
         } else if ours && keep_existing && foreign.is_empty() {
@@ -510,7 +566,7 @@ impl Hotkey {
             if ours {
                 eval(&format!("hl.unbind({})", lua_str(&key)))?; // from an earlier run; may point elsewhere
             }
-            eval(&bind_lua(&key, &self.command, RUNTIME_DESC))?;
+            eval(&self.bind(&key))?;
             st.added = true;
             self.active_text()
         };
@@ -519,7 +575,11 @@ impl Hotkey {
     }
 
     fn active_text(&self) -> String {
-        format!("{} — hold to talk, tap to start/stop (also starts open-whisper when it is closed)", self.key())
+        if self.dictation {
+            format!("{} — hold to talk, tap to start/stop (also starts open-whisper when it is closed)", self.key())
+        } else {
+            format!("{} — tap to start or stop a meeting recording (also starts open-whisper when it is closed)", self.key())
+        }
     }
 
     pub fn rule_installed(&self) -> bool {
@@ -549,7 +609,7 @@ impl Hotkey {
                                 let _op = me.op.lock(); // after a running change/adopt
                                 let was = { let s = me.state.lock(); s.added || s.rule };
                                 if was {
-                                    eprintln!("  Hyprland config reloaded: adding the dictation key again");
+                                    eprintln!("  Hyprland config reloaded: adding the {} key again", if me.dictation { "dictation" } else { "meeting" });
                                     let _ = me.install_locked(true);
                                 }
                             }
@@ -678,6 +738,23 @@ mod tests {
         assert_eq!(foreign_binds(&[b(RUNTIME_DESC, false), b("", true), b("", false)]), vec!["another shortcut"]);
         assert_eq!(foreign_binds(&[b("Screenshot", false)]), vec!["Screenshot"]);
         assert_eq!(foreign_binds(&[b(CONFIG_DESC, false), b("", true)]), vec![CONFIG_DESC.to_string(), "another shortcut".into()]);
+    }
+
+    #[test]
+    fn the_meeting_key_and_the_dictation_key_never_share_a_combination() {
+        let dictation = BindInfo { description: RUNTIME_DESC.into(), release: false };
+        let release = BindInfo { description: String::new(), release: true };
+        let meeting = BindInfo { description: MEETING_DESC.into(), release: false };
+        assert!(foreign_binds_for(&[meeting.clone()], MEETING_DESC).is_empty());
+        assert_eq!(foreign_binds_for(&[dictation.clone(), release.clone()], MEETING_DESC), vec![RUNTIME_DESC.to_string(), "another shortcut".into()]);
+        assert_eq!(foreign_binds(&[meeting]), vec![MEETING_DESC.to_string()]);
+        assert!(foreign_binds(&[dictation, release]).is_empty());
+        assert_eq!(
+            bind_once_lua("SUPER + CTRL + M", &meeting_command(Path::new("/opt/o w/open-whisper")), MEETING_DESC),
+            "hl.bind(\"SUPER + CTRL + M\", hl.dsp.exec_cmd(\"'/opt/o w/open-whisper' --meeting toggle\"), { description = \"Meeting recording (open-whisper, added by the app)\" })"
+        );
+        let binds = vec![json!({"modmask": 68, "key": "M", "description": MEETING_DESC, "submap": ""})];
+        assert_eq!(removable_app_keys(&binds), vec!["SUPER + CTRL + M".to_string()], "--remove-hotkey removes the meeting key too");
     }
 
     #[test]
