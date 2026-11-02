@@ -45,6 +45,10 @@ pub struct App {
     /// A meeting's devices are opening / it is being stopped.
     meeting_starting: AtomicBool,
     meeting_stopping: AtomicBool,
+    /// The meeting key was tapped to stop while the meeting was starting.
+    meeting_stop_pending: AtomicBool,
+    /// Hyprland: the overlay's window rule, added when no key added it (no keys at all).
+    overlay_rule: AtomicBool,
     /// The meeting key (same three parts as the dictation key's).
     meeting_hotkey: Mutex<Option<Arc<hyprland::Hotkey>>>,
     meeting_hotkey_text: Mutex<String>,
@@ -120,13 +124,20 @@ impl App {
         }
     }
 
-    /// A key as it is now ("" = none).
+    /// A key as it is now ("" = none). The meeting key: the chosen one also when it could not
+    /// be added (Options then shows it "not active", with the reason).
     fn key_of(&self, kind: KeyKind) -> String {
         let slot = self.slot(kind);
         if let Some(h) = slot.hotkey.lock().as_ref() {
             return h.key();
         }
-        slot.os_key.lock().clone().unwrap_or_default()
+        if let Some(k) = slot.os_key.lock().clone() {
+            return k;
+        }
+        match kind {
+            KeyKind::Dictation => String::new(),
+            KeyKind::Meeting => self.config.lock().meeting_hotkey.clone(),
+        }
     }
 
     /// The dictation key as it is now ("" = none).
@@ -240,7 +251,14 @@ impl App {
         self.overlay_wants[who].store(on, Ordering::SeqCst);
         let visible = self.overlay_wants.iter().any(|w| w.load(Ordering::SeqCst));
         let rule = |h: &Mutex<Option<Arc<hyprland::Hotkey>>>| h.lock().as_ref().map(|h| h.rule_installed()).unwrap_or(false);
-        let usable = rule(&self.hotkey) || rule(&self.meeting_hotkey) || !hyprland::running();
+        let mut usable = rule(&self.hotkey) || rule(&self.meeting_hotkey) || !hyprland::running();
+        if visible && !usable {
+            // No key added the window rule (no keys at all): add it now, once.
+            if !self.overlay_rule.load(Ordering::SeqCst) && hyprland::install_overlay_rule() {
+                self.overlay_rule.store(true, Ordering::SeqCst);
+            }
+            usable = self.overlay_rule.load(Ordering::SeqCst);
+        }
         self.overlay_pending.store(visible && usable, Ordering::SeqCst);
         if visible && !self.overlay_ready.load(Ordering::SeqCst) {
             return; // shown by overlay_ready() once the page has drawn
@@ -301,31 +319,51 @@ impl App {
 
     /// The meeting key (or `--meeting`): start, stop or toggle the recording.
     fn meeting_key(self: &Arc<Self>, action: &str) {
-        if self.meeting_starting.load(Ordering::SeqCst) || self.meeting_stopping.load(Ordering::SeqCst) {
-            return; // a press while it starts or stops: nothing more to do
+        if self.meeting_starting.load(Ordering::SeqCst) {
+            // A tap to stop while the devices open: remembered, done right after the start.
+            if matches!(action, "toggle" | "stop") {
+                self.meeting_stop_pending.store(true, Ordering::SeqCst);
+            }
+            return;
+        }
+        if self.meeting_stopping.load(Ordering::SeqCst) {
+            return; // it is being saved already
         }
         let recording = self.meeting.lock().is_some();
         match (action, recording) {
-            ("toggle" | "start", false) => {
-                if let Err(e) = meeting_start_inner(self, "") {
+            ("toggle" | "start", false) => match meeting_start_inner(self, "") {
+                Ok(live) => {
+                    emit_logged(&self.handle, "meeting-start", json!({"result": {"Ok": live.meeting.id}}));
+                }
+                Err(e) if e == ALREADY_RECORDING => {} // another tap won the start
+                Err(e) => {
                     // The strip says why for a moment (it reads the meeting-start event).
+                    emit_logged(&self.handle, "meeting-start", json!({"result": {"Err": e}}));
                     self.want_overlay(1, true);
                     output::notify(&format!("Meeting not started: {e}"));
-                    let me = self.clone();
-                    std::thread::spawn(move || {
-                        std::thread::sleep(Duration::from_secs(4));
-                        if me.meeting.lock().is_none() {
-                            me.want_overlay(1, false);
-                        }
-                    });
+                    self.hide_meeting_strip_later(4);
                 }
-            }
+            },
             ("toggle" | "stop", true) => {
                 let _ = stop_meeting(self);
             }
             ("start" | "stop", _) => {} // already as asked
             other => eprintln!("  unknown --meeting action {other:?}"),
         }
+    }
+
+    /// After `secs`, the strip goes unless a meeting records again. The check and the change
+    /// happen under the meeting's lock, so a meeting that starts meanwhile keeps its strip.
+    fn hide_meeting_strip_later(self: &Arc<Self>, secs: u64) {
+        let me = self.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_secs(secs));
+            let slot = me.meeting.lock();
+            if slot.is_none() && !me.meeting_starting.load(Ordering::SeqCst) {
+                me.want_overlay(1, false);
+            }
+            drop(slot);
+        });
     }
 
     fn show_main(&self) {
@@ -345,6 +383,9 @@ impl App {
         }
         if let Some(h) = self.meeting_hotkey.lock().take() {
             h.uninstall();
+        }
+        if self.overlay_rule.load(Ordering::SeqCst) {
+            hyprland::remove_overlay_rule();
         }
         let f = runtime_dir().join("desktop.json");
         if std::fs::read_to_string(&f).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()).and_then(|v| v["pid"].as_u64())
@@ -647,13 +688,33 @@ async fn meeting_start(app: State<'_, AppRef>, title: String) -> Result<meeting:
     r
 }
 
+const ALREADY_RECORDING: &str = "A meeting is already being recorded.";
+
+/// Clears a flag when dropped: also when the code under it panics.
+struct ClearOnDrop<'a>(&'a AtomicBool);
+
+impl Drop for ClearOnDrop<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
+}
+
 fn meeting_start_inner(app: &AppRef, title: &str) -> Result<meeting::Live, String> {
     // Claim the start without holding the slot's lock while the devices open.
     if app.meeting.lock().is_some() || app.meeting_starting.swap(true, Ordering::SeqCst) {
-        return Err("A meeting is already being recorded.".into());
+        return Err(ALREADY_RECORDING.into());
     }
-    let r = meeting_open(app, title);
-    app.meeting_starting.store(false, Ordering::SeqCst);
+    app.meeting_stop_pending.store(false, Ordering::SeqCst);
+    let r = {
+        let _starting = ClearOnDrop(&app.meeting_starting);
+        meeting_open(app, title)
+    };
+    if r.is_ok() && app.meeting_stop_pending.swap(false, Ordering::SeqCst) {
+        let a2 = app.clone();
+        std::thread::spawn(move || {
+            let _ = stop_meeting(&a2); // the key was tapped again while it started
+        });
+    }
     r
 }
 
@@ -710,13 +771,7 @@ fn stop_meeting(app: &AppRef) -> Result<meeting::Meeting, String> {
     app.meeting_stopping.store(false, Ordering::SeqCst);
     app.emit_status();
     // The strip says "saved" for a moment, then goes (unless a new meeting started).
-    let a2 = app.clone();
-    std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_secs(3));
-        if a2.meeting.lock().is_none() {
-            a2.want_overlay(1, false);
-        }
-    });
+    app.hide_meeting_strip_later(3);
     r.map_err(|_| {
         session.abandon(); // keep what is transcribed; the next meeting can start
         "Stopping failed; the meeting is saved as it was.".to_string()
@@ -867,6 +922,14 @@ fn set_key_inner(app: &AppRef, key: &str, kind: KeyKind) -> Result<Value, String
         cfg.save().map_err(|e| e.to_string())?;
     }
     *slot.text.lock() = text;
+    // The dictation key moved: a meeting key that could not be added (it was the same
+    // combination) may work now.
+    if kind == KeyKind::Dictation && app.source_of(KeyKind::Meeting) == "none" {
+        let mk = app.config.lock().meeting_hotkey.clone();
+        if !mk.is_empty() && mk != app.hotkey_key() {
+            let _ = set_key_inner(&app, &mk, KeyKind::Meeting);
+        }
+    }
     app.emit_status();
     Ok(app.status())
 }
@@ -1084,6 +1147,8 @@ pub fn run() {
                 meeting: Mutex::new(None),
                 meeting_starting: AtomicBool::new(false),
                 meeting_stopping: AtomicBool::new(false),
+                meeting_stop_pending: AtomicBool::new(false),
+                overlay_rule: AtomicBool::new(false),
                 meeting_hotkey: Mutex::new(None),
                 meeting_hotkey_text: Mutex::new(String::new()),
                 meeting_os_key: Mutex::new(None),

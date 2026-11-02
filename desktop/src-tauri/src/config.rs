@@ -140,7 +140,7 @@ Usage: open-whisper [options] [audio or video files…]
   --model <id>            model to use (see Options in the app; default: picked for this machine)
   --language <code>       force a language instead of auto-detect
   --hotkey \"SUPER + CTRL + X\"   global dictation key (Hyprland)
-  --no-hotkey             do not add the global dictation key
+  --no-hotkey             do not add the global keys (dictation and meeting)
   --dictate <action>      press | release | toggle | cancel | quit (used by the key bind)
   --meeting <action>      toggle | start | stop a meeting recording (used by the meeting key)
   --background            start without opening the window

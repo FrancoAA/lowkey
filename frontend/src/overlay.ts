@@ -121,7 +121,8 @@ function renderMeeting(now: number): void {
   root.dataset.state = m.state === "recording" ? "recording" : m.state === "finishing" ? "transcribing" : "done";
   const last = m.meeting.lines[m.meeting.lines.length - 1];
   if (m.state === "recording") {
-    label.textContent = `Recording ${clock(elapsed * 1000)}`;
+    label.textContent = "Recording";
+    timer.textContent = clock(elapsed * 1000); // aria-hidden: no announcement every second
     const stop = meetingKey ? ` · ${prettyKey(meetingKey)} stops` : "";
     detail.textContent = last
       ? speakerLine(last.speaker === "me" ? "Me: " : "Them: ", last.text)

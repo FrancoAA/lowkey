@@ -302,6 +302,9 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): void {
       }
       void renderList();
     } catch (err) {
+      // The meeting key stopped it at the same moment: it is being saved; its "done" event
+      // opens the saved meeting.
+      if (String(err).includes("being saved")) return;
       showError(String(err));
       // The app freed the recording (and saved what it had): back to a usable list.
       live = null;

@@ -13,7 +13,9 @@ macOS and Windows, a prompt when a call starts, and questions over past meetings
 
 - Settings → Keys → **Meeting key**: Super+Ctrl+M on Linux, Ctrl+Alt+M on macOS and Windows
   (`meeting_hotkey` in config.toml). It runs `open-whisper --meeting toggle`: a tap starts a
-  meeting, the next tap stops and saves it. A closed app starts in the background for it.
+  meeting, the next tap stops and saves it. A tap while it starts is remembered (it stops
+  right after the start). On Hyprland a closed app starts in the background for it; on X11,
+  macOS and Windows the key lives in the running app.
 - Hyprland: one bind (no release bind), described "Meeting recording (open-whisper, added by
   the app)". The dictation key and the meeting key never share a combination: each counts the
   other's bind as someone else's, and the app refuses the dictation key as the meeting key.
@@ -22,7 +24,12 @@ macOS and Windows, a prompt when a call starts, and questions over past meetings
   never focused). While a meeting records it shows a red dot, the time, the Me/Them levels and
   the newest line ("Them: …", the speaker always shows). At Stop it says "Saving the
   meeting…", then "Meeting saved" for 3 s. A dictation during a meeting takes the strip and
-  gives it back when it is done. A meeting started in the window shows the strip too.
+  gives it back when it is done. A meeting started in the window shows the strip too (with no
+  keys at all, the app adds the strip's window rule itself). The time is not in the
+  screen-reader region, so it is not read out every second.
+- If the meeting key cannot be added (e.g. `config.toml` gives it the dictation key's
+  combination), Settings → Keys shows it "not active" with the reason; moving the dictation key
+  adds it again.
 - A meeting started with the key gets the title "Meeting"; the list shows its date.
 
 ## Two sources

@@ -124,6 +124,15 @@ pub fn bind_once_lua(key: &str, command: &str, description: &str) -> String {
     format!("hl.bind({}, hl.dsp.exec_cmd({}), {{ description = {} }})", lua_str(key), lua_str(command), lua_str(description))
 }
 
+/// The overlay's window rule without a key (a meeting from the window, no keys at all).
+pub fn install_overlay_rule() -> bool {
+    lua_config() && eval(&overlay_rule_lua()).is_ok()
+}
+
+pub fn remove_overlay_rule() {
+    let _ = eval("if _G.open_whisper_desktop_rule then _G.open_whisper_desktop_rule:set_enabled(false); _G.open_whisper_desktop_rule = nil end");
+}
+
 /// The meeting key's command: this executable with --meeting toggle.
 pub fn meeting_command(exe: &Path) -> String {
     format!("{} --meeting toggle", shell_quote(&exe.to_string_lossy()))
@@ -383,13 +392,14 @@ pub fn binds_on_key(binds: &[Value], key: &str) -> Vec<BindInfo> {
 /// description, and a release bind without description on the same key. Anything else on the
 /// key (an undescribed press bind included) is someone else's.
 pub fn foreign_binds(on_key: &[BindInfo]) -> Vec<String> {
-    foreign_binds_for(on_key, RUNTIME_DESC)
+    foreign_binds_for(on_key, RUNTIME_DESC, true)
 }
 
 /// The same for the key whose binds carry `ours` (the dictation or the meeting key). The other
 /// key of the app counts as someone else's: the two keys never share a combination.
-pub fn foreign_binds_for(on_key: &[BindInfo], ours: &str) -> Vec<String> {
-    let ours_here = on_key.iter().any(|b| b.description == ours);
+/// `release_bind`: the key has an undescribed release bind of ours (the dictation key only).
+pub fn foreign_binds_for(on_key: &[BindInfo], ours: &str, release_bind: bool) -> Vec<String> {
+    let ours_here = release_bind && on_key.iter().any(|b| b.description == ours);
     on_key
         .iter()
         .filter(|b| !(b.description == ours || (ours_here && b.release && b.description.is_empty())))
@@ -453,7 +463,7 @@ impl Hotkey {
     }
 
     fn foreign(&self, on_key: &[BindInfo]) -> Vec<String> {
-        foreign_binds_for(on_key, self.desc)
+        foreign_binds_for(on_key, self.desc, self.dictation)
     }
 
     pub fn key(&self) -> String {
@@ -745,8 +755,10 @@ mod tests {
         let dictation = BindInfo { description: RUNTIME_DESC.into(), release: false };
         let release = BindInfo { description: String::new(), release: true };
         let meeting = BindInfo { description: MEETING_DESC.into(), release: false };
-        assert!(foreign_binds_for(&[meeting.clone()], MEETING_DESC).is_empty());
-        assert_eq!(foreign_binds_for(&[dictation.clone(), release.clone()], MEETING_DESC), vec![RUNTIME_DESC.to_string(), "another shortcut".into()]);
+        assert!(foreign_binds_for(&[meeting.clone()], MEETING_DESC, false).is_empty());
+        assert_eq!(foreign_binds_for(&[dictation.clone(), release.clone()], MEETING_DESC, false), vec![RUNTIME_DESC.to_string(), "another shortcut".into()]);
+        // A user's release bind next to the meeting key is theirs (the meeting key has none).
+        assert_eq!(foreign_binds_for(&[meeting.clone(), release.clone()], MEETING_DESC, false), vec!["another shortcut".to_string()]);
         assert_eq!(foreign_binds(&[meeting]), vec![MEETING_DESC.to_string()]);
         assert!(foreign_binds(&[dictation, release]).is_empty());
         assert_eq!(

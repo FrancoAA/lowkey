@@ -84,14 +84,14 @@ keeps working: the script hands the key to the app, or starts `~/.local/bin/open
 `$XDG_RUNTIME_DIR/open-whisper/app.log`. When the key is in your config, the app
 sees it and does not add it again. Classic `hyprland.conf`: `--print-snippet conf`.
 
-- **Change the key in Settings → Dictation → Change**, then press the new combination
+- **Change the key in Settings → Keys → Change**, then press the new combination
   (Super, Ctrl or Alt with a letter, digit, F1-F24 or Space; Esc cancels). It works at once,
   and the app refuses a combination that another shortcut uses. When the key comes from a
   block in your Hyprland config, Settings offer **"Let the app manage it"**: the block is
   removed (a backup is kept next to the file), Hyprland reloads, and the app checks that its
   key works; if not, your config is put back. It also turns on "Start at login" (the config's
   bind worked after a logout; the app's bind needs the app).
-- **Settings → Dictation → Start when you log in**: the app starts hidden at login, so the key
+- **Settings → Keys → Start when you log in**: the app starts hidden at login, so the key
   works all the time (Linux: `~/.config/autostart/open-whisper.desktop`).
 - Command line: `--hotkey "…"` (this run), `hotkey = "…"` in the settings, `--no-hotkey` adds
   none; `--remove-hotkey` removes a key that the app added (never yours).
@@ -124,7 +124,8 @@ Record a call or a talk, as text next to your notes (Linux for now). No bot join
 
 - **The meeting key** (<kbd>Super</kbd>+<kbd>Ctrl</kbd>+<kbd>M</kbd> on Linux,
   <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>M</kbd> on macOS and Windows; change it in Settings → Keys)
-  starts a recording from any app, and stops it. It also starts the app when it is closed. A
+  starts a recording from any app, and stops it. On Hyprland (or with your own desktop bind)
+  it also starts the app when it is closed; on X11, macOS and Windows the app must run. A
   strip at the bottom of the screen shows the time, the Me/Them levels and the newest line,
   and "saved" at the end. It never takes the keyboard focus.
 - **Start recording** (in the window) does the same. It records two sources: your microphone (**Me**) and the computer's sound
@@ -159,7 +160,7 @@ preview_engine = "auto"         # auto (Parakeet when on disk, else Whistle) | w
 
 A model that the app no longer has (the faster-whisper `fw:` models) falls back to the
 default. Command line: `--model <id>` (overrides the file), `--language <code>`, `--hotkey "…"`,
-`--no-hotkey`, `--background`, `--meeting toggle|start|stop`, `--transcribe <file>` (prints JSON, no window),
+`--no-hotkey` (no global keys), `--background`, `--meeting toggle|start|stop`, `--transcribe <file>` (prints JSON, no window),
 `--print-snippet [lua|conf]`, `--remove-hotkey`, `--dictate press|release|toggle|cancel|quit`.
 
 ## Models
