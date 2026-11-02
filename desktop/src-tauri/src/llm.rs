@@ -199,7 +199,7 @@ pub type ProgressFn<'a> = &'a mut dyn FnMut(&str, u64, u64);
 
 /// The server and the model, downloaded and checked once. Returns (server, model).
 pub fn ensure_builtin(m: &Model, progress: ProgressFn, cancel: &AtomicBool) -> anyhow::Result<(PathBuf, PathBuf)> {
-    let rt = RUNTIME.as_ref().ok_or_else(|| anyhow::anyhow!("the built-in model is not available for this system; use your own server in Settings → AI notes"))?;
+    let rt = RUNTIME.as_ref().ok_or_else(|| anyhow::anyhow!("the built-in model is not available for this system; use your own server in Settings → Models → AI notes"))?;
     let rdir = runtime_dir();
     if server_exe(&rdir).is_none() {
         let archive = dir().join(rt.url.rsplit('/').next().unwrap_or("llama.archive"));

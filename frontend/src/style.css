@@ -202,8 +202,6 @@ h1 { font-size: 20px; font-weight: 600; }
 .side-brand h1 { font-size: 15px; font-weight: 600; }
 .side-brand .tagline { font-size: 12px; line-height: 1.35; }
 .settings-title { font-size: 12px; font-weight: 500; color: var(--muted-foreground); padding: 14px 8px 4px; }
-.side-foot { margin-top: auto; padding-top: 16px; }
-.side-foot .model-status { width: 100%; border-radius: var(--radius); height: auto; min-height: 36px; padding: 8px 10px; }
 #settings-tabs { display: flex; flex-direction: column; gap: 2px; }
 .nav-item {
   display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 8px; border: 0; border-radius: calc(var(--radius) - 2px);
@@ -223,6 +221,9 @@ h1 { font-size: 20px; font-weight: 600; }
 .field { display: flex; align-items: center; justify-content: space-between; gap: 24px; }
 .field-stacked { flex-direction: column; align-items: stretch; gap: 10px; }
 .field-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+/* In a row: a control that leaves the text no room goes under it (switches are small: they stay). */
+.field:not(.field-stacked) { flex-wrap: wrap; row-gap: 10px; }
+.field:not(.field-stacked) > .field-text { flex: 1 1 16em; }
 .field-text label, .field-text .label { font-weight: 500; }
 .field-desc { margin: 0; color: var(--muted-foreground); font-size: 13px; }
 
@@ -252,7 +253,6 @@ h1 { font-size: 20px; font-weight: 600; }
 @media (max-width: 560px) {
   .settings { grid-template-columns: 1fr; grid-template-rows: auto 1fr; height: auto; min-height: 100vh; }
   .side-brand .tagline, .settings-title { display: none; }
-  .side-foot { margin-top: 8px; padding-top: 0; }
   .settings-nav { border-right: 0; border-bottom: 1px solid var(--border); }
   #settings-tabs { flex-direction: row; flex-wrap: wrap; }
   .settings-content { padding: 24px 20px; }
@@ -449,3 +449,14 @@ h1 { font-size: 20px; font-weight: 600; }
 .ai-body ul, .ai-body ol { margin: 2px 0 6px; padding-left: 20px; }
 .ai-body code { font-family: ui-monospace, monospace; font-size: 12px; background: var(--muted); padding: 0 4px; border-radius: 4px; }
 .ai-error { margin: 0; color: var(--destructive); font-size: 13px; }
+
+/* ───────────────────────────── Models ───────────────────────────── */
+/* Two groups (speech to text, AI notes), each with its status on the right of its heading. */
+.model-group { display: flex; flex-direction: column; gap: 18px; padding-top: 22px; border-top: 1px solid var(--border); }
+.section-head + .model-group { padding-top: 4px; border-top: 0; }
+.group-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.group-head h3 { font-size: 16px; font-weight: 600; letter-spacing: -0.01em; }
+.group-desc { margin-top: -10px; }
+.group-head .model-status { max-width: 100%; }
+.model-status[data-state="missing"] .dot { background: var(--muted-foreground); opacity: 0.6; }
+.model-status[data-state="downloading"] { min-width: 260px; }

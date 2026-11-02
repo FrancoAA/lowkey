@@ -69,7 +69,7 @@ says so. macOS (ScreenCaptureKit) and Windows (WASAPI loopback) are not built ye
 - Each block carries its time by the clock: when a source stops sending for over a second, its
   next audio starts at the right time.
 
-One thread sends the pieces, in order, to the model chosen in Settings → Model (Parakeet or
+One thread sends the pieces, in order, to the model chosen in Settings → Models (Parakeet or
 Whisper; the VAD drops pieces with no speech). `Engines` runs one transcription at a time, so
 the meeting, dictation and files share the model safely. Lines are kept in time order; sound
 labels such as `[Music]` are dropped.
@@ -120,7 +120,8 @@ models wrote English notes for a Spanish meeting (bench/summary/results.md).
   hours of meeting), all layers on the GPU when the app found one. It stops 2 minutes after the
   last use (never during a job), on Cancel, and when the app quits; a pid file lets the next
   start stop one that a crash or a kill left behind (only if that pid is our llama-server).
-- **The built-in model** (Settings → AI notes → Model, `ai_builtin_model`): Qwen3.5 4B
+- **The built-in model** (Settings → Models → AI notes → Notes model, `ai_builtin_model`; its status, "Ready · Qwen3.5 4B
+  on GPU" or "downloads on first use", is next to the heading): Qwen3.5 4B
   (`qwen3.5-4b`, 2.7 GB, recommended), Qwen3.5 2B (`qwen3.5-2b`, 1.3 GB) or Gemma 4 E4B
   (`gemma-4-e4b`, 5.0 GB), each pinned to a Hugging Face commit and its SHA-256, with the
   note of its test in the menu. A model downloads the first time it writes notes; the runner

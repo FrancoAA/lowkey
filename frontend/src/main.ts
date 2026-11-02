@@ -1,5 +1,5 @@
 import "./style.css";
-import type { JobEvent, JobResult, ModelInfo, Segment, Status } from "./api";
+import type { AiNotesEvent, JobEvent, JobResult, ModelInfo, Segment, Status } from "./api";
 import { getBackend, type Backend, type FileRef } from "./backend";
 import { Dictation, type DictationState } from "./dictation";
 import { initMeetings } from "./meetings";
@@ -52,6 +52,10 @@ const aiModel = $<HTMLInputElement>("ai-model");
 const aiKey = $<HTMLInputElement>("ai-key");
 const aiKeyClear = $<HTMLButtonElement>("ai-key-clear");
 const aiAuto = $<HTMLInputElement>("ai-auto");
+const aiStatus = $<HTMLDivElement>("ai-status");
+const aiStatusText = $<HTMLSpanElement>("ai-status-text");
+const aiBar = aiStatus.querySelector<HTMLDivElement>(".model-bar")!;
+const aiBarFill = $<HTMLDivElement>("ai-bar-fill");
 const idleSelect = $<HTMLSelectElement>("idle-select");
 
 const MEDIA_EXT = /\.(mp3|wav|wave|m4a|aac|ogg|oga|opus|flac|webm|weba|wma|aiff?|amr|mp4|m4v|mov|mkv|avi|3gp)$/i;
@@ -783,7 +787,7 @@ document.addEventListener("keydown", (e) => {
 
 // ------------------------------------------------------------------ AI notes settings
 let aiFilled = false;
-/** Settings → AI notes, from the status. Fields being edited are left alone. */
+/** Settings → Models → AI notes, from the status. Fields being edited are left alone. */
 function renderAi(): void {
   const ai = status?.ai;
   if (!ai) return;
@@ -815,9 +819,42 @@ function renderAi(): void {
       : !b.supported
         ? "Not available for this system: use your own server."
         : `${pick?.note ?? ""} ${pick?.downloaded ? "On this computer." : `Downloads once (${gb(b.download_mb)}) the first time notes are written.`} Apache-2.0.`;
+  renderAiStatus();
   aiKey.placeholder = ai.has_key ? "A key is saved (type to replace it)" : "None";
   aiKeyClear.hidden = !ai.has_key;
   renderAiUrlNote();
+}
+
+/** The AI notes job now running (its events), else null. */
+let aiLive: AiNotesEvent | null = null;
+
+/** Models → AI notes: its status, as the speech model's (ready / not downloaded / at work). */
+function renderAiStatus(): void {
+  const ai = status?.ai;
+  if (!ai) return;
+  const set = (state: string, text: string, progress: number | null = null) => {
+    aiStatus.dataset.state = state;
+    aiStatusText.textContent = text;
+    aiBar.hidden = progress === null;
+    aiBarFill.style.width = `${Math.floor((progress ?? 0) * 100)}%`;
+  };
+  if (aiLive && ["preparing", "downloading", "writing"].includes(aiLive.state)) {
+    if (aiLive.state === "downloading") return set("downloading", aiLive.detail, aiLive.progress);
+    return set("loading", aiLive.state === "writing" ? "Writing notes…" : aiLive.detail);
+  }
+  if (ai.engine === "server") {
+    let host = "";
+    try {
+      host = new URL(ai.url).host;
+    } catch {
+      return set("error", "Own server: no valid address yet");
+    }
+    return set("ready", `Own server · ${ai.model ? `${ai.model} on ` : ""}${host}`);
+  }
+  const b = ai.builtin;
+  if (!b.supported) return set("error", "Not available on this system: use your own server");
+  if (b.downloaded) return set("ready", `Ready · ${b.model} on ${status?.gpu ? "GPU" : "CPU"}`);
+  return set("missing", `${b.model} · downloads on first use (${(b.download_mb / 1000).toFixed(1)} GB)`);
 }
 
 function renderAiUrlNote(): void {
@@ -872,6 +909,14 @@ void getBackend().then((b) => {
   );
   b.onOpenFiles((files) => files[0] && handleRef(files[0]));
   const liveDot = document.querySelector<HTMLElement>('.nav-item[data-section="meetings"] .nav-live')!;
+  b.meetings.onAiNotes((e) => {
+    aiLive = e;
+    renderAiStatus();
+    if (["done", "error", "cancelled"].includes(e.state)) {
+      aiLive = null;
+      void refreshStatus(); // "downloaded" may have changed
+    }
+  });
   initMeetings(b, { announce, onRecording: (on) => (liveDot.hidden = !on), meetingKey: () => (status?.meeting_key_source === "app" ? status.meeting_key ?? "" : "") });
   void loadLanguages();
   void refreshStatus();

@@ -884,7 +884,7 @@ fn meeting_update(app: State<'_, AppRef>, id: String, title: Option<String>, not
 }
 
 // ------------------------------------------------------------------ AI notes
-/// Settings → AI notes: the engine to use now.
+/// Settings → Models → AI notes: the engine to use now.
 fn ai_engine(app: &AppRef) -> llm::Engine {
     let cfg = app.config.lock().clone();
     if cfg.ai_engine == "server" {

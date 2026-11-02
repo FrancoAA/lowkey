@@ -551,12 +551,14 @@ def main() -> None:
         check(real_autostart.exists() == real_before, "your real ~/.config/autostart was not touched")
         print("  ok  start at login turned off again")
         press_key("Escape")
-        # Settings → AI notes (General, then three down: Model, Shortcuts, AI notes).
+        # Settings → Models → AI notes (General, down to Models, then Tab past the speech model
+        # and the idle menu to the notes model: the view scrolls to it).
         for st in ("down", "up"):
             run(["hyprctl", "dispatch", f'hl.dsp.send_key_state({{ mods = "CTRL", key = "comma", state = "{st}" }})'], env)
             time.sleep(0.05)
+        press_key("Down")
         for _ in range(3):
-            press_key("Down")
+            press_key("Tab")
         time.sleep(0.6)
         shot("28-desktop-settings-ai-notes.png")
         press_key("Escape")

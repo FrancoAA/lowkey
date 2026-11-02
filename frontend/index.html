@@ -35,15 +35,11 @@
           </button>
           <button type="button" role="tab" class="nav-item" data-section="model" aria-controls="section-model">
             <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect width="16" height="16" x="4" y="4" rx="2" /><rect width="6" height="6" x="9" y="9" rx="1" /><path d="M15 2v2M15 20v2M2 15h2M2 9h2M20 15h2M20 9h2M9 2v2M9 20v2" /></svg>
-            Model
+            Models
           </button>
           <button type="button" role="tab" class="nav-item" data-section="dictation" aria-controls="section-dictation">
             <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect width="20" height="16" x="2" y="4" rx="2" /><path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M8 12h.01M12 12h.01M16 12h.01M7 16h10" /></svg>
             Shortcuts
-          </button>
-          <button type="button" role="tab" class="nav-item" data-section="ai" aria-controls="section-ai">
-            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z" /><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z" /></svg>
-            AI notes
           </button>
           <button type="button" role="tab" class="nav-item" data-section="preview" aria-controls="section-preview">
             <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 10v3M6 6v11M10 3v18M14 8v7M18 5v13M22 10v3" /></svg>
@@ -54,12 +50,6 @@
             About
           </button>
         </nav>
-        <div class="side-foot">
-          <div id="model-status" class="model-status" aria-live="off">
-            <span class="dot"></span><span id="model-status-text">Starting…</span>
-            <div class="model-bar" hidden><div id="model-bar-fill"></div></div>
-          </div>
-        </div>
       </aside>
 
       <div class="settings-content">
@@ -222,31 +212,86 @@
           </div>
         </section>
 
-        <!-- Model -->
+        <!-- Models: speech to text, AI notes -->
         <section id="section-model" class="section" role="tabpanel" data-section="model" hidden>
           <header class="section-head">
-            <h2>Model</h2>
-            <p>The speech model that writes your text. It downloads once and runs on this computer.</p>
+            <h2>Models</h2>
+            <p>Two models run on this computer: one writes what you say as text, the other writes the AI notes of your meetings. Each downloads once.</p>
           </header>
-          <div class="field field-stacked">
-            <div class="field-text">
-              <label for="model-select">Speech model</label>
-              <p id="model-details" class="field-desc"></p>
+
+          <div class="model-group">
+            <div class="group-head">
+              <h3>Speech to text</h3>
+              <div id="model-status" class="model-status" aria-live="off">
+                <span class="dot"></span><span id="model-status-text">Starting…</span>
+                <div class="model-bar" hidden><div id="model-bar-fill"></div></div>
+              </div>
             </div>
-            <select id="model-select" class="select select-wide"></select>
+            <div class="field field-stacked">
+              <div class="field-text">
+                <label for="model-select">Speech model</label>
+                <p id="model-details" class="field-desc"></p>
+              </div>
+              <select id="model-select" class="select select-wide"></select>
+            </div>
+            <div class="field">
+              <div class="field-text">
+                <label for="idle-select">Free memory when idle</label>
+                <p class="field-desc">Unload the model after a while without use. It loads again on the next use.</p>
+              </div>
+              <select id="idle-select" class="select">
+                <option value="0">Never</option>
+                <option value="5">After 5 minutes</option>
+                <option value="15" selected>After 15 minutes</option>
+                <option value="60">After 1 hour</option>
+              </select>
+            </div>
           </div>
-          <div class="separator"></div>
-          <div class="field">
-            <div class="field-text">
-              <label for="idle-select">Free memory when idle</label>
-              <p class="field-desc">Unload the model after a while without use. It loads again on the next use.</p>
+
+          <div class="model-group">
+            <div class="group-head">
+              <h3>AI notes</h3>
+              <div id="ai-status" class="model-status" aria-live="off">
+                <span class="dot"></span><span id="ai-status-text">…</span>
+                <div class="model-bar" hidden><div id="ai-bar-fill"></div></div>
+              </div>
             </div>
-            <select id="idle-select" class="select">
-              <option value="0">Never</option>
-              <option value="5">After 5 minutes</option>
-              <option value="15" selected>After 15 minutes</option>
-              <option value="60">After 1 hour</option>
-            </select>
+            <p class="field-desc group-desc">Writes the notes of a meeting from its transcript: summary, decisions, tasks, open questions. They are a draft: check them against the transcript.</p>
+            <div class="field field-stacked">
+              <div class="field-text">
+                <label for="ai-engine">Notes model</label>
+                <p id="ai-engine-note" class="field-desc"></p>
+              </div>
+              <select id="ai-engine" class="select select-wide">
+                <option value="builtin:qwen3.5-4b">Qwen3.5 4B — runs on this computer</option>
+                <option value="server">My own server: Ollama, LM Studio, or an OpenAI-compatible API</option>
+              </select>
+            </div>
+            <div id="ai-server" class="ai-server" hidden>
+              <div class="field field-stacked">
+                <label for="ai-url" class="label">Server address</label>
+                <input id="ai-url" class="input" type="url" spellcheck="false" placeholder="http://localhost:11434/v1" />
+                <p id="ai-url-note" class="field-desc"></p>
+              </div>
+              <div class="field field-stacked">
+                <label for="ai-model" class="label">Model name</label>
+                <input id="ai-model" class="input" type="text" spellcheck="false" placeholder="e.g. qwen3.5:4b" />
+              </div>
+              <div class="field field-stacked">
+                <label for="ai-key" class="label">API key (only if the server asks for one)</label>
+                <div class="key-line">
+                  <input id="ai-key" class="input" type="password" autocomplete="off" spellcheck="false" />
+                  <button id="ai-key-clear" type="button" class="btn btn-outline btn-sm" hidden>Remove the key</button>
+                </div>
+              </div>
+            </div>
+            <div class="field">
+              <div class="field-text">
+                <label for="ai-auto">Write AI notes when a meeting stops</label>
+                <p class="field-desc">On by default. The first time, the chosen built-in model downloads (once), with its progress in the meeting.</p>
+              </div>
+              <input id="ai-auto" type="checkbox" role="switch" class="switch" />
+            </div>
           </div>
         </section>
 
@@ -285,50 +330,6 @@
               <p class="field-desc">open-whisper starts in the background (no window), so the keys always work.</p>
             </div>
             <input id="login-check" type="checkbox" role="switch" class="switch" />
-          </div>
-        </section>
-
-        <!-- AI notes -->
-        <section id="section-ai" class="section" role="tabpanel" data-section="ai" hidden>
-          <header class="section-head">
-            <h2>AI notes</h2>
-            <p>A language model writes the notes of a meeting from its transcript: summary, decisions, tasks, open questions. They are a draft: check them against the transcript.</p>
-          </header>
-          <div class="field field-stacked">
-            <div class="field-text">
-              <label for="ai-engine">Model</label>
-              <p id="ai-engine-note" class="field-desc"></p>
-            </div>
-            <select id="ai-engine" class="select select-wide">
-              <option value="builtin:qwen3.5-4b">Qwen3.5 4B — runs on this computer</option>
-              <option value="server">My own server: Ollama, LM Studio, or an OpenAI-compatible API</option>
-            </select>
-          </div>
-          <div id="ai-server" class="ai-server" hidden>
-            <div class="field field-stacked">
-              <label for="ai-url" class="label">Server address</label>
-              <input id="ai-url" class="input" type="url" spellcheck="false" placeholder="http://localhost:11434/v1" />
-              <p id="ai-url-note" class="field-desc"></p>
-            </div>
-            <div class="field field-stacked">
-              <label for="ai-model" class="label">Model name</label>
-              <input id="ai-model" class="input" type="text" spellcheck="false" placeholder="e.g. qwen3.5:4b" />
-            </div>
-            <div class="field field-stacked">
-              <label for="ai-key" class="label">API key (only if the server asks for one)</label>
-              <div class="key-line">
-                <input id="ai-key" class="input" type="password" autocomplete="off" spellcheck="false" />
-                <button id="ai-key-clear" type="button" class="btn btn-outline btn-sm" hidden>Remove the key</button>
-              </div>
-            </div>
-          </div>
-          <div class="separator"></div>
-          <div class="field">
-            <div class="field-text">
-              <label for="ai-auto">Write AI notes when a meeting stops</label>
-              <p class="field-desc">On by default. The first time, the chosen built-in model downloads (once), with its progress in the meeting.</p>
-            </div>
-            <input id="ai-auto" type="checkbox" role="switch" class="switch" />
           </div>
         </section>
 

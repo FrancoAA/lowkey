@@ -42,8 +42,10 @@ make desktop-bundle      # AppImage / .deb / .rpm in desktop/src-tauri/target/re
 - **Result:** the text appears while it is transcribed. **Copy** puts it on the clipboard.
   **.txt**, **.srt** and **.vtt** save the transcript or subtitles.
 - **The window** has sections on the left: **Transcribe** (files, dictation in the window, the
-  result; it opens there), **Meetings** (below) and the settings — General (language), Model (model, free memory when
-  idle), Shortcuts (the dictation key, the meeting key, start at login), AI notes (the model), Live preview (on/off, engine), About.
+  result; it opens there), **Meetings** (below) and the settings — General (language), Models
+  (speech to text: the model, free memory when idle; AI notes: the model or your own server,
+  automatic notes; each with its status), Shortcuts (the dictation key, the meeting key, start
+  at login), Live preview (on/off, engine), About.
   <kbd>Ctrl</kbd>+<kbd>,</kbd> jumps to the settings, <kbd>Esc</kbd> back to Transcribe.
 - Files given on the command line open in the app. **Closing the window keeps the app
   running** in the tray, so the dictation key stays instant. Quit from the tray or with
@@ -131,16 +133,16 @@ Record a call or a talk, as text next to your notes (Linux for now). No bot join
 - **Start recording** (in the window) does the same. It records two sources: your microphone (**Me**) and the computer's sound
   (**Them**: the others in Zoom, Meet, Teams…, through PipeWire or PulseAudio).
 - The text comes a few seconds after someone speaks: each source is cut at pauses (4–20 s
-  pieces) and the speech model of the Model section writes them.
+  pieces) and the speech model chosen in Settings → Models writes them.
 - **Stop** transcribes the last seconds and saves. The list shows all meetings; open one to read
   it (AI notes and transcript side by side), change the title, **Copy** or **Export .md** (AI notes, then the transcript), or
   **Delete** it (two clicks).
 - **AI notes**: a language model writes the meeting's notes (summary, decisions, tasks with
   who and when, open questions, numbers) from your notes and the transcript. Built in:
   **Qwen3.5 4B** (Apache-2.0), run by llama.cpp on this computer (a 2.7 GB download the first
-  time; ~25 s for 8 minutes of meeting on the Radeon 780M, ~1 min on a CPU). Settings → AI
-  notes → Model also offers Qwen3.5 2B (1.3 GB, faster, less exact) and Gemma 4 E4B (5 GB). Or your own
-  server in Settings → AI notes (Ollama, LM Studio, any OpenAI-compatible API; a warning shows
+  time; ~25 s for 8 minutes of meeting on the Radeon 780M, ~1 min on a CPU). Settings → Models →
+  AI notes also offers Qwen3.5 2B (1.3 GB, faster, less exact) and Gemma 4 E4B (5 GB). Or your own
+  server in Settings → Models → AI notes (Ollama, LM Studio, any OpenAI-compatible API; a warning shows
   when it is not on this computer). They are written by themselves when a meeting stops (the
   first time, after the model's download), and again with **Write again**; they are a draft
   next to the transcript, and Copy/Export include them. Measurements: [bench/summary/results.md](bench/summary/results.md).
