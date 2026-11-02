@@ -41,8 +41,9 @@ make desktop-bundle      # AppImage / .deb / .rpm in desktop/src-tauri/target/re
   <kbd>Esc</kbd> cancels. A live waveform shows that the app is listening.
 - **Result:** the text appears while it is transcribed. **Copy** puts it on the clipboard.
   **.txt**, **.srt** and **.vtt** save the transcript or subtitles.
-- **Options** (collapsed, never required): force a language instead of auto-detect, pick
-  another model, free the model's memory when idle, turn the live preview off.
+- **Settings** (the ⚙ button or <kbd>Ctrl</kbd>+<kbd>,</kbd>; never required): sections on the left —
+  General (language), Model (model, free memory when idle), Dictation (the key, start at login),
+  Live preview (on/off, engine), About.
 - Files given on the command line open in the app. **Closing the window keeps the app
   running** in the tray, so the dictation key stays instant. Quit from the tray or with
   `open-whisper --dictate quit`.
@@ -69,7 +70,7 @@ The global key is **<kbd>Super</kbd>+<kbd>Ctrl</kbd>+<kbd>X</kbd>** on Linux and
 
 ![Overlay with live preview](docs/screenshots/18-desktop-overlay-live-preview.png)
 ![Text typed into the focused app](docs/screenshots/14-desktop-text-typed.png)
-![Changing the dictation key in Options](docs/screenshots/19-desktop-options-key.png)
+![Changing the dictation key in Settings](docs/screenshots/19-desktop-options-key.png)
 
 **Hyprland (0.56+, Lua config): no setup.** The app adds the key and the overlay window rule
 to the running Hyprland with `hyprctl eval`, and again when Hyprland reloads its config. No
@@ -82,14 +83,14 @@ keeps working: the script hands the key to the app, or starts `~/.local/bin/open
 `$XDG_RUNTIME_DIR/open-whisper/app.log`. When the key is in your config, the app
 sees it and does not add it again. Classic `hyprland.conf`: `--print-snippet conf`.
 
-- **Change the key in Options → Dictation key → Change**, then press the new combination
+- **Change the key in Settings → Dictation → Change**, then press the new combination
   (Super, Ctrl or Alt with a letter, digit, F1-F24 or Space; Esc cancels). It works at once,
-  and Options refuses a combination that another shortcut uses. When the key comes from a
-  block in your Hyprland config, Options offers **"Let the app manage it"**: the block is
+  and the app refuses a combination that another shortcut uses. When the key comes from a
+  block in your Hyprland config, Settings offer **"Let the app manage it"**: the block is
   removed (a backup is kept next to the file), Hyprland reloads, and the app checks that its
   key works; if not, your config is put back. It also turns on "Start at login" (the config's
   bind worked after a logout; the app's bind needs the app).
-- **Options → Start open-whisper when you log in**: the app starts hidden at login, so the key
+- **Settings → Dictation → Start when you log in**: the app starts hidden at login, so the key
   works all the time (Linux: `~/.config/autostart/open-whisper.desktop`).
 - Command line: `--hotkey "…"` (this run), `hotkey = "…"` in the settings, `--no-hotkey` adds
   none; `--remove-hotkey` removes a key that the app added (never yours).
@@ -106,19 +107,19 @@ sees it and does not add it again. Classic `hyprland.conf`: `--print-snippet con
 ### Live preview
 
 While you hold the key, the overlay shows the words as you say them; the main model still
-writes the text that is typed. Two engines (Options → Preview engine):
+writes the text that is typed. Two engines (Settings → Live preview → Preview engine):
 
 - **Parakeet** (the default when its model is on disk): more accurate, 25 languages, about
   1.1 GB of memory. When Parakeet is also the main model, both share one copy.
 - **Whistle** ([Cactus](https://huggingface.co/Cactus-Compute/whistle), 17 MB, CPU): light;
   English, German, French, Spanish, Italian, Dutch and Polish.
 
-Turn the preview off in Options (`live_preview = false`). Details and measurements:
+Turn the preview off in Settings (`live_preview = false`). Details and measurements:
 [docs/live-preview.md](docs/live-preview.md).
 
 ## Settings (all optional)
 
-Options in the window saves them to `~/.config/open-whisper/config.toml`:
+Settings in the window save them to `~/.config/open-whisper/config.toml`:
 
 ```toml
 model = "large-v3-turbo-q5_0"   # empty or missing: the default for this machine
@@ -175,7 +176,7 @@ overlay (`overlay.html`, `src/overlay.ts`).
 make desktop-dev   # the app with hot reload (Vite + tauri dev)
 make test          # UI typecheck + build, Rust unit tests
 make e2e-desktop   # the app in a nested Hyprland (your session is not touched): files,
-                   # errors, dictation, the global key, live preview, Options; screenshots 09-18.
+                   # errors, dictation, the global key, live preview, Settings; screenshots 09-20.
                    # python3 scripts/e2e_desktop.py --first-run: empty model folder
                    # OW_E2E_HYPRBARS=<hyprbars.so>: also checks that title-bar plugins skip the overlay
 make bench         # research only: the model benchmark (docs/benchmark.md), Python via uv

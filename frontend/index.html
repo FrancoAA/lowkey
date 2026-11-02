@@ -8,7 +8,9 @@
   </head>
   <body>
     <div id="announcer" class="sr-only" aria-live="polite"></div>
-    <main class="shell">
+
+    <!-- ───────────────────────────── main view ───────────────────────────── -->
+    <main id="view-main" class="shell">
       <header class="top">
         <div class="brand">
           <img src="/icon.svg" alt="" width="36" height="36" />
@@ -17,9 +19,14 @@
             <p class="tagline">Speech to text that runs on this computer. Nothing leaves it.</p>
           </div>
         </div>
-        <div id="model-status" class="model-status" aria-live="off">
-          <span class="dot"></span><span id="model-status-text">Starting…</span>
-          <div class="model-bar" hidden><div id="model-bar-fill"></div></div>
+        <div class="top-right">
+          <div id="model-status" class="model-status" aria-live="off">
+            <span class="dot"></span><span id="model-status-text">Starting…</span>
+            <div class="model-bar" hidden><div id="model-bar-fill"></div></div>
+          </div>
+          <button id="settings-open" type="button" class="btn btn-outline btn-icon" aria-label="Settings" title="Settings (Ctrl+,)">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7h-9M14 17H5" /><circle cx="17" cy="17" r="3" /><circle cx="7" cy="7" r="3" /></svg>
+          </button>
         </div>
       </header>
 
@@ -49,63 +56,6 @@
             <span id="dictation-timer" class="timer" hidden>0:00</span>
           </div>
         </div>
-
-        <details id="options" class="options">
-          <summary>Options</summary>
-          <div class="options-grid">
-            <label>
-              <span>Language</span>
-              <select id="language-select">
-                <option value="auto" selected>Auto-detect</option>
-              </select>
-            </label>
-            <label>
-              <span>Model</span>
-              <select id="model-select"></select>
-            </label>
-            <label>
-              <span>Free the model's memory when idle</span>
-              <select id="idle-select">
-                <option value="0">Never</option>
-                <option value="5">After 5 minutes</option>
-                <option value="15" selected>After 15 minutes</option>
-                <option value="60">After 1 hour</option>
-              </select>
-            </label>
-            <label class="check">
-              <input id="preview-check" type="checkbox" checked />
-              <span>
-                Show the words while you talk (dictation key)
-                <small id="preview-note"></small>
-              </span>
-            </label>
-            <label>
-              <span>Preview engine</span>
-              <select id="preview-engine">
-                <option value="auto">Automatic</option>
-                <option value="whistle">Whistle · light (17 MB)</option>
-                <option value="parakeet">Parakeet · more accurate (~1.1 GB memory)</option>
-              </select>
-            </label>
-            <div id="key-row" class="key-row">
-              <span class="key-label">Dictation key</span>
-              <div class="key-line">
-                <kbd id="key-current" class="key-current">…</kbd>
-                <button id="key-change" type="button" class="btn">Change</button>
-                <button id="key-adopt" type="button" class="btn" hidden>Let the app manage it</button>
-              </div>
-              <small id="key-note" class="key-note" aria-live="polite"></small>
-            </div>
-            <label class="check">
-              <input id="login-check" type="checkbox" />
-              <span>
-                Start open-whisper when you log in
-                <small>In the background (no window), so the dictation key always works.</small>
-              </span>
-            </label>
-          </div>
-          <p id="model-details" class="model-details"></p>
-        </details>
       </section>
 
       <div id="error" class="error" role="alert" hidden></div>
@@ -117,10 +67,10 @@
             <p id="result-meta" class="meta"></p>
           </div>
           <div class="actions">
-            <button id="copy-button" type="button" class="btn primary" disabled>Copy</button>
-            <button data-format="txt" type="button" class="btn download" disabled>.txt</button>
-            <button data-format="srt" type="button" class="btn download" disabled>.srt</button>
-            <button data-format="vtt" type="button" class="btn download" disabled>.vtt</button>
+            <button id="copy-button" type="button" class="btn btn-default btn-sm" disabled>Copy</button>
+            <button data-format="txt" type="button" class="btn btn-outline btn-sm download" disabled>.txt</button>
+            <button data-format="srt" type="button" class="btn btn-outline btn-sm download" disabled>.srt</button>
+            <button data-format="vtt" type="button" class="btn btn-outline btn-sm download" disabled>.vtt</button>
           </div>
         </div>
         <div id="progress" class="progress" hidden>
@@ -129,15 +79,164 @@
         </div>
         <div id="transcript" class="transcript"></div>
       </section>
-
-      <footer class="foot">
-        Powered by open-source <a href="https://github.com/ggml-org/whisper.cpp">whisper.cpp</a> and
-        OpenAI Whisper model weights (MIT);
-        <a href="https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3">NVIDIA Parakeet</a> (CC-BY-4.0) through
-        <a href="https://github.com/k2-fsa/sherpa-onnx">sherpa-onnx</a>; live preview by
-        <a href="https://huggingface.co/Cactus-Compute/whistle">Cactus Whistle</a> (Apache-2.0).
-      </footer>
     </main>
+
+    <!-- ─────────────────────────── settings view ─────────────────────────── -->
+    <div id="view-settings" class="settings" hidden>
+      <aside class="settings-nav">
+        <button id="settings-back" type="button" class="btn btn-ghost btn-sm back">
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m12 19-7-7 7-7M19 12H5" /></svg>
+          Back
+        </button>
+        <h2 class="settings-title">Settings</h2>
+        <nav id="settings-tabs" role="tablist" aria-orientation="vertical" aria-label="Settings sections">
+          <button type="button" role="tab" class="nav-item" data-section="general" aria-controls="section-general">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7h-9M14 17H5" /><circle cx="17" cy="17" r="3" /><circle cx="7" cy="7" r="3" /></svg>
+            General
+          </button>
+          <button type="button" role="tab" class="nav-item" data-section="model" aria-controls="section-model">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect width="16" height="16" x="4" y="4" rx="2" /><rect width="6" height="6" x="9" y="9" rx="1" /><path d="M15 2v2M15 20v2M2 15h2M2 9h2M20 15h2M20 9h2M9 2v2M9 20v2" /></svg>
+            Model
+          </button>
+          <button type="button" role="tab" class="nav-item" data-section="dictation" aria-controls="section-dictation">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect width="20" height="16" x="2" y="4" rx="2" /><path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M8 12h.01M12 12h.01M16 12h.01M7 16h10" /></svg>
+            Dictation
+          </button>
+          <button type="button" role="tab" class="nav-item" data-section="preview" aria-controls="section-preview">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 10v3M6 6v11M10 3v18M14 8v7M18 5v13M22 10v3" /></svg>
+            Live preview
+          </button>
+          <button type="button" role="tab" class="nav-item" data-section="about" aria-controls="section-about">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10" /><path d="M12 16v-4M12 8h.01" /></svg>
+            About
+          </button>
+        </nav>
+      </aside>
+
+      <div class="settings-content">
+        <!-- General -->
+        <section id="section-general" class="section" role="tabpanel" data-section="general">
+          <header class="section-head">
+            <h3>General</h3>
+            <p>How open-whisper understands what you say.</p>
+          </header>
+          <div class="field">
+            <div class="field-text">
+              <label for="language-select">Language</label>
+              <p class="field-desc">Auto-detect works for most speech. Set it when the app picks the wrong one.</p>
+            </div>
+            <select id="language-select" class="select">
+              <option value="auto" selected>Auto-detect</option>
+            </select>
+          </div>
+        </section>
+
+        <!-- Model -->
+        <section id="section-model" class="section" role="tabpanel" data-section="model" hidden>
+          <header class="section-head">
+            <h3>Model</h3>
+            <p>The speech model that writes your text. It downloads once and runs on this computer.</p>
+          </header>
+          <div class="field field-stacked">
+            <div class="field-text">
+              <label for="model-select">Speech model</label>
+              <p id="model-details" class="field-desc"></p>
+            </div>
+            <select id="model-select" class="select select-wide"></select>
+          </div>
+          <div class="separator"></div>
+          <div class="field">
+            <div class="field-text">
+              <label for="idle-select">Free memory when idle</label>
+              <p class="field-desc">Unload the model after a while without use. It loads again on the next use.</p>
+            </div>
+            <select id="idle-select" class="select">
+              <option value="0">Never</option>
+              <option value="5">After 5 minutes</option>
+              <option value="15" selected>After 15 minutes</option>
+              <option value="60">After 1 hour</option>
+            </select>
+          </div>
+        </section>
+
+        <!-- Dictation -->
+        <section id="section-dictation" class="section" role="tabpanel" data-section="dictation" hidden>
+          <header class="section-head">
+            <h3>Dictation</h3>
+            <p>The key that types what you say into any app.</p>
+          </header>
+          <div id="key-row" class="field field-stacked key-row">
+            <div class="field-text">
+              <span class="label">Dictation key</span>
+              <p id="key-note" class="field-desc key-note" aria-live="polite"></p>
+            </div>
+            <div class="key-line">
+              <kbd id="key-current" class="key-current">…</kbd>
+              <button id="key-change" type="button" class="btn btn-outline">Change</button>
+              <button id="key-adopt" type="button" class="btn btn-default" hidden>Let the app manage it</button>
+            </div>
+          </div>
+          <div class="separator"></div>
+          <div class="field">
+            <div class="field-text">
+              <label for="login-check">Start when you log in</label>
+              <p class="field-desc">open-whisper starts in the background (no window), so the dictation key always works.</p>
+            </div>
+            <input id="login-check" type="checkbox" role="switch" class="switch" />
+          </div>
+        </section>
+
+        <!-- Live preview -->
+        <section id="section-preview" class="section" role="tabpanel" data-section="preview" hidden>
+          <header class="section-head">
+            <h3>Live preview</h3>
+            <p>Words in the dictation overlay while you talk. The model above still writes the text.</p>
+          </header>
+          <div class="field">
+            <div class="field-text">
+              <label for="preview-check">Show the words while you talk</label>
+              <p id="preview-note" class="field-desc"></p>
+            </div>
+            <input id="preview-check" type="checkbox" role="switch" class="switch" checked />
+          </div>
+          <div class="separator"></div>
+          <div class="field">
+            <div class="field-text">
+              <label for="preview-engine">Preview engine</label>
+              <p class="field-desc">Automatic uses Parakeet when it is on this computer, else Whistle.</p>
+            </div>
+            <select id="preview-engine" class="select">
+              <option value="auto">Automatic</option>
+              <option value="whistle">Whistle · light (17 MB)</option>
+              <option value="parakeet">Parakeet · more accurate (~1.1 GB)</option>
+            </select>
+          </div>
+        </section>
+
+        <!-- About -->
+        <section id="section-about" class="section" role="tabpanel" data-section="about" hidden>
+          <header class="section-head">
+            <h3>About</h3>
+            <p>Local, open-source speech to text. Audio and text never leave this computer.</p>
+          </header>
+          <dl class="about">
+            <dt>Version</dt>
+            <dd id="about-version">–</dd>
+            <dt>Runs on</dt>
+            <dd id="about-device">–</dd>
+            <dt>Engines</dt>
+            <dd>
+              <a href="https://github.com/ggml-org/whisper.cpp">whisper.cpp</a> with OpenAI Whisper weights (MIT);
+              <a href="https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3">NVIDIA Parakeet</a> (CC-BY-4.0) through
+              <a href="https://github.com/k2-fsa/sherpa-onnx">sherpa-onnx</a> (Apache-2.0);
+              live preview by <a href="https://huggingface.co/Cactus-Compute/whistle">Cactus Whistle</a> (Apache-2.0).
+            </dd>
+            <dt>Shortcuts</dt>
+            <dd><kbd>Space</kbd> dictate in this window · <kbd>Esc</kbd> cancel · <kbd>Ctrl</kbd> <kbd>,</kbd> settings</dd>
+          </dl>
+        </section>
+      </div>
+    </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

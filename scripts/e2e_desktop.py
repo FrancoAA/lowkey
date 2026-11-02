@@ -383,11 +383,15 @@ def main() -> None:
         cfg_file = tmp / "config" / "open-whisper" / "config.toml"
         main_win = wait(lambda: win("open-whisper"), 10, "main window")
         focus(main_win["address"])
-        for _ in range(3):
-            press_key("Tab")  # dropzone, mic button, Options
-        press_key("Return")
-        for _ in range(2):
-            press_key("Tab")  # language, model
+        # Settings: Ctrl+, opens them with the focus on the section list; Down moves to Model,
+        # Tab to its first control (the model list).
+        for st in ("down", "up"):
+            run(["hyprctl", "dispatch", f'hl.dsp.send_key_state({{ mods = "CTRL", key = "comma", state = "{st}" }})'], env)
+            time.sleep(0.05)
+        time.sleep(0.3)
+        shot("20-desktop-settings-general.png")
+        press_key("Down")  # Model
+        press_key("Tab")  # the model list
         # Parakeet (670 MB) only when it is cached, so the run stays offline-capable; else Small.
         with_pk = BENCH_PARAKEET.is_dir()
         last = "parakeet-v3" if with_pk else "small"
@@ -444,8 +448,11 @@ def main() -> None:
         def latest_status() -> dict:
             return events("status")[-1] if events("status") else {}
 
-        for _ in range(4):
-            press_key("Tab")  # idle, preview checkbox, preview engine, then the key button
+        for st in ("down", "up"):  # Shift+Tab: back to the section list (on Model)
+            run(["hyprctl", "dispatch", f'hl.dsp.send_key_state({{ mods = "SHIFT", key = "Tab", state = "{st}" }})'], env)
+            time.sleep(0.05)
+        press_key("Down")  # Dictation
+        press_key("Tab")  # its first control: the key button (Change, or "Let the app manage it")
         if config_bind:
             # The key comes from the bindings.lua block: Options offers to take it over.
             check(latest_status().get("hotkey_source") == "config", "Options: the key comes from the config block")

@@ -22,6 +22,7 @@ export interface Status {
   gpu?: boolean;
   auto_model?: string;
   hotkey?: string;
+  version?: string;
   /** The dictation key ("SUPER + CTRL + X"; "" = none) and where it lives. */
   hotkey_key?: string;
   hotkey_source?: "app" | "config" | "manual" | "none";

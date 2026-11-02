@@ -148,6 +148,7 @@ impl App {
             "models": list,
             "options": { "model": cfg.model, "language": cfg.language, "idle_unload_minutes": cfg.idle_unload_minutes, "live_preview": cfg.live_preview, "preview_engine": cfg.preview_engine },
             "preview": self.preview.status(),
+            "version": env!("CARGO_PKG_VERSION"),
             "hotkey": *self.hotkey_text.lock(),
             "hotkey_key": self.hotkey_key(),
             "hotkey_source": self.hotkey_source(),

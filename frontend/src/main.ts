@@ -197,6 +197,7 @@ function applyStatus(next: Status): void {
   }
   renderPreview();
   renderKey();
+  renderAbout();
   renderStatus();
 }
 
@@ -508,10 +509,7 @@ window.addEventListener(
   true,
 );
 window.addEventListener("blur", () => (superHeld = false));
-// Never leave the keys captured behind a closed panel or a hidden window.
-$<HTMLDetailsElement>("options").addEventListener("toggle", (e) => {
-  if (capturing && !(e.target as HTMLDetailsElement).open) stopCapture();
-});
+// Never leave the keys captured behind a closed view or a hidden window (see also showSection).
 document.addEventListener("visibilitychange", () => {
   if (capturing && document.hidden) stopCapture();
 });
@@ -625,6 +623,7 @@ document.addEventListener(
       dictation.cancel();
       return;
     }
+    if (inSettings()) return; // Space works the controls there, it does not dictate
     if (!isSpace(e) || e.ctrlKey || e.metaKey || e.altKey || isTyping(e.target) || keyboardFocusedControl(e.target)) return;
     e.preventDefault(); // no page scroll, no accidental "click" on a mouse-focused button
     if (e.repeat) return;
@@ -668,6 +667,70 @@ window.addEventListener("blur", () => {
 
 // Space is handled globally (and its default "click" is suppressed), so only real clicks/Enter land here.
 micButton.addEventListener("click", toggleDictation);
+
+// ------------------------------------------------------------------ settings view
+const viewMain = $<HTMLElement>("view-main");
+const viewSettings = $<HTMLElement>("view-settings");
+const settingsOpen = $<HTMLButtonElement>("settings-open");
+const tabs = [...document.querySelectorAll<HTMLButtonElement>("#settings-tabs .nav-item")];
+let section = "general";
+
+function inSettings(): boolean {
+  return !viewSettings.hidden;
+}
+
+function showSection(name: string, focus = false): void {
+  if (capturing) stopCapture();
+  section = name;
+  for (const t of tabs) {
+    const on = t.dataset.section === name;
+    t.setAttribute("aria-selected", String(on));
+    t.tabIndex = on ? 0 : -1; // one tab stop for the list; arrows move inside it
+    if (on && focus) t.focus();
+  }
+  for (const p of document.querySelectorAll<HTMLElement>(".settings-content .section")) p.hidden = p.dataset.section !== name;
+}
+
+function openSettings(name = section): void {
+  if (dictation.state !== "idle") return;
+  viewMain.hidden = true;
+  viewSettings.hidden = false;
+  showSection(name, true);
+}
+
+function closeSettings(): void {
+  if (capturing) stopCapture();
+  viewSettings.hidden = true;
+  viewMain.hidden = false;
+  settingsOpen.focus();
+}
+
+settingsOpen.addEventListener("click", () => openSettings());
+$<HTMLButtonElement>("settings-back").addEventListener("click", closeSettings);
+for (const t of tabs) t.addEventListener("click", () => showSection(t.dataset.section!));
+$<HTMLElement>("settings-tabs").addEventListener("keydown", (e) => {
+  const i = tabs.findIndex((t) => t.dataset.section === section);
+  const to = { ArrowDown: i + 1, ArrowRight: i + 1, ArrowUp: i - 1, ArrowLeft: i - 1, Home: 0, End: tabs.length - 1 }[e.key];
+  if (to === undefined) return;
+  e.preventDefault();
+  showSection(tabs[(to + tabs.length) % tabs.length].dataset.section!, true);
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "," && e.ctrlKey && !e.altKey && !e.metaKey) {
+    e.preventDefault();
+    if (inSettings()) closeSettings();
+    else openSettings();
+  } else if (e.key === "Escape" && inSettings() && !capturing && dictation.state === "idle") {
+    e.preventDefault();
+    closeSettings();
+  }
+});
+
+function renderAbout(): void {
+  if (!status) return;
+  $<HTMLElement>("about-version").textContent = status.version ?? "–";
+  $<HTMLElement>("about-device").textContent = status.device ?? "–";
+}
 
 void getBackend().then((b) => {
   backend = b;
