@@ -2,8 +2,8 @@
 
 # open-whisper
 
-Local speech to text as a desktop app. Drop an audio or video file and get the text, or hold
-a key and talk into any app. Everything runs on your computer with open-source software and
+Local speech to text as a desktop app. Drop an audio or video file and get the text, hold
+a key and talk into any app, or record a meeting as text next to your notes. Everything runs on your computer with open-source software and
 open model weights. No account, no API key, no cloud.
 
 It is one native program (Rust + Tauri v2) with whisper.cpp inside: on the GPU through Vulkan
@@ -42,7 +42,7 @@ make desktop-bundle      # AppImage / .deb / .rpm in desktop/src-tauri/target/re
 - **Result:** the text appears while it is transcribed. **Copy** puts it on the clipboard.
   **.txt**, **.srt** and **.vtt** save the transcript or subtitles.
 - **The window** has sections on the left: **Transcribe** (files, dictation in the window, the
-  result; it opens there) and the settings — General (language), Model (model, free memory when
+  result; it opens there), **Meetings** (below) and the settings — General (language), Model (model, free memory when
   idle), Dictation (the key, start at login), Live preview (on/off, engine), About.
   <kbd>Ctrl</kbd>+<kbd>,</kbd> jumps to the settings, <kbd>Esc</kbd> back to Transcribe.
 - Files given on the command line open in the app. **Closing the window keeps the app
@@ -118,6 +118,26 @@ writes the text that is typed. Two engines (Settings → Live preview → Previe
 Turn the preview off in Settings (`live_preview = false`). Details and measurements:
 [docs/live-preview.md](docs/live-preview.md).
 
+## Meetings
+
+Record a call or a talk, as text next to your notes (Linux for now). No bot joins the call.
+
+- **Start recording** records two sources: your microphone (**Me**) and the computer's sound
+  (**Them**: the others in Zoom, Meet, Teams…, through PipeWire or PulseAudio).
+- The text comes a few seconds after someone speaks: each source is cut at pauses (4–20 s
+  pieces) and the speech model of the Model section writes them. Write your notes on the left
+  while you listen; they save while you type.
+- **Stop** transcribes the last seconds and saves. The list shows all meetings; open one to read
+  it, change the title or notes, **Copy** or **Export .md** (notes, then the transcript), or
+  **Delete** it (two clicks).
+- Use headphones. Without them the microphone also hears the others; the app removes a "Me"
+  line when most of its words are in a "Them" line at the same time.
+- Tell the others that you record. Meetings are saved as JSON in
+  `~/.local/share/open-whisper/meetings` (a private folder). The audio is not kept.
+- macOS and Windows record the microphone only, for now.
+
+Details: [docs/meetings.md](docs/meetings.md).
+
 ## Settings (all optional)
 
 Settings in the window save them to `~/.config/open-whisper/config.toml`:
@@ -165,6 +185,8 @@ A model that is not on disk downloads the first time you use it, into
 - `mic.rs` records the microphone (cpal); `dictation.rs` is the global key's state machine;
   `output.rs` types and copies the text; `hyprland.rs` adds the key and the overlay rule.
 - `preview.rs` runs the live preview (Whistle) on its own thread.
+- `meeting.rs` records a meeting: it cuts each source at pauses, sends the pieces to the model,
+  drops echoes and saves the meeting; `system_audio.rs` records the computer's sound.
 - `app.rs` has the windows, the tray, the commands for the page and the single instance (a
   second launch hands its command or file to the running app).
 
@@ -177,7 +199,8 @@ overlay (`overlay.html`, `src/overlay.ts`).
 make desktop-dev   # the app with hot reload (Vite + tauri dev)
 make test          # UI typecheck + build, Rust unit tests
 make e2e-desktop   # the app in a nested Hyprland (your session is not touched): files,
-                   # errors, dictation, the global key, live preview, Settings; screenshots 09-20.
+                   # errors, dictation, the global key, live preview, Settings, a meeting;
+                   # screenshots 09-22.
                    # python3 scripts/e2e_desktop.py --first-run: empty model folder
                    # OW_E2E_HYPRBARS=<hyprbars.so>: also checks that title-bar plugins skip the overlay
 make bench         # research only: the model benchmark (docs/benchmark.md), Python via uv

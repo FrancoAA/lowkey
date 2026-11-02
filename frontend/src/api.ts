@@ -62,3 +62,43 @@ export interface JobEvent {
   error?: string | null;
   model_state?: ModelInfo;
 }
+
+/** Meetings (desktop/src-tauri/src/meeting.rs). "me" = the microphone, "them" = the computer's sound. */
+export interface MeetingLine {
+  speaker: "me" | "them";
+  start: number;
+  end: number;
+  text: string;
+}
+
+export interface Meeting {
+  id: string;
+  title: string;
+  /** Unix seconds. */
+  started_at: number;
+  duration: number;
+  /** "recording" while it runs (or when it was interrupted), else "done". */
+  state: string;
+  model: string;
+  system_audio: boolean;
+  notes: string;
+  lines: MeetingLine[];
+}
+
+export interface MeetingLive {
+  meeting: Meeting;
+  state: "recording" | "finishing" | "done";
+  elapsed: number;
+  pending: number;
+  notices: string[];
+}
+
+export interface MeetingSummary {
+  id: string;
+  title: string;
+  started_at: number;
+  duration: number;
+  state: string;
+  lines: number;
+  excerpt: string;
+}

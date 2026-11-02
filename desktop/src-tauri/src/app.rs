@@ -16,6 +16,7 @@ use crate::config::{Cli, Config, HELP};
 use crate::dictation::{self, Dictation, Io, Snapshot};
 use crate::engine::{Engines, Input};
 use crate::jobs::{JobSnapshot, Jobs};
+use crate::meeting;
 use crate::mic::{self, EndFn, LevelFn, Recorder};
 use crate::models;
 use crate::preview::{AudioFn, Preview, Stream, TextFn};
@@ -39,6 +40,8 @@ pub struct App {
     overlay_ready: AtomicBool,
     overlay_pending: AtomicBool,
     preview: Preview,
+    /// The meeting being recorded (Meetings section), until it is saved.
+    meeting: Mutex<Option<Arc<meeting::Session>>>,
 }
 
 type AppRef = Arc<App>;
@@ -225,6 +228,9 @@ impl App {
     }
 
     fn shutdown(&self) {
+        if let Some(m) = self.meeting.lock().take() {
+            m.abandon(); // keep what is transcribed
+        }
         if let Some(h) = self.hotkey.lock().take() {
             h.uninstall();
         }
@@ -517,6 +523,123 @@ fn window_dictation_inner(app: &AppRef, action: &str) -> Result<Option<String>, 
     }
 }
 
+// ------------------------------------------------------------------ meetings
+/// Start recording a meeting: the mic ("Me") and the computer's sound ("Them").
+#[tauri::command]
+fn meeting_start(app: State<'_, AppRef>, title: String) -> Result<meeting::Live, String> {
+    let app = app.inner().clone();
+    let r = meeting_start_inner(&app, &title);
+    emit_logged(&app.handle, "meeting-start", json!({"result": r.as_ref().map(|l| l.meeting.id.clone()).map_err(|e| e.clone())}));
+    r
+}
+
+fn meeting_start_inner(app: &AppRef, title: &str) -> Result<meeting::Live, String> {
+    let mut slot = app.meeting.lock();
+    if slot.is_some() {
+        return Err("A meeting is already being recorded.".into());
+    }
+    let model = app.current_model();
+    let language = app.current_language();
+    let engines = app.engines.clone();
+    let m = model.clone();
+    let transcribe: meeting::TranscribeFn = Arc::new(move |pcm| {
+        engines.transcribe(&m, Input { path: None, pcm: Some(pcm), language: language.clone() }, Arc::new(|_| {})).map(|o| o.segments)
+    });
+    let h = app.handle.clone();
+    let emit: meeting::EmitFn = Arc::new(move |ev| match ev {
+        meeting::Event::Live(live) => emit_logged(&h, "meeting", live),
+        meeting::Event::Levels { me, them } => {
+            let _ = h.emit_to("main", "meeting-level", json!({"me": me, "them": them}));
+        }
+    });
+    let doc = meeting::Meeting::new(title, &model);
+    let id = doc.id.clone();
+    let session = meeting::Session::new(meeting::dir(), doc, transcribe, emit).map_err(|e| format!("Could not save the meeting: {e:#}"))?;
+    if let Err(e) = session.open_sources() {
+        session.abandon();
+        let _ = meeting::delete_in(&meeting::dir(), &id);
+        return Err(format!("{e:#}"));
+    }
+    *slot = Some(session.clone());
+    // The first piece comes after a few seconds: have the model loaded by then.
+    let e2 = app.engines.clone();
+    std::thread::spawn(move || {
+        let _ = e2.prepare(&model);
+    });
+    Ok(session.live())
+}
+
+/// Stop, transcribe the last seconds, save. Returns the saved meeting.
+#[tauri::command]
+async fn meeting_stop(app: State<'_, AppRef>) -> Result<meeting::Meeting, String> {
+    let app = app.inner().clone();
+    let session = app.meeting.lock().clone().ok_or("No meeting is being recorded.")?;
+    let m = tauri::async_runtime::spawn_blocking(move || session.finish()).await.map_err(|e| e.to_string())?;
+    app.meeting.lock().take(); // only now: no second meeting while this one finishes
+    Ok(m)
+}
+
+#[tauri::command]
+fn meeting_live(app: State<'_, AppRef>) -> Option<meeting::Live> {
+    app.meeting.lock().as_ref().map(|s| s.live())
+}
+
+#[tauri::command]
+fn meetings_list() -> Vec<meeting::Summary> {
+    meeting::list_in(&meeting::dir())
+}
+
+fn live_session(app: &AppRef, id: &str) -> Option<Arc<meeting::Session>> {
+    app.meeting.lock().clone().filter(|s| s.id() == id)
+}
+
+#[tauri::command]
+fn meeting_get(app: State<'_, AppRef>, id: String) -> Result<meeting::Meeting, String> {
+    match live_session(app.inner(), &id) {
+        Some(s) => Ok(s.meeting()),
+        None => meeting::load_in(&meeting::dir(), &id).map_err(|e| format!("{e:#}")),
+    }
+}
+
+#[tauri::command]
+fn meeting_update(app: State<'_, AppRef>, id: String, title: Option<String>, notes: Option<String>) -> Result<(), String> {
+    let title = title.map(|t| t.trim().chars().take(meeting::MAX_TITLE).collect::<String>()).map(|t| if t.is_empty() { "Meeting".to_string() } else { t });
+    if notes.as_ref().is_some_and(|n| n.len() > meeting::MAX_NOTES) {
+        return Err("The notes are too long (over 1 MB).".into());
+    }
+    if let Some(s) = live_session(app.inner(), &id) {
+        s.update(title, notes);
+        return Ok(());
+    }
+    let dir = meeting::dir();
+    let mut m = meeting::load_in(&dir, &id).map_err(|e| format!("{e:#}"))?;
+    if let Some(t) = title {
+        m.title = t;
+    }
+    if let Some(n) = notes {
+        m.notes = n;
+    }
+    meeting::save_in(&dir, &m).map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+fn meeting_delete(app: State<'_, AppRef>, id: String) -> Result<(), String> {
+    if live_session(app.inner(), &id).is_some() {
+        return Err("Stop the recording first.".into());
+    }
+    meeting::delete_in(&meeting::dir(), &id).map_err(|e| format!("{e:#}"))
+}
+
+/// The meeting as Markdown (notes, then the transcript), for Copy and Export.
+#[tauri::command]
+fn meeting_markdown(app: State<'_, AppRef>, id: String, utc_offset_minutes: i32) -> Result<String, String> {
+    let m = match live_session(app.inner(), &id) {
+        Some(s) => s.meeting(),
+        None => meeting::load_in(&meeting::dir(), &id).map_err(|e| format!("{e:#}"))?,
+    };
+    Ok(meeting::to_markdown(&m, utc_offset_minutes.clamp(-14 * 60, 14 * 60)))
+}
+
 /// Wayland desktops other than Hyprland, or Hyprland without a Lua config: the user binds the
 /// key in the desktop's settings (apps cannot).
 fn keys_are_manual() -> bool {
@@ -738,7 +861,15 @@ pub fn run() {
             adopt_hotkey,
             dictation_state,
             overlay_ready,
-            window_dictation
+            window_dictation,
+            meeting_start,
+            meeting_stop,
+            meeting_live,
+            meetings_list,
+            meeting_get,
+            meeting_update,
+            meeting_delete,
+            meeting_markdown
         ])
         .setup(move |tauri_app| {
             let cli = first_cli.clone();
@@ -776,6 +907,7 @@ pub fn run() {
                         m => Some(Duration::from_secs(m * 60)),
                     })
                 }),
+                meeting: Mutex::new(None),
             });
             let io = Arc::new(TauriIo { app: Arc::downgrade(&app), handle: handle.clone() });
             *app.dictation.lock() = Some(Dictation::new(io, jobs));

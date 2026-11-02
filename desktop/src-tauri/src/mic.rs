@@ -29,9 +29,20 @@ pub trait Recorder: Send {
 
 /// `on_audio` (the live preview) gets the mono samples at the device rate in ~0.5 s blocks.
 pub fn new_recorder(on_level: LevelFn, on_end: EndFn, on_audio: Option<AudioFn>) -> Box<dyn Recorder> {
+    open(on_level, on_end, on_audio, true)
+}
+
+/// A mic that only feeds `on_audio` (the meetings): it keeps no samples and has no length
+/// limit; `stop()` returns nothing.
+pub fn new_tap(on_level: LevelFn, on_end: EndFn, on_audio: AudioFn) -> Box<dyn Recorder> {
+    open(on_level, on_end, Some(on_audio), false)
+}
+
+fn open(on_level: LevelFn, on_end: EndFn, on_audio: Option<AudioFn>, keep: bool) -> Box<dyn Recorder> {
+    let shared = Shared::new(on_audio, keep);
     match std::env::var_os("OPENWHISPER_FAKE_MIC") {
-        Some(path) => Box::new(FakeMic::new(path.into(), on_level, on_end, on_audio)),
-        None => Box::new(CpalMic::new(on_level, on_end, on_audio)),
+        Some(path) => Box::new(FakeMic { path: path.into(), on_level, on_end, shared, thread: None }),
+        None => Box::new(CpalMic { on_level, on_end, shared, stop_tx: None, thread: None }),
     }
 }
 
@@ -43,10 +54,12 @@ struct Shared {
     on_audio: Option<AudioFn>,
     /// Samples not yet sent to `on_audio`.
     audio_block: Mutex<Vec<f32>>,
+    /// Keep the samples for `stop()` (dictation); false for a tap (meetings).
+    keep: bool,
 }
 
 impl Shared {
-    fn new(on_audio: Option<AudioFn>) -> Arc<Self> {
+    fn new(on_audio: Option<AudioFn>, keep: bool) -> Arc<Self> {
         Arc::new(Self {
             samples: Mutex::default(),
             rate: Mutex::new(audio::RATE),
@@ -54,6 +67,7 @@ impl Shared {
             ended: AtomicBool::new(false),
             on_audio,
             audio_block: Mutex::default(),
+            keep,
         })
     }
 
@@ -70,8 +84,6 @@ impl Shared {
     /// Append mono samples; report the level every ~50 ms; stop at the length limit.
     fn push(&self, mono: &[f32], pending: &mut Vec<f32>, on_level: &LevelFn, on_end: &EndFn) {
         let rate = *self.rate.lock() as usize;
-        let mut s = self.samples.lock();
-        s.extend_from_slice(mono);
         pending.extend_from_slice(mono);
         let block = rate / 20;
         while pending.len() >= block {
@@ -79,6 +91,11 @@ impl Shared {
             pending.drain(..block);
         }
         self.send_audio(mono, rate, false);
+        if !self.keep {
+            return;
+        }
+        let mut s = self.samples.lock();
+        s.extend_from_slice(mono);
         if s.len() >= MAX_RECORDING_S * rate && !self.stopping.load(Ordering::Relaxed) && !self.ended.swap(true, Ordering::Relaxed) {
             on_end("limit".into());
         }
@@ -97,12 +114,6 @@ pub struct CpalMic {
     shared: Arc<Shared>,
     stop_tx: Option<mpsc::Sender<()>>,
     thread: Option<std::thread::JoinHandle<()>>,
-}
-
-impl CpalMic {
-    fn new(on_level: LevelFn, on_end: EndFn, on_audio: Option<AudioFn>) -> Self {
-        Self { on_level, on_end, shared: Shared::new(on_audio), stop_tx: None, thread: None }
-    }
 }
 
 impl Recorder for CpalMic {
@@ -197,12 +208,6 @@ pub struct FakeMic {
     thread: Option<std::thread::JoinHandle<()>>,
 }
 
-impl FakeMic {
-    fn new(path: std::path::PathBuf, on_level: LevelFn, on_end: EndFn, on_audio: Option<AudioFn>) -> Self {
-        Self { path, on_level, on_end, shared: Shared::new(on_audio), thread: None }
-    }
-}
-
 impl Recorder for FakeMic {
     fn start(&mut self) -> anyhow::Result<()> {
         let clip = audio::decode_file(&self.path).map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -238,7 +243,7 @@ mod tests {
     fn preview_gets_half_second_blocks_and_the_rest_at_stop() {
         let got: Arc<Mutex<Vec<(usize, u32)>>> = Arc::default();
         let g = got.clone();
-        let shared = Shared::new(Some(Arc::new(move |pcm: &[f32], rate: u32| g.lock().push((pcm.len(), rate)))));
+        let shared = Shared::new(Some(Arc::new(move |pcm: &[f32], rate: u32| g.lock().push((pcm.len(), rate)))), true);
         *shared.rate.lock() = 48_000;
         let (on_level, on_end): (LevelFn, EndFn) = (Arc::new(|_| {}), Arc::new(|_| {}));
         let mut pending = Vec::new();
@@ -255,9 +260,26 @@ mod tests {
 
     #[test]
     fn no_preview_tap_records_the_same() {
-        let shared = Shared::new(None);
+        let shared = Shared::new(None, true);
         let (on_level, on_end): (LevelFn, EndFn) = (Arc::new(|_| {}), Arc::new(|_| {}));
         shared.push(&[0.1; 16_000], &mut Vec::new(), &on_level, &on_end);
         assert_eq!(shared.take_16k().len(), 16_000);
+    }
+
+    #[test]
+    fn a_tap_keeps_nothing_and_has_no_length_limit() {
+        let got: Arc<Mutex<usize>> = Arc::default();
+        let g = got.clone();
+        let shared = Shared::new(Some(Arc::new(move |pcm: &[f32], _| *g.lock() += pcm.len())), false);
+        let ended: Arc<Mutex<Vec<String>>> = Arc::default();
+        let e = ended.clone();
+        let (on_level, on_end): (LevelFn, EndFn) = (Arc::new(|_| {}), Arc::new(move |r| e.lock().push(r)));
+        let mut pending = Vec::new();
+        for _ in 0..(MAX_RECORDING_S + 5) {
+            shared.push(&[0.1; 16_000], &mut pending, &on_level, &on_end); // 1 s each, past the dictation limit
+        }
+        assert!(ended.lock().is_empty(), "no limit for a tap");
+        assert!(shared.take_16k().is_empty(), "a tap keeps no samples");
+        assert_eq!(*got.lock(), (MAX_RECORDING_S + 5) * 16_000, "all audio went to the tap");
     }
 }

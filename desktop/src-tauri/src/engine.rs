@@ -77,6 +77,9 @@ pub struct Engines {
     pub idle_minutes: AtomicU64,
     /// Transcriptions running now: never unload under a running job.
     busy: AtomicU64,
+    /// One transcription runs at a time (the job queue and the meeting share the model; a GPU
+    /// backend must not run two at once).
+    run_lock: Mutex<()>,
     on_change: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
 }
 
@@ -119,6 +122,7 @@ impl Engines {
             last_used: Mutex::new(Instant::now()),
             idle_minutes: AtomicU64::new(idle_minutes),
             busy: AtomicU64::new(0),
+            run_lock: Mutex::new(()),
             on_change: Mutex::new(None),
         });
         let weak = Arc::downgrade(&me);
@@ -282,6 +286,7 @@ impl Engines {
             Some(p) => p,
             None => audio::decode_file(input.path.as_deref().ok_or_else(|| anyhow::anyhow!("nothing to transcribe"))?).map_err(|e| anyhow::anyhow!("{e}"))?,
         };
+        let _one_at_a_time = self.run_lock.lock();
         match model {
             Loaded::Whisper(ctx) => run_whisper_cpp(&ctx, &pcm, input.language.as_deref(), &sink),
             // Parakeet finds the language itself (25 European languages); it has no setting.

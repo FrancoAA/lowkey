@@ -1,7 +1,7 @@
 /**
  * Everything the page needs from the app (Tauri commands and events) goes through here.
  */
-import type { JobEvent, Status } from "./api";
+import type { JobEvent, Meeting, MeetingLive, MeetingSummary, Status } from "./api";
 
 export interface FileRef {
   name: string;
@@ -34,6 +34,22 @@ export interface Backend {
   pickFile(): Promise<FileRef | null>;
   onFileDrop(onHover: (over: boolean) => void, onDrop: (files: FileRef[]) => void): void;
   onOpenFiles(cb: (files: FileRef[]) => void): void;
+  meetings: MeetingsBackend;
+}
+
+export interface MeetingsBackend {
+  start(title: string): Promise<MeetingLive>;
+  /** Stops, transcribes the last seconds and saves; returns the saved meeting. */
+  stop(): Promise<Meeting>;
+  live(): Promise<MeetingLive | null>;
+  list(): Promise<MeetingSummary[]>;
+  get(id: string): Promise<Meeting>;
+  update(id: string, patch: { title?: string; notes?: string }): Promise<void>;
+  remove(id: string): Promise<void>;
+  /** Notes and transcript as Markdown, with times in this computer's time zone. */
+  markdown(id: string): Promise<string>;
+  onLive(cb: (l: MeetingLive) => void): void;
+  onLevels(cb: (lv: { me: number; them: number }) => void): void;
 }
 
 const baseName = (p: string) => p.split(/[\\/]/).pop() || p;
@@ -110,6 +126,22 @@ async function desktopBackend(): Promise<Backend> {
     onOpenFiles(cb) {
       void listen<string[]>("open-files", (e) => cb(toRefs(e.payload)));
       void invoke<string[]>("take_open_files").then((paths) => paths.length && cb(toRefs(paths)));
+    },
+    meetings: {
+      start: (title) => invoke<MeetingLive>("meeting_start", { title }),
+      stop: () => invoke<Meeting>("meeting_stop"),
+      live: () => invoke<MeetingLive | null>("meeting_live"),
+      list: () => invoke<MeetingSummary[]>("meetings_list"),
+      get: (id) => invoke<Meeting>("meeting_get", { id }),
+      update: (id, patch) => invoke("meeting_update", { id, title: patch.title ?? null, notes: patch.notes ?? null }),
+      remove: (id) => invoke("meeting_delete", { id }),
+      markdown: (id) => invoke<string>("meeting_markdown", { id, utcOffsetMinutes: -new Date().getTimezoneOffset() }),
+      onLive(cb) {
+        void listen<MeetingLive>("meeting", (e) => cb(e.payload));
+      },
+      onLevels(cb) {
+        void listen<{ me: number; them: number }>("meeting-level", (e) => cb(e.payload));
+      },
     },
   };
 }

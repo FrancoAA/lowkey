@@ -2,6 +2,7 @@ import "./style.css";
 import type { JobEvent, JobResult, ModelInfo, Segment, Status } from "./api";
 import { getBackend, type Backend, type FileRef } from "./backend";
 import { Dictation, type DictationState } from "./dictation";
+import { initMeetings } from "./meetings";
 import { Waveform } from "./waveform";
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -624,7 +625,7 @@ document.addEventListener(
       dictation.cancel();
       return;
     }
-    if (inSettings()) return; // Space works the controls there, it does not dictate
+    if (section !== "transcribe") return; // Space works the controls (or types) there, it does not dictate
     if (!isSpace(e) || e.ctrlKey || e.metaKey || e.altKey || isTyping(e.target) || keyboardFocusedControl(e.target)) return;
     e.preventDefault(); // no page scroll, no accidental "click" on a mouse-focused button
     if (e.repeat) return;
@@ -670,13 +671,13 @@ window.addEventListener("blur", () => {
 micButton.addEventListener("click", toggleDictation);
 
 // ------------------------------------------------------------------ sections
-// One window: Transcribe (files, dictation here, the result) and the settings sections.
+// One window: Transcribe (files, dictation here, the result), Meetings, and the settings sections.
 const tabs = [...document.querySelectorAll<HTMLButtonElement>("#settings-tabs .nav-item")];
 let section = "transcribe";
 
-/** In a settings section (not Transcribe): Space works the controls, it does not dictate. */
+/** In a settings section (not Transcribe or Meetings): Ctrl+, and Esc go back to Transcribe. */
 function inSettings(): boolean {
-  return section !== "transcribe";
+  return section !== "transcribe" && section !== "meetings";
 }
 
 function showSection(name: string, focus = false): void {
@@ -725,6 +726,8 @@ void getBackend().then((b) => {
     (files) => files[0] && handleRef(files[0]),
   );
   b.onOpenFiles((files) => files[0] && handleRef(files[0]));
+  const liveDot = document.querySelector<HTMLElement>('.nav-item[data-section="meetings"] .nav-live')!;
+  initMeetings(b, { announce, onRecording: (on) => (liveDot.hidden = !on) });
   void loadLanguages();
   void refreshStatus();
 });
