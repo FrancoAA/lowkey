@@ -9,87 +9,21 @@
   <body>
     <div id="announcer" class="sr-only" aria-live="polite"></div>
 
-    <!-- ───────────────────────────── main view ───────────────────────────── -->
-    <main id="view-main" class="shell">
-      <header class="top">
-        <div class="brand">
-          <img src="/icon.svg" alt="" width="36" height="36" />
+    <div id="app" class="settings">
+      <aside class="settings-nav">
+        <div class="side-brand">
+          <img src="/icon.svg" alt="" width="32" height="32" />
           <div>
             <h1>open-whisper</h1>
-            <p class="tagline">Speech to text that runs on this computer. Nothing leaves it.</p>
+            <p class="tagline">Runs on this computer. Nothing leaves it.</p>
           </div>
         </div>
-        <div class="top-right">
-          <div id="model-status" class="model-status" aria-live="off">
-            <span class="dot"></span><span id="model-status-text">Starting…</span>
-            <div class="model-bar" hidden><div id="model-bar-fill"></div></div>
-          </div>
-          <button id="settings-open" type="button" class="btn btn-outline btn-icon" aria-label="Settings" title="Settings (Ctrl+,)">
-            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7h-9M14 17H5" /><circle cx="17" cy="17" r="3" /><circle cx="7" cy="7" r="3" /></svg>
+        <nav id="settings-tabs" role="tablist" aria-orientation="vertical" aria-label="Sections">
+          <button type="button" role="tab" class="nav-item" data-section="transcribe" aria-controls="section-transcribe">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3Zm0 0v4m-4 0h8M6 11a6 6 0 0 0 12 0" /></svg>
+            Transcribe
           </button>
-        </div>
-      </header>
-
-      <section class="card">
-        <div id="dropzone" class="dropzone" role="button" tabindex="0" aria-label="Choose an audio or video file, or drop one here">
-          <svg class="drop-icon" viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M12 16V4m0 0-4 4m4-4 4 4M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
-          </svg>
-          <span class="drop-title">Drop an audio or video file</span>
-          <span class="drop-sub">or <u>choose a file</u> · MP3, WAV, M4A, OGG, FLAC, WEBM, MP4…</span>
-        </div>
-
-        <div class="divider"><span>or</span></div>
-
-        <div id="dictation" class="dictation" data-state="idle">
-          <button id="mic-button" class="mic" type="button" aria-label="Start dictation">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3Zm0 0v4m-4 0h8M6 11a6 6 0 0 0 12 0" />
-            </svg>
-          </button>
-          <div class="dictation-body">
-            <canvas id="waveform" class="waveform" height="56" aria-hidden="true"></canvas>
-            <div class="dictation-text">
-              <span id="dictation-label" class="dictation-label" aria-live="polite">Dictate</span>
-              <span id="dictation-hint" class="dictation-hint">Hold <kbd>Space</kbd> to talk, or tap it to start and stop</span>
-            </div>
-            <span id="dictation-timer" class="timer" hidden>0:00</span>
-          </div>
-        </div>
-      </section>
-
-      <div id="error" class="error" role="alert" hidden></div>
-
-      <section id="result" class="card result" hidden>
-        <div class="result-head">
-          <div>
-            <h2 id="result-title">Transcript</h2>
-            <p id="result-meta" class="meta"></p>
-          </div>
-          <div class="actions">
-            <button id="copy-button" type="button" class="btn btn-default btn-sm" disabled>Copy</button>
-            <button data-format="txt" type="button" class="btn btn-outline btn-sm download" disabled>.txt</button>
-            <button data-format="srt" type="button" class="btn btn-outline btn-sm download" disabled>.srt</button>
-            <button data-format="vtt" type="button" class="btn btn-outline btn-sm download" disabled>.vtt</button>
-          </div>
-        </div>
-        <div id="progress" class="progress" hidden>
-          <div class="progress-track"><div id="progress-fill" class="progress-fill"></div></div>
-          <span id="progress-text" class="progress-text"></span>
-        </div>
-        <div id="transcript" class="transcript"></div>
-      </section>
-    </main>
-
-    <!-- ─────────────────────────── settings view ─────────────────────────── -->
-    <div id="view-settings" class="settings" hidden>
-      <aside class="settings-nav">
-        <button id="settings-back" type="button" class="btn btn-ghost btn-sm back">
-          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m12 19-7-7 7-7M19 12H5" /></svg>
-          Back
-        </button>
-        <h2 class="settings-title">Settings</h2>
-        <nav id="settings-tabs" role="tablist" aria-orientation="vertical" aria-label="Settings sections">
+          <div class="settings-title" role="presentation">Settings</div>
           <button type="button" role="tab" class="nav-item" data-section="general" aria-controls="section-general">
             <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7h-9M14 17H5" /><circle cx="17" cy="17" r="3" /><circle cx="7" cy="7" r="3" /></svg>
             General
@@ -111,11 +45,74 @@
             About
           </button>
         </nav>
+        <div class="side-foot">
+          <div id="model-status" class="model-status" aria-live="off">
+            <span class="dot"></span><span id="model-status-text">Starting…</span>
+            <div class="model-bar" hidden><div id="model-bar-fill"></div></div>
+          </div>
+        </div>
       </aside>
 
       <div class="settings-content">
+        <!-- Transcribe: files, dictation in this window, the result -->
+        <section id="section-transcribe" class="section section-wide" role="tabpanel" data-section="transcribe">
+          <header class="section-head">
+            <h3>Transcribe</h3>
+            <p>Drop a file for its text and subtitles, or try the dictation here. In other apps, use the dictation key.</p>
+          </header>
+          <section class="card">
+            <div id="dropzone" class="dropzone" role="button" tabindex="0" aria-label="Choose an audio or video file, or drop one here">
+              <svg class="drop-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 16V4m0 0-4 4m4-4 4 4M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
+              </svg>
+              <span class="drop-title">Drop an audio or video file</span>
+              <span class="drop-sub">or <u>choose a file</u> · MP3, WAV, M4A, OGG, FLAC, WEBM, MP4…</span>
+            </div>
+
+            <div class="divider"><span>or</span></div>
+
+            <div id="dictation" class="dictation" data-state="idle">
+              <button id="mic-button" class="mic" type="button" aria-label="Start dictation">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3Zm0 0v4m-4 0h8M6 11a6 6 0 0 0 12 0" />
+                </svg>
+              </button>
+              <div class="dictation-body">
+                <canvas id="waveform" class="waveform" height="56" aria-hidden="true"></canvas>
+                <div class="dictation-text">
+                  <span id="dictation-label" class="dictation-label" aria-live="polite">Dictate</span>
+                  <span id="dictation-hint" class="dictation-hint">Hold <kbd>Space</kbd> to talk, or tap it to start and stop</span>
+                </div>
+                <span id="dictation-timer" class="timer" hidden>0:00</span>
+              </div>
+            </div>
+          </section>
+
+          <div id="error" class="error" role="alert" hidden></div>
+
+          <section id="result" class="card result" hidden>
+            <div class="result-head">
+              <div>
+                <h2 id="result-title">Transcript</h2>
+                <p id="result-meta" class="meta"></p>
+              </div>
+              <div class="actions">
+                <button id="copy-button" type="button" class="btn btn-default btn-sm" disabled>Copy</button>
+                <button data-format="txt" type="button" class="btn btn-outline btn-sm download" disabled>.txt</button>
+                <button data-format="srt" type="button" class="btn btn-outline btn-sm download" disabled>.srt</button>
+                <button data-format="vtt" type="button" class="btn btn-outline btn-sm download" disabled>.vtt</button>
+              </div>
+            </div>
+            <div id="progress" class="progress" hidden>
+              <div class="progress-track"><div id="progress-fill" class="progress-fill"></div></div>
+              <span id="progress-text" class="progress-text"></span>
+            </div>
+            <div id="transcript" class="transcript"></div>
+          </section>
+        </section>
+
         <!-- General -->
-        <section id="section-general" class="section" role="tabpanel" data-section="general">
+        <section id="section-general" class="section" role="tabpanel" data-section="general" hidden>
           <header class="section-head">
             <h3>General</h3>
             <p>How open-whisper understands what you say.</p>

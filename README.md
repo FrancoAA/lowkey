@@ -41,9 +41,10 @@ make desktop-bundle      # AppImage / .deb / .rpm in desktop/src-tauri/target/re
   <kbd>Esc</kbd> cancels. A live waveform shows that the app is listening.
 - **Result:** the text appears while it is transcribed. **Copy** puts it on the clipboard.
   **.txt**, **.srt** and **.vtt** save the transcript or subtitles.
-- **Settings** (the ⚙ button or <kbd>Ctrl</kbd>+<kbd>,</kbd>; never required): sections on the left —
-  General (language), Model (model, free memory when idle), Dictation (the key, start at login),
-  Live preview (on/off, engine), About.
+- **The window** has sections on the left: **Transcribe** (files, dictation in the window, the
+  result; it opens there) and the settings — General (language), Model (model, free memory when
+  idle), Dictation (the key, start at login), Live preview (on/off, engine), About.
+  <kbd>Ctrl</kbd>+<kbd>,</kbd> jumps to the settings, <kbd>Esc</kbd> back to Transcribe.
 - Files given on the command line open in the app. **Closing the window keeps the app
   running** in the tray, so the dictation key stays instant. Quit from the tray or with
   `open-whisper --dictate quit`.

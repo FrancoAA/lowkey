@@ -91,7 +91,8 @@ function modelPhrase(m: ModelInfo): string {
       return "Loading model…";
     case "ready":
     case "downloaded": // on disk, loads on first use
-      return `Ready · ${m.label.split(" · ")[0]} on ${status?.gpu || status?.device === "cuda" ? "GPU" : "CPU"}`;
+      // Parakeet runs on the CPU even when there is a GPU.
+      return `Ready · ${m.label.split(" · ")[0]} on ${status?.gpu && m.engine !== "parakeet" ? "GPU" : "CPU"}`;
     case "error":
       return m.error ?? "Model error";
     default:
@@ -668,19 +669,19 @@ window.addEventListener("blur", () => {
 // Space is handled globally (and its default "click" is suppressed), so only real clicks/Enter land here.
 micButton.addEventListener("click", toggleDictation);
 
-// ------------------------------------------------------------------ settings view
-const viewMain = $<HTMLElement>("view-main");
-const viewSettings = $<HTMLElement>("view-settings");
-const settingsOpen = $<HTMLButtonElement>("settings-open");
+// ------------------------------------------------------------------ sections
+// One window: Transcribe (files, dictation here, the result) and the settings sections.
 const tabs = [...document.querySelectorAll<HTMLButtonElement>("#settings-tabs .nav-item")];
-let section = "general";
+let section = "transcribe";
 
+/** In a settings section (not Transcribe): Space works the controls, it does not dictate. */
 function inSettings(): boolean {
-  return !viewSettings.hidden;
+  return section !== "transcribe";
 }
 
 function showSection(name: string, focus = false): void {
   if (capturing) stopCapture();
+  if (name !== "transcribe" && dictation.state !== "idle") return; // finish the dictation first
   section = name;
   for (const t of tabs) {
     const on = t.dataset.section === name;
@@ -690,23 +691,8 @@ function showSection(name: string, focus = false): void {
   }
   for (const p of document.querySelectorAll<HTMLElement>(".settings-content .section")) p.hidden = p.dataset.section !== name;
 }
+showSection("transcribe");
 
-function openSettings(name = section): void {
-  if (dictation.state !== "idle") return;
-  viewMain.hidden = true;
-  viewSettings.hidden = false;
-  showSection(name, true);
-}
-
-function closeSettings(): void {
-  if (capturing) stopCapture();
-  viewSettings.hidden = true;
-  viewMain.hidden = false;
-  settingsOpen.focus();
-}
-
-settingsOpen.addEventListener("click", () => openSettings());
-$<HTMLButtonElement>("settings-back").addEventListener("click", closeSettings);
 for (const t of tabs) t.addEventListener("click", () => showSection(t.dataset.section!));
 $<HTMLElement>("settings-tabs").addEventListener("keydown", (e) => {
   const i = tabs.findIndex((t) => t.dataset.section === section);
@@ -718,11 +704,10 @@ $<HTMLElement>("settings-tabs").addEventListener("keydown", (e) => {
 document.addEventListener("keydown", (e) => {
   if (e.key === "," && e.ctrlKey && !e.altKey && !e.metaKey) {
     e.preventDefault();
-    if (inSettings()) closeSettings();
-    else openSettings();
+    showSection(inSettings() ? "transcribe" : "general", true);
   } else if (e.key === "Escape" && inSettings() && !capturing && dictation.state === "idle") {
     e.preventDefault();
-    closeSettings();
+    showSection("transcribe", true);
   }
 });
 
