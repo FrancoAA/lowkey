@@ -26,6 +26,8 @@ export interface Options {
   history_keep?: string;
   microphone?: string;
   avoid_bluetooth_mic?: boolean;
+  call_detection?: boolean;
+  call_policy?: { key: string; policy: string };
 }
 
 export interface Microphones {

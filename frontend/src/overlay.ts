@@ -41,6 +41,9 @@ let dictAt = 0; // when the dictation state arrived (done/error show for a momen
 let meet: MeetingLive | null = null;
 let meetAt = 0;
 let meetError: { text: string; at: number } | null = null;
+/** Call detection: an offer, an ended call, or a recording started by itself (each for a while). */
+let callNote: { state: "offer" | "ended" | "auto"; label: string; key: string; at: number } | null = null;
+const CALL_NOTE_MS = { offer: 20_000, ended: 20_000, auto: 10_000 };
 let meetingKey = "";
 
 let level = 0;
@@ -84,8 +87,13 @@ function dictationShows(now: number): boolean {
   return (dict.state === "done" || dict.state === "error") && now - dictAt < 2500;
 }
 
+function callNoteNow(now: number) {
+  return callNote && now - callNote.at < CALL_NOTE_MS[callNote.state] ? callNote : null;
+}
+
 function meetingShows(now: number): boolean {
   if (meetError && now - meetError.at < 4000) return true;
+  if (callNoteNow(now)?.state === "offer") return true;
   if (!meet) return false;
   return meet.state !== "done" || now - meetAt < 3500;
 }
@@ -121,6 +129,13 @@ function renderMeeting(now: number): void {
     detail.textContent = meetError.text;
     return;
   }
+  const note = callNoteNow(now);
+  if (note?.state === "offer" && (!meet || meet.state === "done")) {
+    root.dataset.state = "offer";
+    label.textContent = `${note.label} call detected`;
+    detail.textContent = note.key ? `${prettyKey(note.key)} records it` : "Record it in open-whisper → Meetings";
+    return;
+  }
   const m = meet!;
   const elapsed = m.state === "recording" ? m.elapsed + (now - meetAt) / 1000 : m.elapsed;
   root.dataset.state = m.state === "recording" ? "recording" : m.state === "finishing" ? "transcribing" : "done";
@@ -129,7 +144,9 @@ function renderMeeting(now: number): void {
     label.textContent = "Recording";
     timer.textContent = clock(elapsed * 1000); // aria-hidden: no announcement every second
     const stop = meetingKey ? ` · ${prettyKey(meetingKey)} stops` : "";
-    if (last) speakerLine(last.speaker, last.text);
+    if (note?.state === "ended") detail.textContent = `The ${note.label} call ended${note.key ? ` · ${prettyKey(note.key)} stops` : ""}`;
+    else if (note?.state === "auto") detail.textContent = `Started automatically · ${note.label} call`;
+    else if (last) speakerLine(last.speaker, last.text);
     else detail.textContent = `${m.meeting.system_audio ? "Your mic and the computer's sound" : "Your mic only"}${stop}`;
   } else if (m.state === "finishing") {
     label.textContent = "Saving the meeting…";
@@ -207,6 +224,15 @@ void (async () => {
       meetError = { text: e.payload.result.Err, at: performance.now() };
       show();
     }
+  });
+  await listen<{ state: string; label?: string; meeting_key?: string; auto?: boolean }>("call", (e) => {
+    const p = e.payload;
+    if (p.state === "offer" || p.state === "auto" || (p.state === "ended" && !p.auto)) {
+      callNote = { state: p.state as "offer" | "ended" | "auto", label: p.label ?? "", key: p.meeting_key ?? meetingKey, at: performance.now() };
+    } else if (p.state === "gone" && callNote?.state === "offer") {
+      callNote = null;
+    }
+    show();
   });
   await listen<{ me: number; them: number }>("meeting-level", (e) => {
     mwave.levels = e.payload;

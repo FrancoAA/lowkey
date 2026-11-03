@@ -61,6 +61,12 @@ pub struct App {
     history: Arc<crate::history::History>,
     /// Settings' microphone test is running.
     mic_testing: AtomicBool,
+    /// A call offered now (the strip says so; the meeting key records it with its name).
+    call_offer: Mutex<Option<(crate::calls::Call, Instant)>>,
+    /// The meeting recording a detected call: its id, the call, started automatically.
+    call_session: Mutex<Option<(String, crate::calls::Call, bool)>>,
+    /// Calls seen while the app runs (Settings lists them with their policy).
+    calls_seen: Mutex<Vec<crate::calls::Call>>,
     /// Who wants the overlay: [dictation, meeting]. It shows while either does.
     overlay_wants: [AtomicBool; 2],
     /// AI notes: one job at a time, and its cancel flag.
@@ -266,6 +272,11 @@ impl App {
             "paste_key_source": self.source_of(KeyKind::PasteLast),
             "paste_key_problem": if self.source_of(KeyKind::PasteLast) == "none" && !self.key_of(KeyKind::PasteLast).is_empty() { self.paste_hotkey_text.lock().clone() } else { String::new() },
             "history_keep": cfg.history_keep,
+            "calls": {
+                "detect": cfg.call_detection,
+                "available": cfg!(target_os = "linux"),
+                "apps": self.call_apps(&cfg),
+            },
             "recording": self.meeting.lock().is_some(),
             "ai": {
                 "engine": cfg.ai_engine, "url": cfg.ai_url, "model": cfg.ai_model, "has_key": !cfg.ai_key.is_empty(),
@@ -375,8 +386,15 @@ impl App {
         }
         let recording = self.meeting.lock().is_some();
         match (action, recording) {
-            ("toggle" | "start", false) => match meeting_start_inner(self, "") {
+            ("toggle" | "start", false) => {
+                // A call is offered: the recording is that call (its name, and "ended" later).
+                let offered = self.call_offer.lock().take().map(|(c, _)| c);
+                let title = offered.as_ref().map(|c| format!("{} call", c.label)).unwrap_or_default();
+                match meeting_start_inner(self, &title) {
                 Ok(live) => {
+                    if let Some(c) = offered {
+                        *self.call_session.lock() = Some((live.meeting.id.clone(), c, false));
+                    }
                     emit_logged(&self.handle, "meeting-start", json!({"result": {"Ok": live.meeting.id}}));
                 }
                 Err(e) if e == ALREADY_RECORDING => {} // another tap won the start
@@ -387,12 +405,130 @@ impl App {
                     output::notify(&format!("Meeting not started: {e}"));
                     self.hide_meeting_strip_later(4);
                 }
-            },
+                }
+            }
             ("toggle" | "stop", true) => {
                 let _ = stop_meeting(self);
             }
             ("start" | "stop", _) => {} // already as asked
             other => eprintln!("  unknown --meeting action {other:?}"),
+        }
+    }
+
+    /// Calls for Settings: the ones with a saved policy, and the ones seen now.
+    fn call_apps(&self, cfg: &Config) -> Vec<Value> {
+        let mut out: Vec<(String, String, String)> = cfg.call_policies.iter().map(|(k, p)| (k.clone(), crate::calls::label_for(k), p.clone())).collect();
+        for c in self.calls_seen.lock().iter() {
+            if !out.iter().any(|(k, _, _)| *k == c.key) {
+                out.push((c.key.clone(), c.label.clone(), "ask".into()));
+            }
+        }
+        out.sort_by(|a, b| a.1.cmp(&b.1));
+        out.into_iter().map(|(key, label, policy)| json!({"key": key, "label": label, "policy": policy})).collect()
+    }
+
+    /// Call detection (Linux): look once a second at who uses the microphone.
+    #[cfg(target_os = "linux")]
+    fn watch_calls(self: &Arc<Self>) {
+        let weak = Arc::downgrade(self);
+        std::thread::Builder::new()
+            .name("calls".into())
+            .spawn(move || {
+                let mut detector = crate::calls::Detector::default();
+                loop {
+                    std::thread::sleep(Duration::from_secs(1));
+                    let Some(app) = weak.upgrade() else { return };
+                    if !app.config.lock().call_detection {
+                        continue;
+                    }
+                    let Some(json) = crate::microphones::mic_users_json() else { continue };
+                    let users = crate::calls::parse_users(&json);
+                    if users.is_empty() && detector_idle(&app) {
+                        let _ = detector.step(Instant::now(), vec![]);
+                        continue;
+                    }
+                    let titles = window_titles();
+                    let calls: Vec<crate::calls::Call> = users.iter().filter_map(|u| crate::calls::classify(u, &|pid| titles.get(&pid).cloned().unwrap_or_default())).collect();
+                    for action in detector.step(Instant::now(), calls) {
+                        app.on_call(action);
+                    }
+                }
+            })
+            .ok();
+    }
+
+    #[cfg(target_os = "linux")]
+    fn on_call(self: &Arc<Self>, action: crate::calls::Action) {
+        use crate::calls::Action;
+        match action {
+            Action::Offer(call) => {
+                {
+                    let mut seen = self.calls_seen.lock();
+                    if !seen.iter().any(|c| c.key == call.key) {
+                        seen.push(call.clone());
+                    }
+                }
+                if self.meeting.lock().is_some() || self.meeting_starting.load(Ordering::SeqCst) {
+                    return; // already recording
+                }
+                let policy = self.config.lock().call_policies.get(&call.key).cloned().unwrap_or_else(|| "ask".into());
+                emit_logged(&self.handle, "call", json!({"state": "detected", "key": call.key, "label": call.label, "policy": policy}));
+                match policy.as_str() {
+                    "never" => {}
+                    "always" => {
+                        let title = format!("{} call", call.label);
+                        if let Ok(live) = meeting_start_inner(self, &title) {
+                            *self.call_session.lock() = Some((live.meeting.id.clone(), call.clone(), true));
+                            emit_logged(&self.handle, "meeting-start", json!({"result": {"Ok": live.meeting.id}}));
+                            emit_logged(&self.handle, "call", json!({"state": "auto", "key": call.key, "label": call.label}));
+                        }
+                    }
+                    _ => {
+                        *self.call_offer.lock() = Some((call.clone(), Instant::now()));
+                        let key = self.key_of(KeyKind::Meeting);
+                        emit_logged(&self.handle, "call", json!({"state": "offer", "key": call.key, "label": call.label, "meeting_key": key}));
+                        self.want_overlay(1, true);
+                        // Not taken in 20 s: the offer goes (and the strip, unless a meeting records).
+                        let me = self.clone();
+                        let k = call.key.clone();
+                        std::thread::spawn(move || {
+                            std::thread::sleep(Duration::from_secs(20));
+                            let still = me.call_offer.lock().as_ref().is_some_and(|(c, _)| c.key == k);
+                            if still {
+                                *me.call_offer.lock() = None;
+                                emit_logged(&me.handle, "call", json!({"state": "gone", "key": k}));
+                                me.hide_meeting_strip_later(0);
+                            }
+                        });
+                    }
+                }
+            }
+            Action::Ended(call) => {
+                // An offer not taken: it goes.
+                let offered = self.call_offer.lock().as_ref().is_some_and(|(c, _)| c.key == call.key);
+                if offered {
+                    *self.call_offer.lock() = None;
+                    emit_logged(&self.handle, "call", json!({"state": "gone", "key": call.key}));
+                    self.hide_meeting_strip_later(0);
+                }
+                let session = self.call_session.lock().clone();
+                let live_id = self.meeting.lock().as_ref().map(|s| s.id());
+                if let Some((id, c, auto)) = session {
+                    if c.key == call.key && live_id.as_deref() == Some(id.as_str()) {
+                        if auto {
+                            // Started by itself: it stops by itself.
+                            emit_logged(&self.handle, "call", json!({"state": "ended", "key": call.key, "label": call.label, "auto": true}));
+                            let me = self.clone();
+                            std::thread::spawn(move || {
+                                let _ = stop_meeting(&me);
+                            });
+                        } else {
+                            let key = self.key_of(KeyKind::Meeting);
+                            emit_logged(&self.handle, "call", json!({"state": "ended", "key": call.key, "label": call.label, "auto": false, "meeting_key": key}));
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -627,6 +763,15 @@ struct OptionsIn {
     history_keep: Option<String>,
     microphone: Option<String>,
     avoid_bluetooth_mic: Option<bool>,
+    call_detection: Option<bool>,
+    /// One call's policy: { key, policy }.
+    call_policy: Option<CallPolicyIn>,
+}
+
+#[derive(Deserialize)]
+struct CallPolicyIn {
+    key: String,
+    policy: String,
 }
 
 #[tauri::command]
@@ -688,6 +833,15 @@ fn set_options(app: State<'_, AppRef>, options: OptionsIn) -> Result<Value, Stri
         }
         if let Some(on) = options.ai_auto {
             cfg.ai_auto = on;
+        }
+        if let Some(on) = options.call_detection {
+            cfg.call_detection = on;
+        }
+        if let Some(cp) = options.call_policy {
+            if !crate::calls::POLICIES.contains(&cp.policy.as_str()) || cp.key.is_empty() || cp.key.len() > 64 {
+                return Err(format!("Unknown call setting {:?}", cp.policy));
+            }
+            cfg.call_policies.insert(cp.key, cp.policy);
         }
         if let Some(m) = options.microphone {
             cfg.microphone = m.trim().to_string();
@@ -887,6 +1041,7 @@ fn stop_meeting(app: &AppRef) -> Result<meeting::Meeting, String> {
     }
     let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| session.finish()));
     app.meeting.lock().take(); // only now: no second meeting while this one finishes
+    *app.call_session.lock() = None;
     app.meeting_stopping.store(false, Ordering::SeqCst);
     app.emit_status();
     // The strip says "saved" for a moment, then goes (unless a new meeting started).
@@ -1109,6 +1264,29 @@ fn set_paste_hotkey(app: State<'_, AppRef>, key: String) -> Result<Value, String
     let r = set_key_inner(&app, &key, KeyKind::PasteLast);
     emit_logged(&app.handle, "paste-key-change", json!({"key": key, "result": r.as_ref().map(|_| "ok").map_err(|e| e.clone())}));
     r
+}
+
+/// No call is followed now (nothing to time): an empty look is cheap.
+#[cfg(target_os = "linux")]
+fn detector_idle(app: &AppRef) -> bool {
+    app.call_offer.lock().is_none() && app.call_session.lock().is_none()
+}
+
+/// Window titles by process id (Hyprland), to name a browser's call.
+#[cfg(target_os = "linux")]
+fn window_titles() -> std::collections::HashMap<u32, Vec<String>> {
+    let mut out: std::collections::HashMap<u32, Vec<String>> = std::collections::HashMap::new();
+    if !hyprland::running() {
+        return out;
+    }
+    if let Ok(Value::Array(clients)) = serde_json::from_str::<Value>(&hyprland::hyprctl(&["clients", "-j"])) {
+        for c in clients {
+            if let (Some(pid), Some(title)) = (c["pid"].as_u64(), c["title"].as_str()) {
+                out.entry(pid as u32).or_default().push(title.to_string());
+            }
+        }
+    }
+    out
 }
 
 // ------------------------------------------------------------------ microphone
@@ -1509,11 +1687,16 @@ pub fn run() {
                 paste_os_key: Mutex::new(None),
                 history: history.clone(),
                 mic_testing: AtomicBool::new(false),
+                call_offer: Mutex::new(None),
+                call_session: Mutex::new(None),
+                calls_seen: Mutex::new(Vec::new()),
                 overlay_wants: [AtomicBool::new(false), AtomicBool::new(false)],
                 ai_busy: Arc::new(AtomicBool::new(false)),
                 ai_cancel: Arc::new(AtomicBool::new(false)),
                 ai_job: Mutex::new(None),
             });
+            #[cfg(target_os = "linux")]
+            app.watch_calls();
             // A model runner that a crash left behind holds ~3 GB: stop it.
             std::thread::spawn(llm::stop_stale);
             // Every microphone open (dictation, meetings, the test) asks which one, now.

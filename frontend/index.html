@@ -131,6 +131,16 @@
               <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 14h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7a9 9 0 0 1 18 0v7a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3" /></svg>
               <span>Tell the others that you record. Use headphones: without them, the microphone also hears the others.</span>
             </p>
+            <section id="calls-card" class="calls-card" aria-labelledby="calls-title" hidden>
+              <div class="field">
+                <div class="field-text">
+                  <label id="calls-title" for="calls-detect">Offer to record calls</label>
+                  <p class="field-desc">When Zoom, Meet, Teams, Slack or another call app uses the microphone, the strip offers to record it. Choose per call: ask, always record, or never.</p>
+                </div>
+                <input id="calls-detect" type="checkbox" role="switch" class="switch" />
+              </div>
+              <div id="calls-apps" class="calls-apps"></div>
+            </section>
             <div id="meetings-error" class="error" role="alert" hidden></div>
             <div id="meetings-list" class="meetings-list" role="list" aria-label="Recorded meetings"></div>
             <div id="meetings-empty" class="meetings-empty" hidden>

@@ -75,3 +75,6 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: transparent;
 .who-me { color: var(--me); font-weight: 600; }
 .who-them { color: var(--them); font-weight: 600; }
 @keyframes rec { 50% { box-shadow: 0 0 0 4px rgba(248, 113, 113, 0.25); } }
+.overlay[data-mode="meeting"][data-state="offer"] .dot::after { background: var(--them); }
+.overlay[data-mode="meeting"][data-state="offer"] .dot { animation: offer 1.4s ease-in-out infinite; }
+@keyframes offer { 50% { box-shadow: 0 0 0 5px rgba(34, 211, 238, 0.22); } }

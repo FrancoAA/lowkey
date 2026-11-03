@@ -80,6 +80,11 @@ pub struct Config {
     pub microphone: String,
     /// With the system default: a Bluetooth headset's microphone gives way to another one.
     pub avoid_bluetooth_mic: bool,
+    /// Offer to record when a call app uses the microphone (Linux).
+    pub call_detection: bool,
+    /// Per call ("zoom", "google-meet", "browser:firefox"): ask | always | never. Missing = ask.
+    /// (A table: the toml writer puts it after the plain values.)
+    pub call_policies: std::collections::BTreeMap<String, String>,
     /// AI notes: "builtin" (Qwen3.5 4B, run by the app) or "server" (an OpenAI-compatible API).
     pub ai_engine: String,
     /// The built-in model: an id from llm::MODELS ("qwen3.5-4b", "qwen3.5-2b", "gemma-4-e4b").
@@ -102,6 +107,8 @@ impl Default for Config {
             history_keep: crate::history::DEFAULT_KEEP.into(),
             microphone: String::new(),
             avoid_bluetooth_mic: true,
+            call_detection: true,
+            call_policies: Default::default(),
             ai_engine: "builtin".into(),
             ai_builtin_model: crate::llm::DEFAULT_MODEL.into(),
             ai_url: "http://localhost:11434/v1".into(),
@@ -309,10 +316,18 @@ mod tests {
         }
         assert_eq!(Config::load_from(&path), c);
         // The vocabulary (a list of tables) round-trips, after the plain values.
-        let v = Config { vocabulary: vec![crate::vocabulary::Term { term: "Lisandro".into(), sounds_like: vec!["Lisando".into()] }], ..c.clone() };
+        let mut policies = std::collections::BTreeMap::new();
+        policies.insert("zoom".to_string(), "always".to_string());
+        policies.insert("browser:firefox".to_string(), "never".to_string());
+        let v = Config {
+            vocabulary: vec![crate::vocabulary::Term { term: "Lisandro".into(), sounds_like: vec!["Lisando".into()] }],
+            call_policies: policies,
+            ..c.clone()
+        };
         v.save().unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(text.contains("[[vocabulary]]") && text.contains("term = \"Lisandro\""), "{text}");
+        assert!(text.contains("[call_policies]") && text.contains("zoom = \"always\""), "{text}");
         assert_eq!(Config::load_from(&path), v);
     }
 

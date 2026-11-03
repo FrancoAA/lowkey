@@ -159,6 +159,15 @@ Record a call or a talk, as text next to your notes (Linux for now). No bot join
   when it is not on this computer). They are written by themselves when a meeting stops (the
   first time, after the model's download), and again with **Write again**; they are a draft
   next to the transcript, and Copy/Export include them. Measurements: [bench/summary/results.md](bench/summary/results.md).
+- **Calls are detected** (Linux; Meetings → Offer to record calls, on by default): when Zoom,
+  Teams, Slack, Discord, Signal… or a browser on Google Meet, Teams, Jitsi… uses the
+  microphone for 2 s (an unknown browser page: 20 s), the strip says "Zoom call detected ·
+  Super+Ctrl+M records it", for 20 s. The meeting key then records it as "Zoom call". Per call:
+  **Ask**, **Always record** (starts by itself, and stops by itself when the call ends) or
+  **Never**. The same call is not offered again until it has been off the microphone for 60 s;
+  3 s off it, the strip says the call ended. Who uses the microphone comes from PipeWire
+  (`pactl`), a browser's page from its Hyprland window title. (Idea from
+  [Hex](https://github.com/anomalyco/hex), MIT.)
 - Use headphones. Without them the microphone also hears the others; the app removes a "Me"
   line when most of its words are in a "Them" line at the same time.
 - Tell the others that you record. Meetings are saved as JSON in
@@ -224,6 +233,10 @@ paste_hotkey = "SUPER + ALT + V"      # type the last dictation again; "" = no k
 history_keep = "week"           # off | day | week | month | forever
 microphone = ""                 # "" = system default; else a PipeWire source / device name
 avoid_bluetooth_mic = true      # with the default: not a Bluetooth headset's microphone
+call_detection = true           # offer to record when a call app uses the microphone (Linux)
+
+[call_policies]                 # per call: ask (default) | always | never
+zoom = "always"
 ai_engine = "builtin"           # AI notes: builtin | server
 ai_builtin_model = "qwen3.5-4b" # qwen3.5-4b (recommended) | qwen3.5-2b | gemma-4-e4b
 ai_url = "http://localhost:11434/v1"   # own server (OpenAI-compatible); ai_model, ai_key too

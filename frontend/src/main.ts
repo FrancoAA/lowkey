@@ -2,6 +2,7 @@ import "./style.css";
 import type { AiNotesEvent, JobEvent, JobResult, ModelInfo, Segment, Status } from "./api";
 import { getBackend, type Backend, type FileRef } from "./backend";
 import { Dictation, type DictationState } from "./dictation";
+import { renderCalls } from "./calls";
 import { initHistory } from "./history";
 import { initMeetings } from "./meetings";
 import { initMicrophone } from "./microphone";
@@ -228,6 +229,7 @@ function applyStatus(next: Status): void {
   }
   renderPreview();
   renderKey();
+  if (backend) renderCalls(backend, status, showError);
   renderAi();
   renderAbout();
   renderStatus();

@@ -72,12 +72,18 @@ pub fn list() -> Vec<Mic> {
     mics
 }
 
+/// Who uses the microphone now (Linux: pactl's source outputs as JSON).
+#[cfg(target_os = "linux")]
+pub fn mic_users_json() -> Option<String> {
+    platform::pactl(&["-f", "json", "list", "source-outputs"])
+}
+
 #[cfg(target_os = "linux")]
 mod platform {
     use super::*;
 
     /// OPENWHISPER_PACTL: another pactl (tests); default "pactl".
-    fn pactl(args: &[&str]) -> Option<String> {
+    pub fn pactl(args: &[&str]) -> Option<String> {
         let bin = std::env::var("OPENWHISPER_PACTL").unwrap_or_else(|_| "pactl".into());
         let out = std::process::Command::new(bin).args(args).output().ok()?;
         out.status.success().then(|| String::from_utf8_lossy(&out.stdout).into_owned())

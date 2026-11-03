@@ -39,6 +39,8 @@ export interface Status {
   paste_key_problem?: string;
   /** off | day | week | month | forever */
   history_keep?: string;
+  /** Call detection: on/off, built here (Linux), and each call with its policy. */
+  calls?: { detect: boolean; available: boolean; apps: { key: string; label: string; policy: "ask" | "always" | "never" }[] };
   /** A meeting is being recorded. */
   recording?: boolean;
   /** AI notes settings (the API key itself never comes to the page). */

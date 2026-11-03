@@ -704,6 +704,28 @@ esac
         wait(lambda: win("open-whisper-overlay") is None, 10, "the strip goes after the save")
         print("  ok  the strip goes a moment after the save")
 
+        # ---------------------------------------------------------------- calls: Zoom on the microphone
+        n_c = len(events("call"))
+        outputs.write_text(json.dumps([{"properties": {"application.name": "ZOOM VoiceEngine", "application.process.binary": "zoom",
+                                                        "application.process.id": "4242"}}]))
+        offer = wait(lambda: next((e for e in events("call")[n_c:] if e["state"] == "offer"), None), 15, "call offer")
+        check(offer["label"] == "Zoom" and win("open-whisper-overlay") is not None, "Zoom on the microphone for 2 s: the strip offers to record it")
+        time.sleep(0.6)
+        shot("30-desktop-call-offer.png")
+        n_z = len(events("meeting"))
+        meeting_key()  # record it
+        zrec = wait(lambda: next((m for m in events("meeting")[n_z:] if m["state"] == "recording"), None), 15, "the call's recording")
+        check(zrec["meeting"]["title"] == "Zoom call", f"the meeting key records the offered call, named after it: {zrec['meeting']['title']!r}")
+        outputs.write_text("[]")  # Zoom leaves the microphone
+        ended = wait(lambda: next((e for e in events("call")[n_c:] if e["state"] == "ended"), None), 15, "call ended")
+        check(ended["auto"] is False and any(m["state"] == "recording" for m in events("meeting")[-2:]),
+              "the call ended: the strip says so; a recording you started goes on until you stop it")
+        time.sleep(0.6)
+        shot("31-desktop-call-ended.png")
+        meeting_key()
+        wait(lambda: next((m for m in events("meeting")[n_z:] if m["state"] == "done"), None), 60, "the call's meeting saved")
+        print("  ok  the call's meeting saved with the key")
+
         # ---------------------------------------------------------------- close, quit, key starts the app
         run(["hyprctl", "dispatch", f'hl.dsp.window.close({{ window = "address:{main_win["address"]}" }})'], env)
         time.sleep(1.0)
