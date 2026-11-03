@@ -5,6 +5,9 @@
 # A version tag (v0.3.0) also makes a GitHub Release with every installer attached. The tag
 # must match the app's version (desktop/src-tauri/tauri.conf.json and Cargo.toml). Put
 # "[release]" in the version commit's message: then only the tag's run builds it.
+# Linux and Windows are required for a release; macOS is not: GitHub's macOS arm64 runners
+# are sometimes not available for hours ("not acquired by Runner"), and the release then
+# goes out without the .dmg and says so.
 name: Desktop builds
 
 on:
@@ -104,10 +107,11 @@ jobs:
             desktop/src-tauri/target/release/bundle/msi/*.msi
             desktop/src-tauri/target/release/bundle/dmg/*.dmg
 
-  # A version tag: one release with the installers of all three systems.
+  # A version tag: one release with the installers (Linux and Windows always, macOS when it built).
   release:
     name: GitHub Release
-    if: startsWith(github.ref, 'refs/tags/v')
+    # Also when a build did not finish (macOS without a runner): the files are checked below.
+    if: ${{ always() && startsWith(github.ref, 'refs/tags/v') }}
     needs: build
     runs-on: ubuntu-24.04
     permissions:
@@ -124,9 +128,18 @@ jobs:
         run: |
           find dist -type f | sort
           mapfile -t files < <(find dist -type f \( -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' -o -name '*.exe' -o -name '*.msi' -o -name '*.dmg' \) | sort)
-          [ "${#files[@]}" -ge 6 ] || { echo "::error::expected 6 or more installers, found ${#files[@]}"; exit 1; }
-          notes="Installers for Linux (AppImage, .deb, .rpm), Windows (.exe installer, .msi) and macOS on Apple Silicon (.dmg).
+          # Linux and Windows must be there; macOS may be missing.
+          for ext in AppImage deb rpm exe msi; do
+            printf '%s\n' "${files[@]}" | grep -q "\.$ext\$" || { echo "::error::no .$ext installer"; exit 1; }
+          done
+          if printf '%s\n' "${files[@]}" | grep -q '\.dmg$'; then
+            notes="Installers for Linux (AppImage, .deb, .rpm), Windows (.exe installer, .msi) and macOS on Apple Silicon (.dmg).
           They are not signed: Windows SmartScreen asks once (More info → Run anyway); on macOS run
           \`xattr -dr com.apple.quarantine /Applications/Lowkey.app\` after copying the app."
+          else
+            notes="Installers for Linux (AppImage, .deb, .rpm) and Windows (.exe installer, .msi). No macOS build in
+          this release: GitHub had no macOS machine free for it. They are not signed: Windows SmartScreen
+          asks once (More info → Run anyway)."
+          fi
           gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title "Lowkey ${GITHUB_REF_NAME#v}" \
             --notes "$notes" --generate-notes "${files[@]}"
