@@ -833,6 +833,14 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "," && e.ctrlKey && !e.altKey && !e.metaKey) {
     e.preventDefault();
     showSection(inSettings() ? "transcribe" : "general", true);
+  } else if (e.key.toLowerCase() === "f" && e.ctrlKey && !e.altKey && !e.metaKey && (section === "meetings" || section === "history")) {
+    // Ctrl+F: the section's search field (Meetings: on the list, not inside a meeting).
+    const field = $<HTMLInputElement>(section === "meetings" ? "meetings-search" : "history-search");
+    if (field.offsetParent) {
+      e.preventDefault();
+      field.focus();
+      field.select();
+    }
   } else if (e.key === "Escape" && inSettings() && !capturing && dictation.state === "idle") {
     e.preventDefault();
     showSection("transcribe", true);

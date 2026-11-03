@@ -1,8 +1,11 @@
 /**
  * History section: finished dictations (desktop/src-tauri/src/history.rs), grouped by day,
- * searchable, each with Copy and Delete; how long they stay; Clear all (two clicks).
+ * searchable (the words of the dictations' text, marked in the results), each with Copy and
+ * Delete; how long they stay; Clear all (after a confirmation).
  */
 import type { HistoryEntry } from "./api";
+import { confirmDialog } from "./confirm";
+import { highlighted, searchWords } from "./highlight";
 import type { Backend } from "./backend";
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -49,9 +52,8 @@ export function initHistory(backend: Backend, keep: string, ui: HistoryUi): { re
   const hint = $<HTMLElement>("history-paste-hint");
   keepSelect.value = keep;
   let searchTimer = 0;
-  let clearArmed = 0;
 
-  function row(e: HistoryEntry): HTMLElement {
+  function row(e: HistoryEntry, words: string[]): HTMLElement {
     const r = document.createElement("div");
     r.className = "history-item";
     r.setAttribute("role", "listitem");
@@ -60,7 +62,7 @@ export function initHistory(backend: Backend, keep: string, ui: HistoryUi): { re
     time.textContent = timeFmt.format(new Date(e.at * 1000));
     const text = document.createElement("p");
     text.className = "history-text";
-    text.textContent = e.text;
+    text.append(...highlighted(e.text, words));
     const meta = document.createElement("span");
     meta.className = "history-meta";
     meta.textContent = `${e.source === "key" ? "Dictation key" : "In this window"} · ${Math.max(1, Math.round(e.seconds))} s`;
@@ -96,6 +98,7 @@ export function initHistory(backend: Backend, keep: string, ui: HistoryUi): { re
   }
 
   async function refresh(): Promise<void> {
+    const words = searchWords(search.value);
     let all: HistoryEntry[] = [];
     try {
       all = await api.list(search.value);
@@ -118,14 +121,14 @@ export function initHistory(backend: Backend, keep: string, ui: HistoryUi): { re
         g.append(h, box);
         groups.push(g);
       }
-      box.append(row(e));
+      box.append(row(e, words));
     }
     list.replaceChildren(...groups);
     empty.hidden = all.length > 0;
     clearBtn.hidden = !all.length || !!search.value;
     if (search.value) {
       emptyTitle.textContent = "Nothing found";
-      emptyText.textContent = "No dictation has all of these words.";
+      emptyText.textContent = "No dictation has all of these words in its text.";
     } else if (keepSelect.value === "off") {
       emptyTitle.textContent = "The history is off";
       emptyText.textContent = "Dictations are not kept. Choose how long to keep them above.";
@@ -144,25 +147,18 @@ export function initHistory(backend: Backend, keep: string, ui: HistoryUi): { re
   keepSelect.addEventListener("change", () => {
     void backend.saveOptions({ history_keep: keepSelect.value }).then(refresh, (err) => ui.onError(String(err)));
   });
-  // Two clicks: the first asks, the second clears (within 4 s).
   clearBtn.addEventListener("click", async () => {
-    if (!clearArmed) {
-      clearBtn.textContent = "Click again to clear all";
-      clearBtn.dataset.armed = "";
-      clearArmed = window.setTimeout(disarm, 4000);
-      return;
-    }
-    disarm();
+    const yes = await confirmDialog({
+      title: "Clear the history?",
+      body: "Every dictation in the history is deleted from this computer. You cannot undo this.",
+      action: "Clear all",
+      danger: true,
+    });
+    if (!yes) return;
     await api.clear();
     ui.announce("History cleared.");
     void refresh();
   });
-  function disarm(): void {
-    clearTimeout(clearArmed);
-    clearArmed = 0;
-    clearBtn.textContent = "Clear all";
-    delete clearBtn.dataset.armed;
-  }
   // A new dictation: rebuilt now only when the section is on screen (opening it refreshes).
   api.onAdded(() => {
     if (list.offsetParent) void refresh();

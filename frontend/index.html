@@ -118,35 +118,24 @@
         <section id="section-meetings" class="section section-wide" role="tabpanel" data-section="meetings" hidden>
           <div id="meetings-home" class="meetings-home">
             <header class="meetings-hero">
-              <div class="meetings-hero-text">
-                <h2>Meetings</h2>
-                <p>Your microphone and the computer's sound become text next to your notes. Audio and text stay on this computer.</p>
-              </div>
-              <div class="meetings-hero-action">
-                <button id="meeting-start" type="button" class="btn btn-default btn-rec"><span class="rec-dot" aria-hidden="true"></span>Start recording</button>
-                <span id="meetings-key" class="meetings-key"></span>
-              </div>
+              <h2>Meetings</h2>
+              <p>Your microphone and the computer's sound become text. Audio and text stay on this computer.</p>
             </header>
-            <p class="meetings-tip">
-              <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 14h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7a9 9 0 0 1 18 0v7a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3" /></svg>
-              <span>Tell the others that you record. Use headphones: without them, the microphone also hears the others.</span>
-            </p>
-            <section id="calls-card" class="calls-card" aria-labelledby="calls-title" hidden>
-              <div class="field">
-                <div class="field-text">
-                  <label id="calls-title" for="calls-detect">Offer to record calls</label>
-                  <p class="field-desc">When Zoom, Meet, Teams, Slack or another call app uses the microphone, the strip offers to record it. Choose per call: ask, always record, or never.</p>
-                </div>
-                <input id="calls-detect" type="checkbox" role="switch" class="switch" />
-              </div>
-              <div id="calls-apps" class="calls-apps"></div>
-            </section>
+            <div class="meetings-bar">
+              <input id="meetings-search" class="input" type="search" placeholder="Search titles, transcripts and AI notes" aria-label="Search meetings: titles, transcripts and AI notes" spellcheck="false" />
+              <button id="meeting-start" type="button" class="btn btn-default btn-rec" aria-describedby="meetings-key"><span class="rec-dot" aria-hidden="true"></span>Record</button>
+              <span id="meetings-key" class="sr-only"></span>
+            </div>
             <div id="meetings-error" class="error" role="alert" hidden></div>
             <div id="meetings-list" class="meetings-list" role="list" aria-label="Recorded meetings"></div>
             <div id="meetings-empty" class="meetings-empty" hidden>
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 10v3M6 6v11M10 3v18M14 8v7M18 5v13M22 10v3" /></svg>
-              <p class="meetings-empty-title">No meetings yet</p>
+              <p id="meetings-empty-title" class="meetings-empty-title">No meetings yet</p>
               <p id="meetings-empty-text" class="meetings-empty-text">Start a recording when your call begins.</p>
+              <p id="meetings-empty-tip" class="meetings-tip">
+                <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 14h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7a9 9 0 0 1 18 0v7a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3" /></svg>
+                <span>Tell the others that you record. Use headphones: without them, the microphone also hears the others.</span>
+              </p>
             </div>
           </div>
 
@@ -218,7 +207,7 @@
             </div>
           </header>
           <div class="history-bar">
-            <input id="history-search" class="input" type="search" placeholder="Search your dictations" aria-label="Search your dictations" spellcheck="false" />
+            <input id="history-search" class="input" type="search" placeholder="Find words in your dictations" aria-label="Find words in your dictations" spellcheck="false" />
             <label class="history-keep"><span>Keep</span>
               <select id="history-keep" class="select">
                 <option value="off">Off</option>
@@ -242,7 +231,7 @@
         <section id="section-general" class="section" role="tabpanel" data-section="general" hidden>
           <header class="section-head">
             <h2>General</h2>
-            <p>How Lowkey understands what you say.</p>
+            <p>How Lowkey listens and understands what you say.</p>
           </header>
           <div class="field">
             <div class="field-text">
@@ -271,6 +260,17 @@
               <p class="field-desc">With "System default": a Bluetooth headset's microphone switches it to call mode, with poor sound for everything else. Another microphone is used when there is one.</p>
             </div>
             <input id="mic-bt" type="checkbox" role="switch" class="switch" />
+          </div>
+          <div id="calls-card" class="calls-settings" hidden>
+            <div class="separator"></div>
+            <div class="field">
+              <div class="field-text">
+                <label id="calls-title" for="calls-detect">Offer to record calls</label>
+                <p class="field-desc">When Zoom, Meet, Teams, Slack or another call app uses the microphone, the meeting strip offers to record it. Choose per call: ask, always record, or never.</p>
+              </div>
+              <input id="calls-detect" type="checkbox" role="switch" class="switch" />
+            </div>
+            <div id="calls-apps" class="calls-apps"></div>
           </div>
           <div class="separator"></div>
           <div class="field field-stacked">

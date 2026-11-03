@@ -96,10 +96,12 @@ pub struct Summary {
     pub duration: f64,
     pub state: String,
     pub lines: usize,
-    /// The first words of the notes, else of the transcript.
+    /// The first words of the notes, else of the transcript. In a search: the words around
+    /// the first match.
     pub excerpt: String,
-    /// It has AI notes.
-    pub ai: bool,
+    /// In a search, where the excerpt's match is: transcript | ai_notes | notes ("" = the
+    /// title only, or no search).
+    pub found_in: String,
 }
 
 pub fn dir() -> PathBuf {
@@ -169,20 +171,70 @@ pub fn delete_in(dir: &Path, id: &str) -> anyhow::Result<()> {
 
 /// Newest first. Broken files are skipped.
 pub fn list_in(dir: &Path) -> Vec<Summary> {
+    search_in(dir, "")
+}
+
+/// The meetings that have every word of `query` (any order, any case, also inside a word) in
+/// their title, transcript, AI notes or notes; newest first. An empty query: all of them.
+pub fn search_in(dir: &Path, query: &str) -> Vec<Summary> {
+    let words: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
     let Ok(entries) = std::fs::read_dir(dir) else { return vec![] };
     let mut out: Vec<Summary> = entries
         .flatten()
         .filter_map(|e| {
             let name = e.file_name().to_string_lossy().into_owned();
             let id = name.strip_suffix(".json").filter(|id| valid_id(id))?.to_string();
-            let m = load_in(dir, &id).ok()?;
-            let source = if m.notes.trim().is_empty() { m.lines.iter().map(|l| l.text.as_str()).collect::<Vec<_>>().join(" ") } else { m.notes.clone() };
-            let excerpt = excerpt(&source, 140);
-            Some(Summary { ai: !m.ai_notes.trim().is_empty(), id: m.id, title: m.title, started_at: m.started_at, duration: m.duration, state: m.state, lines: m.lines.len(), excerpt })
+            summary(load_in(dir, &id).ok()?, &words)
         })
         .collect();
     out.sort_by(|a, b| b.started_at.cmp(&a.started_at).then(b.id.cmp(&a.id)));
     out
+}
+
+/// The list entry of `m`; None when `words` (lower case) are not all in it.
+fn summary(m: Meeting, words: &[String]) -> Option<Summary> {
+    let transcript = m.lines.iter().map(|l| l.text.as_str()).collect::<Vec<_>>().join(" ");
+    let fields = [("transcript", transcript.as_str()), ("ai_notes", m.ai_notes.as_str()), ("notes", m.notes.as_str())];
+    let mut excerpt_text = excerpt(if m.notes.trim().is_empty() { &transcript } else { &m.notes }, 140);
+    let mut found_in = String::new();
+    if !words.is_empty() {
+        let lower: Vec<String> = std::iter::once(m.title.as_str()).chain(fields.iter().map(|f| f.1)).map(str::to_lowercase).collect();
+        if !words.iter().all(|w| lower.iter().any(|f| f.contains(w.as_str()))) {
+            return None;
+        }
+        // The excerpt: around the first word found in the transcript, else the AI notes, else
+        // the notes (a match in the title only keeps the usual excerpt).
+        if let Some((name, text, at)) = fields.iter().find_map(|(name, text)| words.iter().find_map(|w| find_ci(text, w)).map(|at| (*name, *text, at))) {
+            excerpt_text = around(text, at, 140);
+            found_in = name.into();
+        }
+    }
+    Some(Summary { id: m.id, title: m.title, started_at: m.started_at, duration: m.duration, state: m.state, lines: m.lines.len(), excerpt: excerpt_text, found_in })
+}
+
+/// The byte index of `needle` (lower case) in `hay`, any case.
+fn find_ci(hay: &str, needle: &str) -> Option<usize> {
+    let n: Vec<char> = needle.chars().collect();
+    if n.is_empty() {
+        return None;
+    }
+    let lower: Vec<(char, usize)> = hay.char_indices().flat_map(|(i, c)| c.to_lowercase().map(move |l| (l, i))).collect();
+    lower.windows(n.len()).position(|w| w.iter().map(|x| x.0).eq(n.iter().copied())).map(|p| lower[p].1)
+}
+
+/// About `max` characters of `text` around byte `at`, cut at spaces, with "…" where cut.
+fn around(text: &str, at: usize, max: usize) -> String {
+    let before: String = {
+        let head: Vec<char> = text[..at].chars().collect();
+        let start = head.len().saturating_sub(max / 3);
+        let mut s: String = head[start..].iter().collect();
+        if start > 0 {
+            s = format!("…{}", s.split_once(char::is_whitespace).map_or("", |(_, rest)| rest));
+        }
+        s
+    };
+    let rest = excerpt(&text[at..], max - before.chars().count().min(max / 3));
+    excerpt(&format!("{before}{rest}"), max + 2)
 }
 
 fn excerpt(text: &str, max: usize) -> String {
@@ -835,6 +887,17 @@ mod tests {
         Line { speaker: who, start, end, text: text.into() }
     }
 
+    #[test]
+    fn a_search_excerpt_shows_the_words_around_the_match() {
+        assert_eq!(find_ci("Hello ÑANDÚ world", "ñandú"), Some(6));
+        assert_eq!(find_ci("abc", "x"), None);
+        let long = format!("{} the budget for next year {}", "word ".repeat(60), "more ".repeat(60));
+        let ex = around(&long, long.find("budget").unwrap(), 140);
+        assert!(ex.starts_with('…') && ex.ends_with('…') && ex.contains("the budget for next year"), "{ex}");
+        assert!(ex.chars().count() <= 145, "{}", ex.chars().count());
+        assert_eq!(around("budget at the start", 0, 140), "budget at the start");
+    }
+
     fn temp(name: &str) -> PathBuf {
         let d = std::env::temp_dir().join(format!("ow-meet-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
@@ -988,6 +1051,21 @@ mod tests {
             assert!(load_in(&dir, bad).is_err());
             assert!(delete_in(&dir, bad).is_err());
         }
+        // Search: every word, any case, in the title, transcript, AI notes or notes.
+        b.lines = vec![line(Speaker::Me, 0.0, 1.0, "we ship the new version on Friday after the review")];
+        b.ai_notes = "## Decisions\n- Ship on Friday".into();
+        save_in(&dir, &b).unwrap();
+        let ids = |q: &str| search_in(&dir, q).into_iter().map(|s| s.id).collect::<Vec<_>>();
+        assert_eq!(ids("FRIDAY ship"), vec!["m-200"]);
+        assert_eq!(ids("hello"), vec!["m-100"]);
+        assert_eq!(ids("later"), vec!["m-200"], "the title");
+        assert_eq!(ids("decisions"), vec!["m-200"], "the AI notes");
+        assert_eq!(ids("frid"), vec!["m-200"], "inside a word");
+        assert!(ids("friday nothing").is_empty(), "every word must be there");
+        assert_eq!(ids("  ").len(), 2, "no words: all of them");
+        let hit = &search_in(&dir, "review")[0];
+        assert_eq!((hit.found_in.as_str(), hit.excerpt.as_str()), ("transcript", "we ship the new version on Friday after the review"));
+        assert_eq!(search_in(&dir, "later")[0].found_in, "", "a title match keeps the usual excerpt");
         delete_in(&dir, "m-100").unwrap();
         assert_eq!(list_in(&dir).len(), 1);
         #[cfg(unix)]

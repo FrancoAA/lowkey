@@ -83,6 +83,10 @@ h1, h2, h3, h4 { margin: 0; letter-spacing: -0.015em; }
 .btn-ghost:hover { background: var(--accent); }
 .btn-sm { height: 32px; padding: 0 12px; gap: 6px; }
 .btn-icon { width: 36px; padding: 0; }
+.btn-sm.btn-icon { width: 32px; }
+/* The same red in both themes: white text on it stays readable (4.8:1). */
+.btn-destructive { background: #dc2626; color: #fff; box-shadow: 0 1px 2px rgb(0 0 0 / 0.05); }
+.btn-destructive:hover { background: #b91c1c; }
 
 /* Select (native, styled as shadcn's trigger) */
 .select {
@@ -275,23 +279,21 @@ h1 { font-size: 20px; font-weight: 600; }
 }
 .chip-live { background: color-mix(in srgb, var(--rec) 14%, transparent); color: var(--rec); }
 .chip-warn { background: color-mix(in srgb, #d97706 14%, transparent); color: #b45309; }
-.chip-ai { background: color-mix(in srgb, var(--brand) 12%, transparent); color: var(--brand); }
 @media (prefers-color-scheme: dark) { .chip-warn { color: #fbbf24; } }
 
 /* The list */
 .meetings-home { display: flex; flex-direction: column; gap: 18px; }
-.meetings-hero { display: flex; justify-content: space-between; align-items: flex-end; gap: 20px; flex-wrap: wrap; }
-.meetings-hero-text { max-width: 46ch; }
-.meetings-hero-text h2 { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; }
-.meetings-hero-text p { margin: 6px 0 0; color: var(--muted-foreground); text-wrap: pretty; }
-.meetings-hero-action { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
-.meetings-hero-action .btn { height: 40px; padding: 0 18px; }
-.meetings-key { font-size: 12px; color: var(--muted-foreground); display: inline-flex; align-items: center; gap: 2px; min-height: 20px; }
-.meetings-key kbd { height: 18px; font-size: 11px; }
+.meetings-hero h2 { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; }
+.meetings-hero p { margin: 6px 0 0; color: var(--muted-foreground); text-wrap: pretty; max-width: 60ch; }
+/* Search on the left, Record on the right: the page's one main action next to the list. */
+.meetings-bar { display: flex; align-items: center; gap: 12px; }
+.meetings-bar .input { flex: 1 1 auto; min-width: 0; }
+.meetings-bar .btn-rec { flex: none; }
 .meetings-tip {
-  display: flex; align-items: flex-start; gap: 8px; margin: 0; font-size: 13px; color: var(--muted-foreground);
+  display: flex; align-items: flex-start; gap: 8px; margin: 12px 0 0; font-size: 12px; color: var(--muted-foreground);
+  max-width: 46ch; text-align: left;
 }
-.meetings-tip .icon { margin-top: 2px; }
+.meetings-tip .icon { margin-top: 1px; width: 14px; height: 14px; }
 .meetings-list { display: flex; flex-direction: column; gap: 22px; }
 .meeting-day h3 {
   margin: 0 0 8px; font-size: 12px; font-weight: 600; color: var(--muted-foreground); letter-spacing: 0.02em;
@@ -300,14 +302,26 @@ h1 { font-size: 20px; font-weight: 600; }
   display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: calc(var(--radius) + 2px);
   background: var(--card); overflow: hidden;
 }
+/* A row: the meeting (opens it) and its Delete button, which shows on hover or keyboard focus. */
 .meeting-item {
-  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 16px; align-items: start;
-  width: 100%; padding: 12px 16px; border: 0; border-top: 1px solid var(--border); background: transparent;
-  color: var(--foreground); font: inherit; text-align: left; cursor: pointer; transition: background 0.15s;
+  display: flex; align-items: center; gap: 4px; padding-right: 8px; border-top: 1px solid var(--border);
+  transition: background 0.15s;
 }
 .meeting-item:first-child { border-top: 0; }
 .meeting-item:hover { background: color-mix(in srgb, var(--accent) 70%, transparent); }
-.meeting-item:focus-visible { outline: none; box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--ring) 70%, transparent); }
+.meeting-item-open {
+  flex: 1 1 auto; min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 16px; align-items: start;
+  padding: 12px 8px 12px 16px; border: 0; background: transparent;
+  color: var(--foreground); font: inherit; text-align: left; cursor: pointer;
+}
+.meeting-item-open:focus-visible { outline: none; box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--ring) 70%, transparent); border-radius: calc(var(--radius) - 2px); }
+.meeting-item-delete { opacity: 0; transition: opacity 0.12s, background 0.15s; }
+.meeting-item:hover .meeting-item-delete, .meeting-item-delete:focus-visible { opacity: 1; }
+.meeting-item-delete:hover { background: color-mix(in srgb, var(--destructive) 12%, transparent); }
+@media (hover: none) { .meeting-item-delete { opacity: 1; } }
+.meeting-item-where { font-weight: 500; color: var(--foreground); }
+/* Search results: the searched words. */
+mark { background: color-mix(in srgb, var(--brand) 22%, transparent); color: inherit; border-radius: 3px; padding: 0 1px; }
 .meeting-item-main { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .meeting-item-top { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .meeting-item-title { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -324,7 +338,7 @@ h1 { font-size: 20px; font-weight: 600; }
 }
 .meetings-empty svg { width: 34px; height: 34px; margin-bottom: 8px; fill: none; stroke: var(--brand); stroke-width: 1.8; stroke-linecap: round; }
 .meetings-empty-title { margin: 0; font-weight: 600; }
-.meetings-empty-text { margin: 0; color: var(--muted-foreground); font-size: 13px; max-width: 40ch; }
+.meetings-empty-text { margin: 0; color: var(--muted-foreground); font-size: 13px; max-width: 46ch; }
 
 /* One meeting */
 /* Meetings use the whole width; one meeting fills the window's height, its two columns scroll
@@ -412,7 +426,6 @@ h1 { font-size: 20px; font-weight: 600; }
 .tline p { grid-column: 1 / -1; margin: 3px 0 0; line-height: 1.6; overflow-wrap: anywhere; text-wrap: pretty; max-width: 75ch; }
 
 @media (max-width: 560px) {
-  .meetings-hero-action { align-items: stretch; width: 100%; }
   .live-legend { gap: 8px; }
 }
 
@@ -499,7 +512,19 @@ h1 { font-size: 20px; font-weight: 600; }
 .mic-meter > div { height: 100%; width: 0; background: var(--brand); border-radius: 6px; transition: width 0.08s linear; }
 
 /* ───────────────────────────── calls ───────────────────────────── */
-.calls-card { display: flex; flex-direction: column; gap: 12px; padding: 14px 16px; border: 1px solid var(--border); border-radius: calc(var(--radius) + 2px); background: var(--card); }
-.calls-apps { display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--border); padding-top: 12px; }
+/* Settings → General: the call apps under "Offer to record calls". */
+.calls-settings { display: flex; flex-direction: column; gap: inherit; }
+.calls-apps { display: flex; flex-direction: column; gap: 8px; }
+.calls-apps:empty, .calls-apps[hidden] { display: none; }
 .calls-app { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 14px; }
 .calls-app .select { min-width: 160px; }
+
+/* ───────────────────────────── confirmation dialog ───────────────────────────── */
+dialog.confirm {
+  width: min(420px, calc(100vw - 32px)); padding: 24px; border: 1px solid var(--border); border-radius: calc(var(--radius) + 4px);
+  background: var(--card); color: var(--foreground); box-shadow: 0 16px 48px rgb(0 0 0 / 0.28);
+}
+dialog.confirm::backdrop { background: rgb(0 0 0 / 0.5); }
+dialog.confirm h2 { font-size: 17px; font-weight: 600; }
+dialog.confirm p { margin: 8px 0 0; color: var(--muted-foreground); font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; }
+.confirm-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }

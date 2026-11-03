@@ -1232,9 +1232,13 @@ fn meeting_live(app: State<'_, AppRef>) -> Option<meeting::Live> {
     app.meeting.lock().as_ref().map(|s| s.live())
 }
 
+/// The meetings, newest first; `query`: only those with all of its words (Meetings → Search).
 #[tauri::command]
-fn meetings_list() -> Vec<meeting::Summary> {
-    meeting::list_in(&meeting::dir())
+async fn meetings_list(query: Option<String>) -> Vec<meeting::Summary> {
+    // Off the window's thread: a search reads every meeting.
+    tauri::async_runtime::spawn_blocking(move || meeting::search_in(&meeting::dir(), query.as_deref().unwrap_or("")))
+        .await
+        .unwrap_or_default()
 }
 
 fn live_session(app: &AppRef, id: &str) -> Option<Arc<meeting::Session>> {

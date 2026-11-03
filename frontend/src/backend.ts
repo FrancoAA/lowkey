@@ -81,7 +81,8 @@ export interface MeetingsBackend {
   /** Stops, transcribes the last seconds and saves; returns the saved meeting. */
   stop(): Promise<Meeting>;
   live(): Promise<MeetingLive | null>;
-  list(): Promise<MeetingSummary[]>;
+  /** Newest first; `query`: only the meetings with all of its words. */
+  list(query?: string): Promise<MeetingSummary[]>;
   get(id: string): Promise<Meeting>;
   update(id: string, patch: { title?: string; notes?: string }): Promise<void>;
   remove(id: string): Promise<void>;
@@ -189,7 +190,7 @@ async function desktopBackend(): Promise<Backend> {
       start: (title) => invoke<MeetingLive>("meeting_start", { title }),
       stop: () => invoke<Meeting>("meeting_stop"),
       live: () => invoke<MeetingLive | null>("meeting_live"),
-      list: () => invoke<MeetingSummary[]>("meetings_list"),
+      list: (query) => invoke<MeetingSummary[]>("meetings_list", { query: query || null }),
       get: (id) => invoke<Meeting>("meeting_get", { id }),
       update: (id, patch) => invoke("meeting_update", { id, title: patch.title ?? null, notes: patch.notes ?? null }),
       remove: (id) => invoke("meeting_delete", { id }),

@@ -154,9 +154,10 @@ export interface MeetingSummary {
   duration: number;
   state: string;
   lines: number;
+  /** The first words; in a search, the words around the first match. */
   excerpt: string;
-  /** It has AI notes. */
-  ai?: boolean;
+  /** In a search: where the excerpt's match is (transcript | ai_notes | notes; "" = the title). */
+  found_in?: string;
 }
 
 /** A vocabulary term (desktop/src-tauri/src/vocabulary.rs). */

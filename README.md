@@ -165,13 +165,19 @@ Record a call or a talk, as text next to your notes (Linux for now). No bot join
   it also starts the app when it is closed; on X11, macOS and Windows the app must run. A
   strip at the bottom of the screen shows the time, a two-colour wave (Me magenta, Them cyan) and the newest line,
   and "saved" at the end. It never takes the keyboard focus.
-- **Start recording** (in the window) does the same. It records two sources: your microphone (**Me**) and the computer's sound
+- **Record** (in the window, next to the search field) does the same, and so does the tray menu. It records two sources: your microphone (**Me**) and the computer's sound
   (**Them**: the others in Zoom, Meet, Teams…, through PipeWire or PulseAudio).
 - The text comes a few seconds after someone speaks: each source is cut at pauses (4–20 s
   pieces) and the speech model chosen in Settings → Models writes them.
-- **Stop** transcribes the last seconds and saves. The list shows all meetings; open one to read
-  it (AI notes and transcript side by side), change the title, **Copy** or **Export .md** (AI notes, then the transcript), or
-  **Delete** it (two clicks).
+- **Stop** transcribes the last seconds and saves. The list shows all meetings, newest first,
+  grouped by day; open one to read it (AI notes and transcript side by side), change the title,
+  **Copy** or **Export .md** (AI notes, then the transcript).
+- **Search** (<kbd>Ctrl</kbd>+<kbd>F</kbd> on the list): the meetings that have every word you
+  type, in any order and any case, also inside a word, in the title, the transcript, the AI
+  notes or your notes. Each result shows where the words are and the text around them, with
+  the words marked. <kbd>Esc</kbd> clears the search.
+- **Delete** a meeting from the list (the bin icon at the end of its row, on hover or with
+  <kbd>Tab</kbd>) or from the open meeting. A dialog asks first (Cancel has the focus).
 - **AI notes**: a language model writes the meeting's notes (summary, decisions, tasks with
   who and when, open questions, numbers) from your notes and the transcript. Built in:
   **Qwen3.5 4B** (Apache-2.0), run by llama.cpp on this computer (a 2.7 GB download the first
@@ -181,7 +187,7 @@ Record a call or a talk, as text next to your notes (Linux for now). No bot join
   when it is not on this computer). They are written by themselves when a meeting stops (the
   first time, after the model's download), and again with **Write again**; they are a draft
   next to the transcript, and Copy/Export include them. Measurements: [bench/summary/results.md](bench/summary/results.md).
-- **Calls are detected** (Linux; Meetings → Offer to record calls, on by default): when Zoom,
+- **Calls are detected** (Linux; Settings → General → Offer to record calls, on by default): when Zoom,
   Teams, Slack, Discord, Signal… or a browser on Google Meet, Teams, Jitsi… uses the
   microphone for 2 s (an unknown browser page: 20 s), the strip says "Zoom call detected ·
   Super+Ctrl+M records it", for 20 s. The meeting key then records it as "Zoom call". Per call:
@@ -213,7 +219,10 @@ Bluetooth detection yet. (Idea from [Hex](https://github.com/anomalyco/hex), MIT
 ## History
 
 The **History** section keeps every finished dictation (the global key and the window), newest
-first, grouped by day: search, Copy, Delete, Clear all. **Keep**: off, 1 day, 7 days (default),
+first, grouped by day: Copy, Delete, and Clear all (a dialog asks first). **Search**
+(<kbd>Ctrl</kbd>+<kbd>F</kbd>) looks in the text of the dictations only (not the date or the
+app): every word you type must be there, in any order and any case, also inside a word
+("frid ship" finds "Ship the new version on Friday"); the words are marked in the results. **Keep**: off, 1 day, 7 days (default),
 30 days or forever; turning it off deletes what was kept. The file is
 `~/.local/share/lowkey/history.json` (0600). **Paste last dictation**
 (<kbd>Super</kbd>+<kbd>Alt</kbd>+<kbd>V</kbd> on Linux, <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>V</kbd>

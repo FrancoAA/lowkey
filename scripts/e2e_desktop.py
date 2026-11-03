@@ -738,7 +738,8 @@ esac
         # ---------------------------------------------------------------- Meetings
         meetings_dir = tmp / "data" / "lowkey" / "meetings"
         press_key("Down")  # Meetings (from the Transcribe tab)
-        press_key("Tab")  # Start recording
+        press_key("Tab")  # the search field
+        press_key("Tab")  # Record
         n_m = len(events("meeting"))
         press_key("Return")
         started = wait(lambda: events("meeting-start")[-1:] or None, 15, "meeting started")[0]
@@ -806,6 +807,41 @@ esac
             press_key("Escape")  # back to the list (grouped by day)
             time.sleep(0.8)
             shot("26-desktop-meetings-list.png")
+
+        # ---------------------------------------------------------------- Meetings: search, and delete from the list
+        def ctrl_key(k: str) -> None:
+            for st in ("down", "up"):
+                run(["hyprctl", "dispatch", f'hl.dsp.send_key_state({{ mods = "CTRL", key = "{k}", state = "{st}" }})'], env)
+                time.sleep(0.05)
+
+        def meeting_files() -> set:
+            return {p.name for p in meetings_dir.glob("m-*.json")}
+
+        before_files = meeting_files()
+        focus(main_win["address"])
+        ctrl_key("f")  # Ctrl+F: the search field
+        for ch in "country":
+            press_key(ch)
+        time.sleep(1.0)
+        shot("32-desktop-meetings-search.png")
+        press_key("Tab")  # Record
+        press_key("Tab")  # the first result (the newest meeting)
+        press_key("Tab")  # its Delete button
+        press_key("Return")
+        time.sleep(0.6)
+        shot("33-desktop-meeting-delete-confirm.png")
+        press_key("Escape")  # no
+        time.sleep(0.6)
+        check(meeting_files() == before_files, "Esc in the confirmation deletes nothing")
+        press_key("Return")  # Delete again: the focus is back on it
+        time.sleep(0.6)
+        press_key("Tab")  # Cancel -> Delete meeting
+        press_key("Return")
+        gone = wait(lambda: (before_files - meeting_files()) or None, 10, "a meeting deleted from the list")
+        check(gone == {f"{mid}.json"}, f"Delete in the list deletes that meeting only, after the confirmation ({sorted(gone)})")
+        ctrl_key("f")
+        press_key("Escape")  # clears the search
+        time.sleep(0.5)
 
         # ---------------------------------------------------------------- Meetings: the key, from another app
         focus(target["address"])  # the terminal has the focus

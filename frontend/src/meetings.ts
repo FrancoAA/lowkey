@@ -5,6 +5,8 @@
  * page shows it and sends the title.
  */
 import type { AiNotesEvent, Meeting, MeetingLine, MeetingLive, MeetingSummary } from "./api";
+import { confirmDialog } from "./confirm";
+import { highlighted, searchWords } from "./highlight";
 import type { Backend } from "./backend";
 import { renderMarkdown } from "./markdown";
 import { DualWaveform } from "./waveform";
@@ -70,6 +72,10 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): void {
   const list = $<HTMLDivElement>("meetings-list");
   const keyHint = $<HTMLElement>("meetings-key");
   const emptyText = $<HTMLElement>("meetings-empty-text");
+  const emptyTitle = $<HTMLElement>("meetings-empty-title");
+  const emptyTip = $<HTMLElement>("meetings-empty-tip");
+  const search = $<HTMLInputElement>("meetings-search");
+  let searchTimer = 0;
   const livePanel = $<HTMLDivElement>("meeting-live");
   const liveClock = $<HTMLElement>("meeting-clock");
   const wave = new DualWaveform($<HTMLCanvasElement>("meeting-wave"));
@@ -103,7 +109,6 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): void {
   let liveAt = 0; // performance.now() when `live` arrived (for the timer)
   let saveTimer = 0;
   let unsaved: { title?: string } = {};
-  let deleteArmed = 0;
   /** The Stop button is waiting for the app (it opens the saved meeting itself). */
   let stopping = false;
 
@@ -297,7 +302,6 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): void {
     shown = m;
     title.value = m.title;
     unsaved = {};
-    disarmDelete();
     home.hidden = true;
     view.hidden = false;
     renderView();
@@ -340,56 +344,111 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): void {
 
   const timeFmt = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" });
 
-  function item(s: MeetingSummary, recording: boolean): HTMLElement {
+  const FOUND_IN: Record<string, string> = { transcript: "Transcript", ai_notes: "AI notes", notes: "Notes" };
+
+  function item(s: MeetingSummary, recording: boolean, words: string[]): HTMLElement {
+    const row = document.createElement("div");
+    row.className = "meeting-item";
+    row.setAttribute("role", "listitem");
     const b = document.createElement("button");
     b.type = "button";
-    b.className = "meeting-item";
-    b.setAttribute("role", "listitem");
+    b.className = "meeting-item-open";
     const main = span("meeting-item-main", "");
     const top = span("meeting-item-top", "");
-    top.append(span("meeting-item-title", s.title));
+    const t = span("meeting-item-title", "");
+    t.append(...highlighted(s.title, words));
+    top.append(t);
     if (recording) top.append(span("chip chip-live", "Recording"));
     else if (s.state === "recording") top.append(span("chip chip-warn", "Interrupted"));
-    if (s.ai) {
-      const chip = span("chip chip-ai", "AI notes");
-      chip.title = "This meeting has AI notes";
-      top.append(chip);
-    }
     main.append(top);
-    if (s.excerpt) main.append(span("meeting-item-excerpt", s.excerpt));
+    if (s.excerpt) {
+      const ex = span("meeting-item-excerpt", "");
+      // In a search: where the words were found, then the words around them.
+      if (s.found_in && FOUND_IN[s.found_in]) ex.append(span("meeting-item-where", `${FOUND_IN[s.found_in]}: `));
+      ex.append(...highlighted(s.excerpt, words));
+      main.append(ex);
+    }
     const side = span("meeting-item-side", "");
     side.append(span("meeting-item-time", timeFmt.format(new Date(s.started_at * 1000))));
     side.append(span("meeting-item-len", recording ? "now" : minutes(s.duration)));
     b.append(main, side);
     b.addEventListener("click", () => void openById(s.id));
-    return b;
+    row.append(b);
+    if (!recording) {
+      // Over the row's right corner on hover or keyboard focus (the History rows do the same).
+      const del = document.createElement("button");
+      del.type = "button";
+      del.className = "btn btn-ghost btn-sm btn-icon danger meeting-item-delete";
+      del.setAttribute("aria-label", `Delete ${s.title}`);
+      del.title = "Delete";
+      del.append(trashIcon());
+      del.addEventListener("click", () => void confirmDelete(s.id, s.title));
+      row.append(del);
+    }
+    return row;
+  }
+
+  function trashIcon(): SVGSVGElement {
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("viewBox", "0 0 24 24");
+    svg.setAttribute("aria-hidden", "true");
+    svg.classList.add("icon");
+    const p = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    p.setAttribute("d", "M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14");
+    svg.append(p);
+    return svg;
+  }
+
+  /** Ask, then delete. True when it is deleted. */
+  async function confirmDelete(id: string, name: string): Promise<boolean> {
+    const yes = await confirmDialog({
+      title: "Delete this meeting?",
+      body: `"${name}", with its transcript and AI notes, is deleted from this computer. You cannot undo this.`,
+      action: "Delete meeting",
+      danger: true,
+    });
+    if (!yes) return false;
+    try {
+      if (shown?.id === id) unsaved = {};
+      await api.remove(id);
+      ui.announce("Meeting deleted.");
+      if (shown?.id === id) await showHome();
+      else await renderList();
+      return true;
+    } catch (err) {
+      showError(String(err));
+      return false;
+    }
   }
 
   function renderHints(): void {
     const key = ui.meetingKey();
-    keyHint.replaceChildren();
-    if (key) {
-      keyHint.append("or ");
-      for (const [i, part] of key.split("+").map((p) => p.trim()).entries()) {
-        if (i) keyHint.append(" ");
-        const k = document.createElement("kbd");
-        k.textContent = part.length > 1 && !/^F\d+$/.test(part) ? part[0] + part.slice(1).toLowerCase() : part;
-        keyHint.append(k);
-      }
-      keyHint.append(" in any app");
-    }
-    emptyText.textContent = key
-      ? "Start a recording when your call begins, here or with the meeting key from any app."
-      : "Start a recording when your call begins.";
+    // "Super+Ctrl+M": the button's tooltip, and its description for screen readers.
+    const pretty = key
+      .split("+")
+      .map((p) => p.trim())
+      .map((p) => (p.length > 1 && !/^F\d+$/.test(p) ? p[0] + p.slice(1).toLowerCase() : p))
+      .join("+");
+    const hint = key ? `Start a meeting recording. Or press ${pretty} in any app.` : "Start a meeting recording.";
+    startBtn.title = hint;
+    keyHint.textContent = key ? `Or press ${pretty} in any app.` : "";
+    emptyText.textContent = search.value.trim()
+      ? "No meeting has all of these words in its title, transcript, AI notes or notes."
+      : key
+        ? `Click Record when your call begins, or press ${pretty} in any app.`
+        : "Click Record when your call begins.";
   }
 
   async function renderList(): Promise<void> {
+    const query = search.value.trim();
+    const words = searchWords(query);
     let all: MeetingSummary[] = [];
     try {
-      all = await api.list();
+      all = await api.list(query);
     } catch (err) {
       showError(String(err));
     }
+    if (search.value.trim() !== query) return; // typed on meanwhile: that search draws the list
     const liveId = live && live.state !== "done" ? live.meeting.id : null;
     // Grouped by day, newest first (the app sorts them).
     const groups: HTMLElement[] = [];
@@ -408,10 +467,12 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): void {
         group.append(h, box);
         groups.push(group);
       }
-      box.append(item(s, s.id === liveId));
+      box.append(item(s, s.id === liveId, words));
     }
     list.replaceChildren(...groups);
     empty.hidden = all.length > 0;
+    emptyTitle.textContent = query ? "Nothing found" : "No meetings yet";
+    emptyTip.hidden = !!query;
     startBtn.disabled = !!liveId;
     renderHints();
   }
@@ -541,30 +602,19 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): void {
     }
   });
 
-  function disarmDelete(): void {
-    clearTimeout(deleteArmed);
-    deleteArmed = 0;
-    deleteBtn.textContent = "Delete";
-    delete deleteBtn.dataset.armed;
-  }
+  deleteBtn.addEventListener("click", () => {
+    if (shown) void confirmDelete(shown.id, title.value.trim() || shown.title);
+  });
 
-  // Two clicks: the first asks, the second deletes (within 4 s).
-  deleteBtn.addEventListener("click", async () => {
-    if (!shown) return;
-    if (!deleteArmed) {
-      deleteBtn.textContent = "Click again to delete";
-      deleteBtn.dataset.armed = "";
-      deleteArmed = window.setTimeout(disarmDelete, 4000);
-      return;
-    }
-    disarmDelete();
-    try {
-      unsaved = {};
-      await api.remove(shown.id);
-      ui.announce("Meeting deleted.");
-      await showHome();
-    } catch (err) {
-      showError(String(err));
+  // ---------------------------------------------------------------- search
+  search.addEventListener("input", () => {
+    clearTimeout(searchTimer);
+    searchTimer = window.setTimeout(() => void renderList(), 200);
+  });
+  search.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && search.value) {
+      search.value = "";
+      void renderList();
     }
   });
 
