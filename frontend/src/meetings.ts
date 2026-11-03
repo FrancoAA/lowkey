@@ -1,10 +1,11 @@
 /**
  * Meetings section: record the microphone ("Me") and the computer's sound ("Them"), see the
- * transcript as it comes; when it stops, the AI notes are written next to the transcript. The
- * app records, transcribes, writes and saves (desktop/src-tauri/src/meeting.rs, llm.rs); this
- * page shows it and sends the title.
+ * transcript as it comes; when it stops, the AI notes are written (one section for each topic).
+ * A switch shows the transcript in the notes' place; on the right, questions about the meeting
+ * are answered by the same model, and saved with it. The app records, transcribes, writes and
+ * saves (desktop/src-tauri/src/meeting.rs, llm.rs); this page shows it and sends the title.
  */
-import type { AiNotesEvent, Meeting, MeetingLine, MeetingLive, MeetingSummary } from "./api";
+import type { AiNotesEvent, ChatMessage, Meeting, MeetingLine, MeetingLive, MeetingSummary } from "./api";
 import { confirmDialog } from "./confirm";
 import { highlighted, searchWords } from "./highlight";
 import type { Backend } from "./backend";
@@ -91,7 +92,10 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): void {
   const notices = $<HTMLUListElement>("meeting-notices");
   const transcript = $<HTMLDivElement>("meeting-transcript");
   const pending = $<HTMLElement>("meeting-pending");
-  const aiCard = $<HTMLElement>("ai-card");
+  const tabNotes = $<HTMLButtonElement>("tab-notes");
+  const tabTranscript = $<HTMLButtonElement>("tab-transcript");
+  const notesPanel = $<HTMLDivElement>("notes-panel");
+  const transcriptPanel = $<HTMLDivElement>("transcript-panel");
   const aiMeta = $<HTMLElement>("ai-meta");
   const aiWrite = $<HTMLButtonElement>("ai-write");
   const aiCancel = $<HTMLButtonElement>("ai-cancel");
@@ -100,8 +104,21 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): void {
   const aiProgressText = $<HTMLElement>("ai-progress-text");
   const aiBody = $<HTMLDivElement>("ai-body");
   const aiError = $<HTMLElement>("ai-error");
+  const aiActions = aiWrite.parentElement as HTMLElement;
+  const chatLog = $<HTMLDivElement>("chat-log");
+  const chatClear = $<HTMLButtonElement>("chat-clear");
+  const chatSuggestions = $<HTMLDivElement>("chat-suggestions");
+  const chatForm = $<HTMLFormElement>("chat-form");
+  const chatInput = $<HTMLTextAreaElement>("chat-input");
+  const chatSend = $<HTMLButtonElement>("chat-send");
   /** The AI notes job of the app (one at a time): which meeting, and its last event. */
   let aiJob: AiNotesEvent | null = null;
+  /** The question being answered (the app answers one at a time, and not while it writes notes). */
+  let asking: { id: string; question: string } | null = null;
+  let chatJob: AiNotesEvent | null = null;
+  let chatError: { id: string; text: string } | null = null;
+  /** What the left side shows. */
+  let tab: "notes" | "transcript" = "notes";
 
   /** The meeting on screen (live or saved), and the live one (if any). */
   let shown: Meeting | null = null;
@@ -222,28 +239,68 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): void {
     pending.textContent = waiting ? `· ${waiting} part${waiting > 1 ? "s" : ""} to transcribe` : "";
     renderMeta();
     renderTranscript(recording && live ? live.meeting : shown, recording);
+    renderTab();
     renderAi();
+    renderChat();
+  }
+
+  // ---------------------------------------------------------------- AI notes | Transcript
+  function renderTab(): void {
+    for (const [b, on] of [
+      [tabNotes, tab === "notes"],
+      [tabTranscript, tab === "transcript"],
+    ] as const) {
+      b.setAttribute("aria-selected", String(on));
+      b.tabIndex = on ? 0 : -1;
+    }
+    notesPanel.hidden = tab !== "notes";
+    transcriptPanel.hidden = tab !== "transcript";
+    aiMeta.hidden = aiActions.hidden = tab !== "notes";
+    pending.hidden = tab !== "transcript";
+  }
+
+  function setTab(t: "notes" | "transcript", focus = false): void {
+    const changed = tab !== t;
+    tab = t;
+    renderTab();
+    if (focus) (t === "notes" ? tabNotes : tabTranscript).focus();
+    // The transcript opens at its end while it records (the newest words), else at the start.
+    if (changed && t === "transcript" && isLive()) transcript.scrollTop = transcript.scrollHeight;
+  }
+
+  tabNotes.addEventListener("click", () => setTab("notes"));
+  tabTranscript.addEventListener("click", () => setTab("transcript"));
+  // The arrow keys move between the two (the tabs pattern); Tab goes on to the panel.
+  for (const b of [tabNotes, tabTranscript]) {
+    b.addEventListener("keydown", (e) => {
+      if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) {
+        e.preventDefault();
+        const next = e.key === "Home" ? "notes" : e.key === "End" ? "transcript" : tab === "notes" ? "transcript" : "notes";
+        setTab(next, true);
+      }
+    });
   }
 
   // ---------------------------------------------------------------- AI notes
-  const aiRunning = () => !!aiJob && ["preparing", "downloading", "writing"].includes(aiJob.state);
+  const running = (e: AiNotesEvent | null) => !!e && ["preparing", "downloading", "writing"].includes(e.state);
+  const aiRunning = () => running(aiJob);
+  const chatRunning = () => running(chatJob);
 
   function renderAi(): void {
     if (!shown) return;
-    aiCard.hidden = false;
     if (isLive()) {
       // The same place as later: the notes come here when the recording stops.
       aiWrite.hidden = aiCancel.hidden = aiProgress.hidden = aiError.hidden = true;
       aiMeta.textContent = "";
-      aiBody.replaceChildren("Written here when the recording stops: summary, decisions, tasks and open questions.");
+      aiBody.replaceChildren("Written here when the recording stops: one section for each topic, with its decisions and tasks. The transcript is in the other tab.");
       aiBody.classList.add("ai-empty");
       return;
     }
     const mine = aiJob?.id === shown.id ? aiJob : null;
     const running = !!mine && aiRunning();
-    aiWrite.hidden = running;
-    aiWrite.disabled = aiRunning(); // another meeting's notes are being written
-    aiWrite.textContent = shown.ai_notes ? "Write again" : "Write notes";
+    // Only when there are no notes yet (not written, or the writing failed).
+    aiWrite.hidden = running || !!shown.ai_notes;
+    aiWrite.disabled = aiRunning() || chatRunning(); // the model is at work for something else
     aiCancel.hidden = !running;
     aiProgress.hidden = !running || mine!.state === "writing";
     if (running) {
@@ -258,13 +315,13 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): void {
       renderMarkdown(aiBody, text);
       aiBody.classList.remove("ai-empty");
     } else {
-      aiBody.replaceChildren(running ? "Writing…" : "Summary, decisions, tasks and open questions, from the transcript. On this computer.");
+      aiBody.replaceChildren(running ? "Writing…" : "No AI notes yet. Write notes makes one section for each topic of the meeting, with its decisions and tasks, from the transcript.");
       aiBody.classList.add("ai-empty");
     }
     aiMeta.textContent = running
-      ? mine!.state === "writing" ? "· writing…" : ""
+      ? mine!.state === "writing" ? "Writing…" : ""
       : shown.ai_notes
-        ? `· ${shown.ai_model || "AI"} · a draft: check it against the transcript`
+        ? `${shown.ai_model || "AI"} · a draft: check it against the transcript`
         : "";
   }
 
@@ -295,16 +352,229 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): void {
       shown.ai_model = e.detail;
       ui.announce("AI notes written.");
     }
-    if (shown?.id === e.id || !aiRunning()) renderAi();
+    if (shown?.id === e.id || !aiRunning()) {
+      renderAi();
+      renderChat(); // the questions wait for the notes
+    }
+  });
+
+  // ---------------------------------------------------------------- Ask about this meeting
+  const el = (tag: string, cls: string, text = "") => {
+    const x = document.createElement(tag);
+    x.className = cls;
+    x.textContent = text;
+    return x;
+  };
+
+  function question(text: string): HTMLElement {
+    return el("div", "chat-q", text);
+  }
+
+  function answer(text: string, done: boolean): HTMLElement {
+    const box = el("div", "chat-a");
+    const body = el("div", "ai-body");
+    renderMarkdown(body, text);
+    box.append(body);
+    if (done) {
+      const tools = el("div", "chat-a-tools");
+      const copy = el("button", "btn btn-ghost btn-sm", "Copy") as HTMLButtonElement;
+      copy.type = "button";
+      copy.setAttribute("aria-label", "Copy this answer");
+      copy.addEventListener("click", async () => {
+        try {
+          await backend.copy(text);
+          copy.textContent = "Copied";
+          setTimeout(() => (copy.textContent = "Copy"), 1500);
+        } catch (err) {
+          showError(String(err));
+        }
+      });
+      tools.append(copy);
+      box.append(tools);
+    }
+    return box;
+  }
+
+  const SEND_ICON = "M12 19V5M5 12l7-7 7 7";
+
+  function sendIcon(stop: boolean): SVGSVGElement {
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("viewBox", "0 0 24 24");
+    svg.setAttribute("aria-hidden", "true");
+    svg.classList.add("icon");
+    if (stop) {
+      const r = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+      for (const [k, v] of Object.entries({ x: "7", y: "7", width: "10", height: "10", rx: "1.5" })) r.setAttribute(k, v);
+      r.setAttribute("fill", "currentColor");
+      svg.append(r);
+    } else {
+      const p = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      p.setAttribute("d", SEND_ICON);
+      svg.append(p);
+    }
+    return svg;
+  }
+
+  function renderChat(): void {
+    if (!shown) return;
+    const recording = isLive();
+    const mine = asking?.id === shown.id ? asking : null;
+    const answering = !!mine && chatRunning();
+    const nearEnd = chatLog.scrollHeight - chatLog.scrollTop - chatLog.clientHeight < 80;
+    const nodes: HTMLElement[] = [];
+    for (const m of shown.chat ?? []) nodes.push(m.role === "user" ? question(m.text) : answer(m.text, true));
+    if (mine) {
+      nodes.push(question(mine.question));
+      const ev = chatJob?.id === shown.id ? chatJob : null;
+      if (ev?.text) nodes.push(answer(ev.text, false));
+      else nodes.push(el("p", "chat-wait", ev && ev.state !== "writing" && ev.detail ? ev.detail : "Thinking…"));
+    }
+    if (chatError?.id === shown.id) nodes.push(el("p", "chat-error", chatError.text));
+    if (!nodes.length) {
+      nodes.push(
+        el(
+          "p",
+          "chat-empty",
+          recording
+            ? "Ask about the meeting when the recording stops."
+            : "Ask anything about this meeting: what was decided, who does what, the numbers. The answers come from the transcript and the notes.",
+        ),
+      );
+    }
+    chatLog.replaceChildren(...nodes);
+    if (nearEnd || mine) chatLog.scrollTop = chatLog.scrollHeight;
+
+    // The box: off while it records, and while the model is at work for something else.
+    const busyElsewhere = (aiRunning() || chatRunning()) && !answering;
+    chatInput.disabled = recording || busyElsewhere;
+    chatInput.placeholder = recording
+      ? "Ask when the recording stops"
+      : aiRunning()
+        ? "Ask when the AI notes are written"
+        : busyElsewhere
+          ? "Wait for the other answer"
+          : "Ask about the meeting…";
+    chatSend.replaceChildren(sendIcon(answering));
+    chatSend.toggleAttribute("data-stop", answering);
+    chatSend.setAttribute("aria-label", answering ? "Stop the answer" : "Ask");
+    chatSend.title = answering ? "Stop the answer" : "Ask (Enter)";
+    chatSend.disabled = !answering && (chatInput.disabled || !chatInput.value.trim());
+    chatSuggestions.hidden = recording || answering;
+    for (const b of chatSuggestions.querySelectorAll("button")) b.disabled = chatInput.disabled;
+    chatClear.hidden = !(shown.chat ?? []).length || answering;
+  }
+
+  async function ask(text: string): Promise<void> {
+    const q = text.trim();
+    if (!shown || !q || isLive() || aiRunning() || chatRunning()) return;
+    const id = shown.id;
+    chatError = null;
+    asking = { id, question: q };
+    chatJob = { id, state: "preparing", detail: "Getting ready…", progress: 0, text: "" };
+    chatInput.value = "";
+    renderChat();
+    await flush(); // the model reads the latest title
+    try {
+      await api.chat(id, q);
+    } catch (err) {
+      // Refused before it started (e.g. the model is busy): the question goes back in the box.
+      if (asking?.id === id && chatJob?.id === id && chatJob.state === "preparing" && !chatJob.text) {
+        asking = null;
+        chatJob = null;
+        chatError = { id, text: String(err) };
+        if (shown?.id === id && !chatInput.value) chatInput.value = q;
+        renderChat();
+        renderAi();
+      }
+    }
+  }
+
+  api.onAiChat((e) => {
+    chatJob = e;
+    const mine = asking?.id === e.id ? asking : null;
+    if (e.state === "done" && mine) {
+      if (shown?.id === e.id) {
+        const at = Math.floor(Date.now() / 1000);
+        const added: ChatMessage[] = [
+          { role: "user", text: mine.question, at },
+          { role: "assistant", text: e.text, at },
+        ];
+        shown.chat = [...(shown.chat ?? []), ...added];
+        ui.announce("Answer ready.");
+      }
+      asking = null;
+    } else if ((e.state === "error" || e.state === "cancelled") && mine) {
+      if (e.state === "error") chatError = { id: e.id, text: e.detail };
+      if (shown?.id === e.id && !chatInput.value) chatInput.value = mine.question; // ask again, or change it
+      asking = null;
+    }
+    if (shown) {
+      renderChat();
+      renderAi(); // Write notes waits for the answer
+    }
+  });
+
+  chatForm.addEventListener("submit", (e) => {
+    e.preventDefault();
+    if (shown && asking?.id === shown.id && chatRunning()) void api.aiCancel();
+    else void ask(chatInput.value);
+  });
+  chatInput.addEventListener("keydown", (e) => {
+    // Enter asks; Shift+Enter is a new line.
+    if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+      e.preventDefault();
+      if (!chatSend.disabled && !chatSend.hasAttribute("data-stop")) chatForm.requestSubmit();
+    }
+  });
+  chatInput.addEventListener("input", () => {
+    chatSend.disabled = !chatSend.hasAttribute("data-stop") && (chatInput.disabled || !chatInput.value.trim());
+  });
+  // Ctrl+K: ask (the box of the meeting on screen).
+  document.addEventListener("keydown", (e) => {
+    if (e.key.toLowerCase() !== "k" || !e.ctrlKey || e.altKey || e.metaKey || view.hidden || !view.offsetParent) return;
+    if (document.querySelector("dialog[open]") || chatInput.disabled) return;
+    e.preventDefault();
+    chatInput.focus();
+  });
+  for (const b of chatSuggestions.querySelectorAll<HTMLButtonElement>("button[data-ask]")) {
+    b.addEventListener("click", () => void ask(b.dataset.ask ?? ""));
+  }
+  chatClear.addEventListener("click", async () => {
+    if (!shown) return;
+    const id = shown.id;
+    const yes = await confirmDialog({
+      title: "Clear this chat?",
+      body: "The questions and answers of this meeting are deleted. Its notes and transcript stay.",
+      action: "Clear chat",
+      danger: true,
+    });
+    if (!yes) return;
+    try {
+      await api.chatClear(id);
+      if (shown?.id === id) shown.chat = [];
+      chatError = null;
+      renderChat();
+      chatInput.focus();
+    } catch (err) {
+      showError(String(err));
+    }
   });
 
   function open(m: Meeting): void {
+    if (shown?.id !== m.id) {
+      chatInput.value = "";
+      chatError = null;
+      chatLog.scrollTop = 0;
+    }
     shown = m;
     title.value = m.title;
     unsaved = {};
     home.hidden = true;
     view.hidden = false;
+    // While it records: the live transcript; once saved: the notes.
+    tab = live && live.meeting.id === m.id && live.state !== "done" ? "transcript" : "notes";
     renderView();
+    chatLog.scrollTop = chatLog.scrollHeight; // the newest question and answer
   }
 
   async function openById(id: string): Promise<void> {
@@ -403,7 +673,7 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): void {
   async function confirmDelete(id: string, name: string): Promise<boolean> {
     const yes = await confirmDialog({
       title: "Delete this meeting?",
-      body: `"${name}", with its transcript and AI notes, is deleted from this computer. You cannot undo this.`,
+      body: `"${name}", with its transcript, AI notes and chat, is deleted from this computer. You cannot undo this.`,
       action: "Delete meeting",
       danger: true,
     });
@@ -575,6 +845,8 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): void {
   document.addEventListener("keydown", (e) => {
     // Only while this view is on screen (its section shown), and not while keys are chosen.
     if (e.key !== "Escape" || e.defaultPrevented || view.hidden || !view.offsetParent) return;
+    if (document.querySelector("dialog[open]")) return; // Esc closes the dialog only
+    if (e.target === chatInput && chatInput.value) return; // a question being typed stays
     e.preventDefault();
     (document.activeElement as HTMLElement | null)?.blur();
     void showHome();

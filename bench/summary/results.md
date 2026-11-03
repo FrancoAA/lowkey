@@ -56,3 +56,24 @@ The full answers are in `run1/` and `run2/`.
 - Qwen3.5 2B is fast but invents owners: not good enough for notes that people act on.
 - Small models still make small mistakes (one wrong owner in an extra task). The app must show
   the notes as a draft next to the transcript, and it must never hide the transcript.
+
+## Notes by topic (run3, 2026-11-03)
+
+The app's notes changed from fixed sections (Summary, Decisions, Action items, Open questions,
+Numbers) to the meeting's own topics: a `##` section for each topic, a bullet for each
+decision, fact, figure or task (the person in bold), one level of sub-bullets. The prompt is
+`run3/prompt.txt` (the app's `llm::system_prompt`). Qwen3.5 4B on the GPU, the same meeting,
+~30 s for each run. The check: who calls Acme (the recorder: "**Me** (03:50): Yo hablo con Acme").
+
+| Prompt | Temperature | Runs | Acme call for **Me** |
+|---|---|---|---|
+| Fixed sections (run2's prompt) | 0.2 | 2 (`run3/old-prompt-*.md`) | 2 of 2 |
+| By topic, no owner example | 0.2 | 4 (2 in `run3/qwen3.5-4b-*.md`) | 2 of 4 (once given to Sofía only, once to both) |
+| By topic, owner rule as its own paragraph | 0.2 | 3 | 2 of 3 |
+| **By topic** (`run3/prompt.txt`) | **0** | 1 (`run3/qwen3.5-4b-temp0.md`) | **yes**, and every other owner right |
+
+- Inside a topic, the task sits among the talk about it, and at 0.2 the model sometimes gives
+  the recorder's task to the person Me talks to. A separate "Action items" list did not have
+  this problem. At temperature 0 the answer is the same each time, and it is right here.
+- The app writes the notes at temperature 0; the chat answers at 0.2.
+- One meeting only: check the owners in your notes, as before.

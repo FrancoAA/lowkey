@@ -887,8 +887,9 @@ function renderAi(): void {
   renderAiUrlNote();
 }
 
-/** The AI notes job now running (its events), else null. */
+/** The AI job now running (its events), else null: notes, or an answer to a question. */
 let aiLive: AiNotesEvent | null = null;
+let aiLiveKind: "notes" | "chat" = "notes";
 
 /** Models → AI notes: its status, as the speech model's (ready / not downloaded / at work). */
 function renderAiStatus(): void {
@@ -902,7 +903,8 @@ function renderAiStatus(): void {
   };
   if (aiLive && ["preparing", "downloading", "writing"].includes(aiLive.state)) {
     if (aiLive.state === "downloading") return set("downloading", aiLive.detail, aiLive.progress);
-    return set("loading", aiLive.state === "writing" ? "Writing notes…" : aiLive.detail);
+    if (aiLive.state === "writing") return set("loading", aiLiveKind === "chat" ? "Answering a question…" : "Writing notes…");
+    return set("loading", aiLive.detail);
   }
   if (ai.engine === "server") {
     let host = "";
@@ -971,14 +973,18 @@ void getBackend().then((b) => {
   );
   b.onOpenFiles((files) => files[0] && handleRef(files[0]));
   const liveDot = document.querySelector<HTMLElement>('.nav-item[data-section="meetings"] .nav-live')!;
-  b.meetings.onAiNotes((e) => {
+  // Models → AI notes shows the model at work: notes, or an answer (also its first download).
+  const onAi = (kind: "notes" | "chat") => (e: AiNotesEvent) => {
     aiLive = e;
+    aiLiveKind = kind;
     renderAiStatus();
     if (["done", "error", "cancelled"].includes(e.state)) {
       aiLive = null;
       void refreshStatus(); // "downloaded" may have changed
     }
-  });
+  };
+  b.meetings.onAiNotes(onAi("notes"));
+  b.meetings.onAiChat(onAi("chat"));
   initMeetings(b, { announce, onRecording: (on) => (liveDot.hidden = !on), meetingKey: () => (status?.meeting_key_source === "app" ? status.meeting_key ?? "" : "") });
   void loadLanguages();
   void refreshStatus();

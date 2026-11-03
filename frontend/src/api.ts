@@ -127,9 +127,18 @@ export interface Meeting {
   ai_notes?: string;
   ai_model?: string;
   ai_at?: number;
+  /** Questions about the meeting and their answers, oldest first. */
+  chat?: ChatMessage[];
 }
 
-/** Progress of the AI notes of one meeting. */
+export interface ChatMessage {
+  role: "user" | "assistant";
+  text: string;
+  /** Unix seconds. */
+  at: number;
+}
+
+/** Progress of the AI notes of one meeting, or of the answer to a question about it. */
 export interface AiNotesEvent {
   id: string;
   state: "preparing" | "downloading" | "writing" | "done" | "error" | "cancelled";

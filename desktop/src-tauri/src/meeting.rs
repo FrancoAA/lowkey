@@ -67,7 +67,22 @@ pub struct Meeting {
     /// Which model wrote them, and when (unix seconds).
     pub ai_model: String,
     pub ai_at: u64,
+    /// Questions about the meeting and the model's answers (Ask about this meeting), oldest first.
+    pub chat: Vec<ChatMessage>,
 }
+
+/// One chat message: a question by "user" or an answer by "assistant".
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(default)]
+pub struct ChatMessage {
+    pub role: String,
+    pub text: String,
+    /// Unix seconds.
+    pub at: u64,
+}
+
+/// The longest question (characters).
+pub const MAX_QUESTION: usize = 4_000;
 
 pub const MAX_TITLE: usize = 200;
 pub const MAX_NOTES: usize = 1_000_000;
@@ -519,6 +534,12 @@ pub fn model_input(m: &Meeting) -> String {
     let mut plain = m.clone();
     plain.ai_notes.clear();
     markdown(&plain, None)
+}
+
+/// What the chat model reads about the meeting: the title, your notes, the AI notes and the
+/// transcript (no date, as in `model_input`).
+pub fn chat_input(m: &Meeting) -> String {
+    markdown(m, None)
 }
 
 pub fn to_markdown(m: &Meeting, offset_min: i32) -> String {
@@ -1107,5 +1128,29 @@ mod tests {
         assert!(!model_input(&m).contains("Todo bien"));
         assert!(model_input(&m).starts_with("# Planning\n\n31 min\n\n"), "no date for the model: {}", model_input(&m));
         assert!(model_input(&m).contains("- ship Friday"));
+        // The chat reads the AI notes too; the questions and answers stay out of the export.
+        m.chat = vec![ChatMessage { role: "user".into(), text: "Who calls?".into(), at: 1 }];
+        assert!(chat_input(&m).contains("Todo bien") && chat_input(&m).contains("**Me** (00:06): Yes."));
+        assert!(!to_markdown(&m, 0).contains("Who calls?") && !chat_input(&m).contains("Who calls?"));
+    }
+
+    #[test]
+    fn the_chat_is_saved_with_the_meeting_and_old_files_have_none() {
+        let dir = temp("chat");
+        let mut m = Meeting::new("Chat", "small");
+        m.id = "m-500".into();
+        m.chat = vec![
+            ChatMessage { role: "user".into(), text: "¿Quién llama a Acme?".into(), at: 10 },
+            ChatMessage { role: "assistant".into(), text: "**Me**, el viernes.".into(), at: 11 },
+        ];
+        save_in(&dir, &m).unwrap();
+        assert_eq!(load_in(&dir, "m-500").unwrap().chat, m.chat);
+        assert!(search_in(&dir, "Acme").is_empty(), "search does not look in the chat");
+        // A meeting saved before the chat existed.
+        let mut old: serde_json::Value = serde_json::to_value(&m).unwrap();
+        old.as_object_mut().unwrap().remove("chat");
+        std::fs::write(dir.join("m-500.json"), old.to_string()).unwrap();
+        assert!(load_in(&dir, "m-500").unwrap().chat.is_empty());
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

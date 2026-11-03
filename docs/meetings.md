@@ -36,13 +36,16 @@ macOS and Windows, a prompt when a call starts, and questions over past meetings
 ## The Meetings section
 
 - The list is grouped by day (Today, Yesterday, then dates), newest first, with the time, the
-  length, the first words, and marks for "Recording", "Interrupted" and "AI notes". With no
+  length, the first words, and marks for "Recording" and "Interrupted". With no
   meetings, it says how to start, and names the meeting key.
-- One meeting: **AI notes | Transcript**, side by side and the full height of the window,
-  each scrolling on its own (the section has no width limit; lines stay under ~75 characters);
-  under 720 px one above the other. While it records, a panel shows the clock, the two-colour
-  wave (the same colours as the transcript's Me and Them) and Stop (it has the focus after
-  Start), and the AI notes column says the notes come when it stops. Esc goes back to the list.
+- One meeting: the notes on the left, the chat on the right (300–380 px), the full height of
+  the window, each scrolling on its own (lines stay under ~75 characters); under 720 px one above
+  the other. A switch above the notes, **AI notes | Transcript** (the tabs pattern: the arrow
+  keys move between them), shows the transcript in the notes' place. While it records, the
+  transcript is shown, and a panel shows the clock, the two-colour wave (the same colours as the
+  transcript's Me and Them) and Stop (it has the focus after Start); the notes and the chat
+  start when it stops. Esc goes back to the list (not while a question is typed, or a dialog is
+  open).
 - There is no notes field: the AI notes take its place. Notes typed in older versions stay in
   the file, in the export and in what the model reads.
 
@@ -105,8 +108,13 @@ nothing): `cd desktop/src-tauri && cargo test --lib system_audio -- --ignored`.
 ## AI notes
 
 `llm.rs`. A language model reads the meeting as Markdown (title, date, your notes, the
-transcript; never older AI notes) and writes: Summary, Decisions, Action items (**who** — what —
-when), Open questions, Numbers. The language is named in the instructions (Settings → General,
+transcript; never older AI notes) and organizes it by topic, in the meeting's order: a `##`
+section for each topic, a bullet for each decision, fact, figure or task (a task starts with
+the person in bold), one level of sub-bullets for the reasons, the dropped options and the next
+dates; no summary, no introduction. A line by **Me** that says "I" will do something is a task
+for **Me**. The notes are written at temperature 0: at 0.2 the 4B model gave the recorder's
+call to someone else in half of the runs (bench/summary/results.md, "Notes by topic"). **Write notes** shows only when a meeting has no notes (not written, or the writing
+failed). The language is named in the instructions (Settings → General,
 else found in the transcript with whatlang): with "the language of the meeting" two of three
 models wrote English notes for a Spanish meeting (bench/summary/results.md).
 
@@ -141,6 +149,31 @@ models wrote English notes for a Spanish meeting (bench/summary/results.md).
   them first, as "AI notes (model, a draft)", their headings one level down.
 - The e2e test (cached model): notes written 7–9 s after Stop for a 16-s test meeting, streamed,
   saved; screenshot `docs/screenshots/25-desktop-meeting-ai-notes.png`.
+
+## Ask about this meeting
+
+`llm::chat`, the `meeting_chat` command. The chat on the right of a saved meeting sends a
+question to the same engine as the AI notes (built in or your own server). The model reads:
+
+1. instructions (only what the meeting says; say so when the answer is not in it; the
+   transcript wins over the AI notes; answer in the language of the question; give times like
+   (04:19)), then the meeting as Markdown with its AI notes, in one first message, so the next
+   question reuses what llama.cpp read already (its prompt cache);
+2. the earlier questions and answers of this meeting, the newest that fit in 16,000
+   characters (an answer whose question does not fit is left out);
+3. the question (up to 4,000 characters).
+
+- The answer streams in (`ai-chat` events). When it is complete, the question and the answer
+  are saved in the meeting file (`chat`: role, text, time); an answer that fails or is stopped
+  saves nothing, and the question goes back in the box. **Clear** (a dialog asks first) deletes
+  them. Search and Copy/Export leave the chat out.
+- One AI job at a time: no question while notes are written (the box says so), and no notes
+  while an answer is written. The send button stops an answer. Deleting the meeting stops it.
+- No questions while the meeting records: the box says to ask when it stops.
+- Suggestions over the box: a follow-up email, a TL;DR, your tasks (each asks for the
+  meeting's language). <kbd>Ctrl</kbd>+<kbd>K</kbd> puts the focus in the box.
+- The e2e test asks "what did they say about the country" (Ctrl+K, typed, Enter) and checks
+  the streamed answer and the saved chat; screenshot `docs/screenshots/34-desktop-meeting-chat.png`.
 
 ## Limits now
 

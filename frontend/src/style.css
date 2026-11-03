@@ -390,34 +390,43 @@ mark { background: color-mix(in srgb, var(--brand) 20%, transparent); color: inh
 .notices { margin: 0; padding: 10px 14px 10px 30px; border-radius: var(--radius); font-size: 13px;
   border: 1px solid color-mix(in srgb, #d97706 45%, transparent); background: color-mix(in srgb, #d97706 8%, var(--background)); }
 
-/* AI notes | Transcript, side by side from 720 px; one above the other below that. */
+/* The notes (or the transcript) on the left, the chat on the right, from 720 px; one above the
+   other below that. Each side scrolls on its own. */
 .meeting-body {
-  flex: 1; min-height: 0; display: grid; gap: 16px;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr);
+  flex: 1; min-height: 0; display: grid; gap: 20px;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 380px); grid-template-rows: minmax(0, 1fr);
 }
-/* One above the other: the AI notes at their full height, the view scrolls as a whole. */
 @container (max-width: 719px) {
-  .meeting-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(360px, auto); overflow-y: auto; }
-  /* (inside .meeting-body: these win over the card's own rules further down) */
-  .meeting-body .ai-body { flex: none; overflow: visible; }
-  .meeting-body .ai-card { min-height: auto; } /* never shorter than its notes here */
+  .meeting-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(420px, auto); overflow-y: auto; }
+  /* (inside .meeting-body: these win over the panes' own rules further down) */
+  .meeting-body .ai-body, .meeting-body .meeting-transcript { flex: none; overflow: visible; }
+  .meeting-body .notes-pane { min-height: auto; }
 }
-.pane { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
-/* The transcript: a card like the AI notes, its title inside, the lines scroll below it. */
-.transcript-pane {
-  padding: 14px 6px 0 16px; border-radius: calc(var(--radius) + 2px);
-  border: 1px solid var(--border); background: color-mix(in srgb, var(--muted) 28%, var(--card));
+
+/* Left: the switch (AI notes | Transcript), the model, the button; then one of the two. */
+.notes-pane { display: flex; flex-direction: column; gap: 12px; min-height: 0; }
+.notes-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; min-height: 32px; }
+.notes-head .actions { margin-left: auto; flex: none; flex-wrap: nowrap; }
+.notes-panel, .transcript-panel { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 10px; }
+/* A two-way switch (shadcn's tabs): the chosen one raised on a muted track. */
+.seg { display: inline-flex; padding: 3px; gap: 2px; border-radius: var(--radius); background: var(--muted); flex: none; }
+.seg-item {
+  height: 26px; padding: 0 12px; border: 0; border-radius: calc(var(--radius) - 3px); background: transparent;
+  font: inherit; font-size: 13px; font-weight: 500; color: var(--muted-foreground); cursor: pointer;
+  transition: background 0.15s, color 0.15s, box-shadow 0.15s;
 }
-.pane-head { display: flex; align-items: center; gap: 8px; min-height: 32px; padding-right: 10px; }
+.seg-item:hover { color: var(--foreground); }
+.seg-item[aria-selected="true"] { background: var(--background); color: var(--foreground); box-shadow: 0 1px 2px rgb(0 0 0 / 0.08); }
+.seg-item:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 50%, transparent); }
 .pane-title { font-size: 14px; font-weight: 600; color: var(--foreground); }
 .pending { font-size: 12px; color: var(--muted-foreground); }
 .meeting-transcript {
-  flex: 1; min-height: 0; overflow-y: auto; padding: 0 10px 14px 0;
+  flex: 1; min-height: 0; overflow-y: auto; padding: 0 10px 14px 2px;
   scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--muted-foreground) 45%, transparent) transparent;
 }
 .meeting-transcript:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 35%, transparent); }
 .transcript-empty { color: var(--muted-foreground); font-size: 13px; }
-.tline { display: grid; grid-template-columns: auto 1fr; align-items: baseline; column-gap: 8px; padding-top: 12px; }
+.tline { display: grid; grid-template-columns: auto 1fr; align-items: baseline; column-gap: 8px; padding-bottom: 12px; }
 .tline .who { font-size: 12px; font-weight: 600; display: inline-flex; align-items: center; gap: 6px; }
 .tline .who::before { content: ""; width: 7px; height: 7px; border-radius: 2px; background: currentColor; }
 .tline[data-speaker="me"] .who { color: var(--me); }
@@ -437,30 +446,69 @@ mark { background: color-mix(in srgb, var(--brand) 20%, transparent); color: inh
 .input:focus { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 50%, transparent); }
 .ai-server { display: flex; flex-direction: column; gap: 14px; }
 .field-desc[data-kind="warn"] { color: #d97706; font-weight: 500; }
-.ai-card {
-  display: flex; flex-direction: column; gap: 10px; min-height: 0; padding: 14px 16px; border-radius: calc(var(--radius) + 2px);
-  background: linear-gradient(180deg, color-mix(in srgb, var(--brand-soft) 85%, var(--background)), var(--card) 70%);
-  border: 1px solid color-mix(in srgb, var(--brand) 22%, var(--border));
-}
-.ai-icon { color: var(--brand); }
-.ai-title { font-weight: 600; font-size: 14px; white-space: nowrap; letter-spacing: 0; }
-/* The title (and the model, which wraps under it) on the left; the button always on the right. */
-.ai-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
-.ai-head .actions { flex: none; flex-wrap: nowrap; }
-.ai-heading { display: flex; align-items: center; column-gap: 8px; row-gap: 0; min-width: 0; flex: 1; flex-wrap: wrap; min-height: 32px; }
-.ai-meta { font-size: 12px; color: var(--muted-foreground); }
+.ai-meta { font-size: 12px; color: var(--muted-foreground); min-width: 0; }
 .ai-body {
-  flex: 1; min-height: 0; font-size: 14px; line-height: 1.6; overflow-y: auto; overflow-wrap: anywhere; padding-right: 6px;
+  flex: 1; min-height: 0; font-size: 14.5px; line-height: 1.65; overflow-y: auto; overflow-wrap: anywhere; padding: 0 10px 16px 2px;
   scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--muted-foreground) 45%, transparent) transparent;
 }
-.ai-body > * { max-width: 75ch; }
+.ai-body > * { max-width: 72ch; }
 .ai-body.ai-empty { color: var(--muted-foreground); font-size: 13px; }
-.ai-body h4 { margin: 10px 0 2px; font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; color: var(--muted-foreground); }
-.ai-body h4:first-child { margin-top: 0; }
-.ai-body h5 { margin: 8px 0 2px; font-size: 13px; font-weight: 600; }
+/* One heading for each topic of the meeting. */
+.ai-body h4 { margin: 22px 0 4px; font-size: 15px; font-weight: 600; letter-spacing: -0.01em; color: var(--foreground); }
+.ai-body h4:first-child { margin-top: 2px; }
+.ai-body h5 { margin: 14px 0 2px; font-size: 14px; font-weight: 600; }
 .ai-body p { margin: 2px 0 6px; }
-.ai-body ul, .ai-body ol { margin: 2px 0 6px; padding-left: 20px; }
+.ai-body ul, .ai-body ol { margin: 2px 0 6px; padding-left: 22px; }
+.ai-body li { padding-left: 2px; margin: 3px 0; }
+.ai-body li::marker { color: var(--muted-foreground); }
+.ai-body ul ul, .ai-body ol ul { list-style: circle; margin: 2px 0 4px; color: color-mix(in srgb, var(--foreground) 82%, var(--muted-foreground)); }
 .ai-body code { font-family: ui-monospace, monospace; font-size: 12px; background: var(--muted); padding: 0 4px; border-radius: 4px; }
+
+/* Right: the chat. Questions in a bubble on the right, answers as text; the box at the bottom. */
+.chat-pane {
+  display: flex; flex-direction: column; min-height: 0; border-radius: calc(var(--radius) + 2px);
+  border: 1px solid var(--border); background: color-mix(in srgb, var(--muted) 28%, var(--card));
+}
+.chat-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 32px; padding: 10px 10px 0 16px; }
+.chat-log {
+  flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; padding: 12px 14px 12px 16px;
+  font-size: 13.5px; line-height: 1.6; overflow-wrap: anywhere;
+  scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--muted-foreground) 45%, transparent) transparent;
+}
+.chat-empty { margin: auto 0; color: var(--muted-foreground); font-size: 13px; text-align: center; text-wrap: pretty; padding: 0 8px; }
+.chat-q {
+  align-self: flex-end; max-width: 88%; padding: 7px 12px; border-radius: 14px 14px 4px 14px;
+  background: var(--primary); color: var(--primary-foreground); white-space: pre-wrap;
+}
+.chat-a { display: flex; flex-direction: column; gap: 4px; }
+.chat-a .ai-body { flex: none; overflow: visible; padding: 0; font-size: 13.5px; line-height: 1.6; }
+.chat-a .ai-body h4 { margin: 10px 0 2px; font-size: 13.5px; }
+.chat-a .ai-body h4:first-child { margin-top: 0; }
+.chat-a-tools { display: flex; gap: 4px; }
+.chat-a-tools .btn { height: 26px; padding: 0 8px; font-size: 12px; color: var(--muted-foreground); }
+.chat-a-tools .btn:hover { color: var(--foreground); }
+.chat-wait { color: var(--muted-foreground); font-size: 13px; }
+.chat-error { color: var(--destructive); font-size: 13px; margin: 0; }
+.chat-suggestions { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 14px 10px 16px; }
+.chip-btn {
+  height: 28px; padding: 0 10px; border-radius: 999px; border: 1px solid var(--border); background: var(--background);
+  font: inherit; font-size: 12px; font-weight: 500; color: var(--foreground); cursor: pointer; transition: background 0.15s;
+}
+.chip-btn:hover { background: var(--accent); }
+.chip-btn:disabled { opacity: 0.5; cursor: default; }
+.chip-btn:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 50%, transparent); }
+.chat-form {
+  display: flex; align-items: flex-end; gap: 8px; margin: 0 10px 10px; padding: 6px 6px 6px 12px;
+  border: 1px solid var(--input); border-radius: 18px; background: var(--background);
+}
+.chat-form:focus-within { box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 35%, transparent); }
+.chat-input {
+  flex: 1; min-width: 0; max-height: 140px; resize: none; border: 0; outline: none; background: transparent; color: var(--foreground);
+  font: inherit; font-size: 14px; line-height: 1.45; padding: 5px 0; field-sizing: content;
+}
+.chat-input::placeholder { color: var(--muted-foreground); }
+.chat-send { width: 30px; height: 30px; border-radius: 50%; flex: none; }
+.chat-send[data-stop] { background: var(--muted); color: var(--foreground); }
 .ai-error { margin: 0; color: var(--destructive); font-size: 13px; }
 
 /* ───────────────────────────── Models ───────────────────────────── */

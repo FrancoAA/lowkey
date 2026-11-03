@@ -736,6 +736,11 @@ esac
         press_key("Escape")
 
         # ---------------------------------------------------------------- Meetings
+        def ctrl_key(k: str) -> None:
+            for st in ("down", "up"):
+                run(["hyprctl", "dispatch", f'hl.dsp.send_key_state({{ mods = "CTRL", key = "{k}", state = "{st}" }})'], env)
+                time.sleep(0.05)
+
         meetings_dir = tmp / "data" / "lowkey" / "meetings"
         press_key("Down")  # Meetings (from the Transcribe tab)
         press_key("Tab")  # the search field
@@ -784,12 +789,31 @@ esac
             saved = json.loads((meetings_dir / f"{mid}.json").read_text())
             check(saved["ai_notes"] == ai["text"] and saved["ai_model"] == "Qwen3.5 4B", "the AI notes are saved with the meeting")
             low = saved["ai_notes"].lower()
-            check("## " in low and ("openwhisper" in low or "open whisper" in low), "the notes have sections and use the transcript")
+            check("## " in low and ("openwhisper" in low or "open whisper" in low), "the notes have topic sections and use the transcript")
+            check(not any(h in saved["ai_notes"] for h in ("## Summary", "## Action items", "## Open questions")),
+                  "the notes follow the topics, not fixed sections (summary, action items…)")
             time.sleep(1.0)
             shot("25-desktop-meeting-ai-notes.png")
+            # Ask about this meeting: Ctrl+K, a question, Enter; the answer is saved with it.
+            focus(main_win["address"])
+            ctrl_key("k")
+            for ch in "what did they say about the country":
+                press_key("space" if ch == " " else ch)
+            n_c = len(events("ai-chat"))
+            t_c = time.monotonic()
+            press_key("Return")
+            ans = wait(lambda: next((e for e in events("ai-chat")[n_c:] if e["id"] == mid and e["state"] in ("done", "error", "cancelled")), None), 180, "an answer")
+            check(ans["state"] == "done" and "country" in ans["text"].lower(),
+                  f"Ask about this meeting: answered in {time.monotonic() - t_c:.0f} s from the transcript: {ans['text'][:80]!r}")
+            check(any(e["state"] == "writing" and e["text"] for e in events("ai-chat")[n_c:] if e["id"] == mid), "the answer streams in")
+            chat = json.loads((meetings_dir / f"{mid}.json").read_text())["chat"]
+            check([c["role"] for c in chat] == ["user", "assistant"] and chat[0]["text"] == "what did they say about the country" and chat[1]["text"] == ans["text"],
+                  "the question and the answer are saved with the meeting")
+            time.sleep(1.0)
+            shot("34-desktop-meeting-chat.png")
         else:
             print(f"  SKIP AI notes: no cached Qwen3.5 4B and runner in {BENCH_LLM}")
-        # A wide window: AI notes and transcript side by side (the nested window, full screen).
+        # A wide window: the AI notes and the chat side by side (the nested window, full screen).
         def fullscreen() -> bool:
             before = win("Lowkey")["size"]
             run(["hyprctl", "dispatch", f'hl.dsp.window.fullscreen({{ window = "address:{main_win["address"]}" }})'], env, check=False)
@@ -809,11 +833,6 @@ esac
             shot("26-desktop-meetings-list.png")
 
         # ---------------------------------------------------------------- Meetings: search, and delete from the list
-        def ctrl_key(k: str) -> None:
-            for st in ("down", "up"):
-                run(["hyprctl", "dispatch", f'hl.dsp.send_key_state({{ mods = "CTRL", key = "{k}", state = "{st}" }})'], env)
-                time.sleep(0.05)
-
         def meeting_files() -> set:
             return {p.name for p in meetings_dir.glob("m-*.json")}
 

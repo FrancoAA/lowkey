@@ -92,8 +92,13 @@ export interface MeetingsBackend {
   onLevels(cb: (lv: { me: number; them: number }) => void): void;
   /** Start writing the AI notes of a saved meeting; progress comes through onAiNotes. */
   aiNotes(id: string): Promise<void>;
+  /** Stop the AI's job: the notes being written, or an answer. */
   aiCancel(): Promise<void>;
   onAiNotes(cb: (e: AiNotesEvent) => void): void;
+  /** Ask about a saved meeting; the answer comes through onAiChat, and is saved with it. */
+  chat(id: string, question: string): Promise<void>;
+  chatClear(id: string): Promise<void>;
+  onAiChat(cb: (e: AiNotesEvent) => void): void;
 }
 
 const baseName = (p: string) => p.split(/[\\/]/).pop() || p;
@@ -205,6 +210,11 @@ async function desktopBackend(): Promise<Backend> {
       aiCancel: () => invoke("ai_notes_cancel"),
       onAiNotes(cb) {
         void listen<AiNotesEvent>("ai-notes", (e) => cb(e.payload));
+      },
+      chat: (id, question) => invoke("meeting_chat", { id, question }),
+      chatClear: (id) => invoke("meeting_chat_clear", { id }),
+      onAiChat(cb) {
+        void listen<AiNotesEvent>("ai-chat", (e) => cb(e.payload));
       },
     },
   };

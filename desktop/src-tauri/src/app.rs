@@ -70,11 +70,13 @@ pub struct App {
     calls_seen: Mutex<Vec<crate::calls::Call>>,
     /// Who wants the overlay: [dictation, meeting]. It shows while either does.
     overlay_wants: [AtomicBool; 2],
-    /// AI notes: one job at a time, and its cancel flag.
+    /// AI notes and questions: one job at a time, and its cancel flag.
     ai_busy: Arc<AtomicBool>,
     ai_cancel: Arc<AtomicBool>,
     /// The meeting whose AI notes are being written.
     ai_job: Mutex<Option<String>>,
+    /// The meeting whose question is being answered.
+    chat_job: Mutex<Option<String>>,
     /// The tray menu as last built (it is built again only when this changes).
     tray_menu: Mutex<Vec<crate::tray::Entry>>,
     /// The dictation's state, for the tray (kept here: the dictation reports it while it
@@ -1306,14 +1308,19 @@ fn ai_notes_cancel(app: State<'_, AppRef>) {
     app.ai_cancel.store(true, Ordering::SeqCst);
 }
 
+/// Why the AI cannot start now: it writes notes or answers a question (one job at a time).
+fn ai_busy_reason(app: &AppRef, id: &str) -> String {
+    if app.chat_job.lock().is_some() {
+        "The AI is answering a question. Wait for the answer, or stop it.".to_string()
+    } else if app.ai_job.lock().as_deref() == Some(id) {
+        "The AI notes of this meeting are being written.".to_string()
+    } else {
+        "AI notes are being written for another meeting. Wait for them, or cancel them.".to_string()
+    }
+}
+
 fn start_ai_notes(app: &AppRef, id: String) -> Result<(), String> {
-    let busy = llm::Busy::take(&app.ai_busy).ok_or_else(|| {
-        if app.ai_job.lock().as_deref() == Some(id.as_str()) {
-            "The AI notes of this meeting are being written.".to_string()
-        } else {
-            "AI notes are being written for another meeting. Wait for them, or cancel them.".to_string()
-        }
-    })?;
+    let busy = llm::Busy::take(&app.ai_busy).ok_or_else(|| ai_busy_reason(app, &id))?;
     app.ai_cancel.store(false, Ordering::SeqCst);
     *app.ai_job.lock() = Some(id.clone());
     let app = app.clone();
@@ -1387,13 +1394,100 @@ fn run_ai_notes(app: &AppRef, id: &str) {
     }
 }
 
+// ------------------------------------------------------------------ Ask about this meeting
+/// Ask the AI about a saved meeting (in the background; "ai-chat" events follow it). The
+/// question and the answer are saved with the meeting when the answer is complete.
+#[tauri::command]
+fn meeting_chat(app: State<'_, AppRef>, id: String, question: String) -> Result<(), String> {
+    let app = app.inner().clone();
+    if !meeting::valid_id(&id) {
+        return Err(format!("unknown meeting {id:?}"));
+    }
+    if live_session(&app, &id).is_some() {
+        return Err("Ask when the recording stops.".into());
+    }
+    let question = question.trim().to_string();
+    if question.is_empty() {
+        return Err("Type a question.".into());
+    }
+    if question.chars().count() > meeting::MAX_QUESTION {
+        return Err(format!("The question is too long (over {} characters).", meeting::MAX_QUESTION));
+    }
+    let busy = llm::Busy::take(&app.ai_busy).ok_or_else(|| ai_busy_reason(&app, &id))?;
+    app.ai_cancel.store(false, Ordering::SeqCst);
+    *app.chat_job.lock() = Some(id.clone());
+    std::thread::Builder::new()
+        .name("ai-chat".into())
+        .spawn(move || {
+            let _busy = busy;
+            run_chat(&app, &id, &question);
+            *app.chat_job.lock() = None;
+            app.emit_status();
+        })
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Delete the questions and answers of a meeting.
+#[tauri::command]
+fn meeting_chat_clear(app: State<'_, AppRef>, id: String) -> Result<(), String> {
+    if app.chat_job.lock().as_deref() == Some(id.as_str()) {
+        return Err("Wait for the answer, or stop it.".into());
+    }
+    meeting::edit_in(&meeting::dir(), &id, |m| m.chat.clear()).map(|_| ()).map_err(|e| format!("{e:#}"))
+}
+
+fn run_chat(app: &AppRef, id: &str, question: &str) {
+    let h = app.handle.clone();
+    let send = |state: &str, detail: &str, progress: f64, text: &str| {
+        emit_logged(&h, "ai-chat", json!({"id": id, "state": state, "detail": detail, "progress": progress, "text": text}));
+    };
+    send("preparing", "Getting ready…", 0.0, "");
+    let result = (|| -> anyhow::Result<String> {
+        let m = meeting::load_in(&meeting::dir(), id)?;
+        anyhow::ensure!(!m.lines.is_empty() || !m.notes.trim().is_empty() || !m.ai_notes.trim().is_empty(), "this meeting has no transcript and no notes");
+        let history: Vec<(String, String)> = m.chat.iter().map(|c| (c.role.clone(), c.text.clone())).collect();
+        let engine = ai_engine(app);
+        let mut last = Instant::now() - Duration::from_secs(1);
+        let mut progress = |what: &str, done: u64, total: u64| match what {
+            "starting" => send("preparing", "Starting the model…", 0.0, ""),
+            "writing" => send("writing", "", 0.0, ""),
+            "checking the download" => send("preparing", "Checking the download…", 1.0, ""),
+            what if last.elapsed() >= Duration::from_millis(250) || done == total => {
+                last = Instant::now();
+                let p = if total > 0 { done as f64 / total as f64 } else { 0.0 };
+                send("downloading", &format!("Downloading {what} (once)… {}% of {} MB", (p * 100.0) as u32, total / 1_000_000), p, "");
+            }
+            _ => {}
+        };
+        let mut on_text = |t: &str| send("writing", "", 0.0, t);
+        let names = crate::vocabulary::Vocabulary::new(&app.config.lock().vocabulary).names();
+        llm::chat(&engine, &meeting::chat_input(&m), &history, question, &names, &mut progress, &mut on_text, &app.ai_cancel)
+    })();
+    match result {
+        Ok(text) => {
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+            let saved = meeting::edit_in(&meeting::dir(), id, |m| {
+                m.chat.push(meeting::ChatMessage { role: "user".into(), text: question.to_string(), at: now });
+                m.chat.push(meeting::ChatMessage { role: "assistant".into(), text: text.clone(), at: now });
+            });
+            match saved {
+                Ok(_) => send("done", "", 1.0, &text),
+                Err(e) => send("error", &format!("The answer was not saved: {e:#}"), 0.0, &text),
+            }
+        }
+        Err(_) if app.ai_cancel.load(Ordering::SeqCst) => send("cancelled", "Stopped", 0.0, ""),
+        Err(e) => send("error", &format!("{e:#}"), 0.0, ""),
+    }
+}
+
 #[tauri::command]
 fn meeting_delete(app: State<'_, AppRef>, id: String) -> Result<(), String> {
     if live_session(app.inner(), &id).is_some() {
         return Err("Stop the recording first.".into());
     }
-    if app.ai_job.lock().as_deref() == Some(id.as_str()) {
-        app.ai_cancel.store(true, Ordering::SeqCst); // its notes would have no meeting
+    if app.ai_job.lock().as_deref() == Some(id.as_str()) || app.chat_job.lock().as_deref() == Some(id.as_str()) {
+        app.ai_cancel.store(true, Ordering::SeqCst); // its notes or answer would have no meeting
     }
     meeting::delete_in(&meeting::dir(), &id).map_err(|e| format!("{e:#}"))
 }
@@ -1806,7 +1900,9 @@ pub fn run() {
             meeting_delete,
             meeting_markdown,
             meeting_ai_notes,
-            ai_notes_cancel
+            ai_notes_cancel,
+            meeting_chat,
+            meeting_chat_clear
         ])
         .setup(move |tauri_app| {
             let cli = first_cli.clone();
@@ -1889,6 +1985,7 @@ pub fn run() {
                 ai_busy: Arc::new(AtomicBool::new(false)),
                 ai_cancel: Arc::new(AtomicBool::new(false)),
                 ai_job: Mutex::new(None),
+                chat_job: Mutex::new(None),
                 tray_menu: Mutex::new(Vec::new()),
                 tray_dictation: Mutex::new("idle".into()),
                 tray_mics: Mutex::new(Some(Vec::new())),

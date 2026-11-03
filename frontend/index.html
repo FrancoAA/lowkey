@@ -171,29 +171,51 @@
             </div>
             <ul id="meeting-notices" class="notices" role="status" hidden></ul>
             <div class="meeting-body">
-              <section id="ai-card" class="ai-card" aria-labelledby="ai-title" hidden>
-                <div class="ai-head">
-                  <div class="ai-heading">
-                    <svg class="icon ai-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z" /><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z" /></svg>
-                    <h3 id="ai-title" class="ai-title">AI notes</h3>
-                    <span id="ai-meta" class="ai-meta"></span>
+              <!-- Left: the AI notes, or the transcript in their place (the switch). -->
+              <section class="notes-pane" aria-label="Notes and transcript">
+                <div class="notes-head">
+                  <div class="seg" role="tablist" aria-label="Show">
+                    <button id="tab-notes" type="button" role="tab" class="seg-item" aria-selected="true" aria-controls="notes-panel">AI notes</button>
+                    <button id="tab-transcript" type="button" role="tab" class="seg-item" aria-selected="false" aria-controls="transcript-panel" tabindex="-1">Transcript</button>
                   </div>
+                  <span id="ai-meta" class="ai-meta"></span>
+                  <span id="meeting-pending" class="pending"></span>
                   <div class="actions">
                     <button id="ai-write" type="button" class="btn btn-outline btn-sm">Write notes</button>
                     <button id="ai-cancel" type="button" class="btn btn-ghost btn-sm" hidden>Cancel</button>
                   </div>
                 </div>
-                <div id="ai-progress" class="progress" hidden>
-                  <div class="progress-track"><div id="ai-progress-fill" class="progress-fill"></div></div>
-                  <span id="ai-progress-text" class="progress-text"></span>
+                <div id="notes-panel" class="notes-panel" role="tabpanel" aria-labelledby="tab-notes">
+                  <div id="ai-progress" class="progress" hidden>
+                    <div class="progress-track"><div id="ai-progress-fill" class="progress-fill"></div></div>
+                    <span id="ai-progress-text" class="progress-text"></span>
+                  </div>
+                  <div id="ai-body" class="ai-body" aria-live="off"></div>
+                  <p id="ai-error" class="ai-error" role="alert" hidden></p>
                 </div>
-                <div id="ai-body" class="ai-body" aria-live="off"></div>
-                <p id="ai-error" class="ai-error" role="alert" hidden></p>
+                <div id="transcript-panel" class="transcript-panel" role="tabpanel" aria-labelledby="tab-transcript" hidden>
+                  <div id="meeting-transcript" class="meeting-transcript" tabindex="0" aria-label="Transcript"></div>
+                </div>
               </section>
-              <div class="pane transcript-pane">
-                <div class="pane-head"><h3 class="pane-title">Transcript</h3><span id="meeting-pending" class="pending"></span></div>
-                <div id="meeting-transcript" class="meeting-transcript" tabindex="0" aria-label="Transcript"></div>
-              </div>
+              <!-- Right: questions about this meeting, answered by the AI notes model. -->
+              <aside class="chat-pane" aria-labelledby="chat-title">
+                <div class="chat-head">
+                  <h3 id="chat-title" class="pane-title">Ask about this meeting</h3>
+                  <button id="chat-clear" type="button" class="btn btn-ghost btn-sm" hidden>Clear</button>
+                </div>
+                <div id="chat-log" class="chat-log" role="log" aria-live="off" aria-label="Questions and answers"></div>
+                <div id="chat-suggestions" class="chat-suggestions" aria-label="Suggested questions">
+                  <button type="button" class="chip-btn" data-ask="Write a follow-up email to the participants, in the language of the meeting.">Write a follow-up email</button>
+                  <button type="button" class="chip-btn" data-ask="Write a TL;DR of this meeting in three lines, in the language of the meeting.">Write a TL;DR</button>
+                  <button type="button" class="chip-btn" data-ask="List my tasks from this meeting (the tasks for Me), with their dates, in the language of the meeting.">List my tasks</button>
+                </div>
+                <form id="chat-form" class="chat-form">
+                  <textarea id="chat-input" class="chat-input" rows="1" maxlength="4000" placeholder="Ask about the meeting…" aria-label="Ask about the meeting" aria-keyshortcuts="Control+K" title="Ask about the meeting (Ctrl+K). Enter asks, Shift+Enter starts a new line." spellcheck="true"></textarea>
+                  <button id="chat-send" type="submit" class="btn btn-default btn-icon chat-send" aria-label="Ask" title="Ask (Enter)">
+                    <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7" /></svg>
+                  </button>
+                </form>
+              </aside>
             </div>
           </div>
         </section>
@@ -339,7 +361,7 @@
                 <div class="model-bar" hidden><div id="ai-bar-fill"></div></div>
               </div>
             </div>
-            <p class="field-desc group-desc">Writes the notes of a meeting from its transcript: summary, decisions, tasks, open questions. They are a draft: check them against the transcript.</p>
+            <p class="field-desc group-desc">Writes the notes of a meeting from its transcript, one section for each topic, and answers your questions about the meeting. The notes are a draft: check them against the transcript.</p>
             <div class="field field-stacked">
               <div class="field-text">
                 <label for="ai-engine">Notes model</label>

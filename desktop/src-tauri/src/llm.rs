@@ -1,5 +1,6 @@
-//! AI notes: a language model writes the meeting notes (summary, decisions, tasks) from your
-//! notes and the transcript.
+//! AI notes: a language model writes the meeting notes (one section for each topic, with its
+//! decisions, facts and tasks) from your notes and the transcript, and answers questions about
+//! the meeting (Ask about this meeting).
 //!
 //! Built in: Qwen3.5 4B (Apache-2.0, 2.7 GB) run by llama.cpp's `llama-server`. Both are
 //! downloaded once and checked with SHA-256 (pinned llama.cpp release builds: Vulkan on Linux and
@@ -501,34 +502,60 @@ pub enum Engine {
 
 /// The instructions. Measured in bench/summary (the language must be named: with "the
 /// language of the meeting", two of three models wrote English notes for a Spanish meeting).
+/// The notes follow the meeting's topics, not fixed sections (bench/summary/results.md, "Notes
+/// by topic"); the rule about "I" keeps the recorder's own tasks with **Me**.
 pub fn system_prompt(lang: &str, names: &[String]) -> String {
-    let glossary = if names.is_empty() {
-        String::new()
-    } else {
-        format!("\n\nNames and terms that may appear (write them exactly like this): {}.", names.join(", "))
-    };
     format!(
         "You write meeting notes from a transcript. \"Me\" is the person who recorded the meeting; \
 \"Them\" is everyone else (several people: tell them apart by the names they use). The notes \
 written by \"Me\" during the meeting show what mattered to them.
 
-Write in {lang}. Use only facts from the transcript; never invent names, dates or numbers. \
-Markdown, with these sections (headings in {lang}):
+Write in {lang}. Use only facts from the transcript; never invent names, dates or numbers.
 
-## Summary
-Three to five sentences.
+Organize the notes by topic, in the order the meeting discussed them. Markdown:
+- One section for each topic: \"## \" and a short title that names it. Each subject gets its own \
+section, also a short one (a hire, the month's figures, a customer).
+- Under the heading, one bullet (\"- \") for each decision, fact, figure or task. Write each bullet \
+as a short statement, without a label in front (\"Decision:\", \"Action:\").
+- A task starts with the name of the person who does it, in bold: \"- **Ana** sends the contract \
+by Friday\". Find that person in the transcript: a line by **Me** that says \"I\" will do something \
+(\"I call them on Friday\") is a task for **Me**, never for the person Me talks to.
+- Details of a bullet go in sub-bullets, indented with two spaces (\"  - \"): the reason, the \
+options that were dropped, the next date. Only one level of sub-bullets.
+- A question left without a decision is a bullet too: say it is open, and the next date if one \
+was set.
+- No summary, no introduction, no closing words. Leave out small talk and greetings.{}",
+        glossary(names)
+    )
+}
 
-## Decisions
-One line per decision.
+fn glossary(names: &[String]) -> String {
+    if names.is_empty() {
+        String::new()
+    } else {
+        format!("\n\nNames and terms that may appear (write them exactly like this): {}.", names.join(", "))
+    }
+}
 
-## Action items
-One line per task: **who** — what — when (if said). A task that \"Me\" takes is for **Me**.
+/// The instructions for questions about one meeting. The meeting goes in this first message, so
+/// the next question reuses what the server read already (llama.cpp keeps the prompt's cache).
+pub fn chat_prompt(meeting: &str, names: &[String]) -> String {
+    format!(
+        "You answer questions about one meeting. Below is the meeting: its title, the notes written \
+by \"Me\" during it, the AI notes (a draft written from the transcript) and the transcript. \"Me\" \
+is the person who recorded the meeting and who asks you now; \"Them\" is everyone else (several \
+people: tell them apart by the names they use).
 
-## Open questions
-Things left without a decision, with the next date if one was set.
+Use only what the meeting says; never invent names, dates or numbers. When the answer is not in \
+the meeting, say so. When the AI notes and the transcript do not agree, the transcript is right. \
+Answer in the language of the question. Be short and direct; use Markdown lists when they help. \
+To point to a moment of the meeting, give its time from the transcript, e.g. (04:19).{}
 
-## Numbers
-Figures that were said (money, dates, metrics), one per line, each with what it is.{glossary}"
+<meeting>
+{}
+</meeting>",
+        glossary(names),
+        meeting.trim()
     )
 }
 
@@ -564,6 +591,57 @@ pub fn write_notes(
     cancel: &AtomicBool,
 ) -> anyhow::Result<String> {
     anyhow::ensure!(input.chars().count() <= MAX_INPUT_CHARS, "this meeting is too long for AI notes for now (over about four hours)");
+    let messages = vec![json!({"role": "system", "content": system_prompt(lang, names)}), json!({"role": "user", "content": input})];
+    // Temperature 0: at 0.2 the 4B model gave the recorder's own task to someone else in half
+    // of the runs (bench/summary/results.md, "Notes by topic").
+    complete(engine, messages, 2000, 0.0, progress, on_text, cancel)
+}
+
+/// The earlier questions and answers that the model reads again (the newest; characters).
+const CHAT_HISTORY_CHARS: usize = 16_000;
+
+/// Answer `question` about the meeting (`meeting`: as Markdown, with its AI notes). `history`:
+/// the earlier (role, text) pairs, oldest first; only the newest that fit are sent.
+pub fn chat(
+    engine: &Engine,
+    meeting: &str,
+    history: &[(String, String)],
+    question: &str,
+    names: &[String],
+    progress: ProgressFn,
+    on_text: &mut dyn FnMut(&str),
+    cancel: &AtomicBool,
+) -> anyhow::Result<String> {
+    anyhow::ensure!(meeting.chars().count() <= MAX_INPUT_CHARS, "this meeting is too long to ask about for now (over about four hours)");
+    let mut kept = Vec::new();
+    let mut size = 0;
+    for (role, text) in history.iter().rev() {
+        size += text.chars().count();
+        if size > CHAT_HISTORY_CHARS {
+            break;
+        }
+        kept.push(json!({"role": role, "content": text}));
+    }
+    // A question first: some chat templates refuse an answer right after the instructions.
+    if kept.last().is_some_and(|m| m["role"] == "assistant") {
+        kept.pop();
+    }
+    let mut messages = vec![json!({"role": "system", "content": chat_prompt(meeting, names)})];
+    messages.extend(kept.into_iter().rev());
+    messages.push(json!({"role": "user", "content": question}));
+    complete(engine, messages, 1500, 0.2, progress, on_text, cancel)
+}
+
+/// One chat completion, streamed. Starts the built-in server when needed.
+fn complete(
+    engine: &Engine,
+    messages: Vec<Value>,
+    max_tokens: u32,
+    temperature: f32,
+    progress: ProgressFn,
+    on_text: &mut dyn FnMut(&str),
+    cancel: &AtomicBool,
+) -> anyhow::Result<String> {
     let mut _in_use = None;
     let (base, key, model, builtin) = match engine {
         Engine::Builtin { gpu, model: id } => {
@@ -579,9 +657,9 @@ pub fn write_notes(
     progress("writing", 0, 0);
     let mut body = json!({
         "model": model,
-        "messages": [{"role": "system", "content": system_prompt(lang, names)}, {"role": "user", "content": input}],
-        "temperature": 0.2,
-        "max_tokens": 2000,
+        "messages": messages,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
         "stream": true,
     });
     if builtin {
@@ -597,7 +675,7 @@ pub fn write_notes(
     let (tx, rx) = mpsc::channel::<Msg>();
     let stop = Arc::new(AtomicBool::new(false));
     let stop2 = stop.clone();
-    std::thread::Builder::new().name("ai-notes-request".into()).spawn(move || {
+    std::thread::Builder::new().name("ai-request".into()).spawn(move || {
         let r = (|| -> anyhow::Result<String> {
             let client = reqwest::blocking::Client::builder().connect_timeout(Duration::from_secs(10)).timeout(None).build()?;
             let mut req = client.post(format!("{base}/chat/completions")).json(&body);
@@ -710,7 +788,7 @@ fn strip_thinking(text: &str) -> String {
     }
 }
 
-/// One AI-notes job at a time in the app.
+/// One AI job (notes or a question) at a time in the app: the built-in server has one slot.
 pub struct Busy(Arc<AtomicBool>);
 
 impl Busy {
@@ -762,9 +840,8 @@ mod tests {
         assert!(read_stream(sse.as_bytes(), &mut |_| {}, &AtomicBool::new(true)).is_err(), "cancel stops it");
     }
 
-    /// A tiny OpenAI-compatible server on a local port: checks the request, streams an answer.
-    #[test]
-    fn own_server_gets_the_instructions_the_key_and_the_model() {
+    /// A tiny OpenAI-compatible server on a local port: streams `answer`, returns the request.
+    fn fake_server(answer: &'static str) -> (String, std::thread::JoinHandle<String>) {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let url = format!("http://127.0.0.1:{}/v1/", listener.local_addr().unwrap().port());
         let got = std::thread::spawn(move || {
@@ -782,18 +859,62 @@ mod tests {
                     }
                 }
             }
-            let body = "data: {\"choices\":[{\"delta\":{\"content\":\"## Summary\\nDone.\"}}]}\n\ndata: [DONE]\n\n";
+            let body = format!("data: {}\n\ndata: [DONE]\n\n", json!({"choices": [{"delta": {"content": answer}}]}));
             write!(s, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
             String::from_utf8_lossy(&buf).to_string()
         });
+        (url, got)
+    }
+
+    #[test]
+    fn own_server_gets_the_instructions_the_key_and_the_model() {
+        let (url, got) = fake_server("## Versión 2.4\n- **Martín** cierra el ticket 412");
         let engine = Engine::Server { url, model: "qwen3.5:4b".into(), key: "sk-test".into() };
         let text = write_notes(&engine, "**Them** (00:01): Hola.", "Spanish", &[], &mut |_, _, _| {}, &mut |_| {}, &AtomicBool::new(false)).unwrap();
-        assert_eq!(text, "## Summary\nDone.");
+        assert_eq!(text, "## Versión 2.4\n- **Martín** cierra el ticket 412");
         let req = got.join().unwrap();
         assert!(req.starts_with("POST /v1/chat/completions "), "{req}");
         assert!(req.to_ascii_lowercase().contains("authorization: bearer sk-test"));
         assert!(req.contains("\"model\":\"qwen3.5:4b\"") && req.contains("Write in Spanish") && req.contains("Hola."));
+        assert!(req.contains("by topic") && !req.contains("## Summary"), "notes by topic, no fixed sections");
+        assert!(req.contains("\"temperature\":0.0"), "notes at temperature 0");
         assert!(!req.contains("chat_template_kwargs"), "only the built-in server gets llama.cpp options");
+    }
+
+    #[test]
+    fn a_question_is_sent_with_the_meeting_and_the_earlier_chat() {
+        let (url, got) = fake_server("El jueves 14.");
+        let engine = Engine::Server { url, model: "m".into(), key: String::new() };
+        let history = vec![
+            ("assistant".to_string(), "an answer whose question was dropped".to_string()),
+            ("user".to_string(), "¿Quién llama a Acme?".to_string()),
+            ("assistant".to_string(), "**Me**, el viernes.".to_string()),
+        ];
+        let mut seen = String::new();
+        let text = chat(&engine, "# Planificación\n\n**Me** (00:36): Hoy vemos la 2.4.", &history, "¿Cuándo sale la 2.4?", &[], &mut |_, _, _| {}, &mut |t| seen = t.to_string(), &AtomicBool::new(false)).unwrap();
+        assert_eq!((text.as_str(), seen.as_str()), ("El jueves 14.", "El jueves 14."));
+        let req = got.join().unwrap();
+        let body: Value = serde_json::from_str(&req[req.find("\r\n\r\n").unwrap() + 4..]).unwrap();
+        let roles: Vec<&str> = body["messages"].as_array().unwrap().iter().map(|m| m["role"].as_str().unwrap()).collect();
+        assert_eq!(roles, ["system", "user", "assistant", "user"], "an answer without its question is not sent");
+        let system = body["messages"][0]["content"].as_str().unwrap();
+        assert!(system.contains("<meeting>\n# Planificación") && system.contains("Answer in the language of the question"));
+        assert_eq!(body["messages"][3]["content"], "¿Cuándo sale la 2.4?");
+        assert_eq!(body["max_tokens"], 1500);
+    }
+
+    #[test]
+    fn only_the_newest_chat_that_fits_is_sent_again() {
+        let (url, got) = fake_server("ok");
+        let engine = Engine::Server { url, model: "m".into(), key: String::new() };
+        let long = "x".repeat(CHAT_HISTORY_CHARS / 2 - 10);
+        let history: Vec<(String, String)> = (0..6).map(|i| (if i % 2 == 0 { "user" } else { "assistant" }.to_string(), format!("{i}{long}"))).collect();
+        chat(&engine, "# M", &history, "q", &[], &mut |_, _, _| {}, &mut |_| {}, &AtomicBool::new(false)).unwrap();
+        let req = got.join().unwrap();
+        let body: Value = serde_json::from_str(&req[req.find("\r\n\r\n").unwrap() + 4..]).unwrap();
+        let firsts: Vec<String> = body["messages"].as_array().unwrap()[1..].iter().map(|m| m["content"].as_str().unwrap().chars().next().unwrap().to_string()).collect();
+        // 4 and 5 fit (5 is an answer, 4 its question); 3 would pass the limit.
+        assert_eq!(firsts, ["4", "5", "q"]);
     }
 
     /// The first use for real: the runner is downloaded from GitHub (36 MB), checked, unpacked,

@@ -170,23 +170,31 @@ Record a call or a talk, as text next to your notes (Linux for now). No bot join
 - The text comes a few seconds after someone speaks: each source is cut at pauses (4–20 s
   pieces) and the speech model chosen in Settings → Models writes them.
 - **Stop** transcribes the last seconds and saves. The list shows all meetings, newest first,
-  grouped by day; open one to read it (AI notes and transcript side by side), change the title,
-  **Copy** or **Export .md** (AI notes, then the transcript).
+  grouped by day; open one to read it (the AI notes, or the transcript in their place with the
+  **AI notes | Transcript** switch; the chat on the right), change the title, **Copy** or
+  **Export .md** (AI notes, then the transcript).
 - **Search** (<kbd>Ctrl</kbd>+<kbd>F</kbd> on the list): the meetings that have every word you
   type, in any order and any case, also inside a word, in the title, the transcript, the AI
   notes or your notes. Each result shows where the words are and the text around them, with
   the words marked. <kbd>Esc</kbd> clears the search.
 - **Delete** a meeting from the list (the bin icon at the end of its row, on hover or with
   <kbd>Tab</kbd>) or from the open meeting. A dialog asks first (Cancel has the focus).
-- **AI notes**: a language model writes the meeting's notes (summary, decisions, tasks with
-  who and when, open questions, numbers) from your notes and the transcript. Built in:
+- **AI notes**: a language model writes the meeting's notes from your notes and the transcript,
+  organized like the meeting: one section for each topic, with a bullet for each decision, fact,
+  figure or task (the person in bold), and sub-bullets for the details. Built in:
   **Qwen3.5 4B** (Apache-2.0), run by llama.cpp on this computer (a 2.7 GB download the first
   time; ~25 s for 8 minutes of meeting on the Radeon 780M, ~1 min on a CPU). Settings → Models →
   AI notes also offers Qwen3.5 2B (1.3 GB, faster, less exact) and Gemma 4 E4B (5 GB). Or your own
   server in Settings → Models → AI notes (Ollama, LM Studio, any OpenAI-compatible API; a warning shows
   when it is not on this computer). They are written by themselves when a meeting stops (the
-  first time, after the model's download), and again with **Write again**; they are a draft
-  next to the transcript, and Copy/Export include them. Measurements: [bench/summary/results.md](bench/summary/results.md).
+  first time, after the model's download), or with **Write notes** when a meeting has none;
+  they are a draft, and Copy/Export include them. Measurements: [bench/summary/results.md](bench/summary/results.md).
+- **Ask about this meeting** (the chat on the right; <kbd>Ctrl</kbd>+<kbd>K</kbd>): the same
+  model answers questions from the transcript and the notes ("who calls Acme?", "write a
+  follow-up email"). Three suggestions are ready: a follow-up email, a TL;DR, your tasks. The
+  questions and answers are saved with the meeting (**Clear** deletes them); search and the
+  export do not include them. <kbd>Enter</kbd> asks, <kbd>Shift</kbd>+<kbd>Enter</kbd> starts a
+  new line, and the button stops an answer.
 - **Calls are detected** (Linux; Settings → General → Offer to record calls, on by default): when Zoom,
   Teams, Slack, Discord, Signal… or a browser on Google Meet, Teams, Jitsi… uses the
   microphone for 2 s (an unknown browser page: 20 s), the strip says "Zoom call detected ·
