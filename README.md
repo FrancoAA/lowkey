@@ -136,6 +136,10 @@ sees it and does not add it again. Classic `hyprland.conf`: `--print-snippet con
   turns the bar off when the plugin is loaded.
 - It needs `wl-copy` and `wtype` (typing on Wayland). The microphone is recorded by the app
   itself, and only while the overlay shows "Listening".
+- A line break in the text is typed as <kbd>Shift</kbd>+<kbd>Enter</kbd>, never as Enter: in
+  Slack, Teams or a web chat, Enter sends the message, and the rest of a long dictation would go
+  into a new one. Shift+Enter starts a new line there and in editors (in some terminals it acts
+  as Enter). A tab is typed as a space (a tab moves the focus). The clipboard keeps the text as it is.
 - **X11, macOS, Windows:** the app registers the key while it runs. Typing uses xdotool (X11)
   or the system API (macOS asks once for Accessibility permission). Not tested on this
   machine.
