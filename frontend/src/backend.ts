@@ -1,7 +1,7 @@
 /**
  * Everything the page needs from the app (Tauri commands and events) goes through here.
  */
-import type { AiNotesEvent, JobEvent, Meeting, MeetingLive, MeetingSummary, Status } from "./api";
+import type { AiNotesEvent, HistoryEntry, JobEvent, Meeting, MeetingLive, MeetingSummary, Status } from "./api";
 
 export interface FileRef {
   name: string;
@@ -23,6 +23,7 @@ export interface Options {
   ai_key?: string;
   ai_auto?: boolean;
   vocabulary?: { term: string; sounds_like: string[] }[];
+  history_keep?: string;
 }
 
 export interface Backend {
@@ -38,6 +39,15 @@ export interface Backend {
   setHotkey(key: string): Promise<Status>;
   /** Move the meeting key now. */
   setMeetingHotkey(key: string): Promise<Status>;
+  /** Move the paste-last key now. */
+  setPasteHotkey(key: string): Promise<Status>;
+  history: {
+    list(query: string): Promise<HistoryEntry[]>;
+    remove(id: string): Promise<boolean>;
+    clear(): Promise<void>;
+    /** A new dictation was kept. */
+    onAdded(cb: (e: HistoryEntry) => void): void;
+  };
   /** Take the key over from the user's Hyprland config block. Returns the backup's path. */
   adoptHotkey(): Promise<{ status: Status; backup: string; start_at_login: boolean }>;
   onStatus(cb: (s: Status) => void): void;
@@ -112,6 +122,15 @@ async function desktopBackend(): Promise<Backend> {
     },
     setHotkey: (key) => invoke<Status>("set_hotkey", { key }),
     setMeetingHotkey: (key) => invoke<Status>("set_meeting_hotkey", { key }),
+    setPasteHotkey: (key) => invoke<Status>("set_paste_hotkey", { key }),
+    history: {
+      list: (query) => invoke<HistoryEntry[]>("history_list", { query }),
+      remove: (id) => invoke<boolean>("history_delete", { id }),
+      clear: () => invoke("history_clear"),
+      onAdded(cb) {
+        void listen<HistoryEntry>("history", (e) => cb(e.payload));
+      },
+    },
     adoptHotkey: () => invoke<{ status: Status; backup: string; start_at_login: boolean }>("adopt_hotkey"),
     onStatus(cb) {
       void listen<Status>("status", (e) => cb(e.payload));

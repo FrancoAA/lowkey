@@ -24,6 +24,8 @@ pub const RUNTIME_DESC: &str = "Dictate (open-whisper, added by the app)";
 pub const CONFIG_DESC: &str = "Dictate (open-whisper)";
 /// The meeting key (one bind: a tap starts or stops the recording). Only the app adds it.
 pub const MEETING_DESC: &str = "Meeting recording (open-whisper, added by the app)";
+/// The key that types the last dictation again.
+pub const PASTE_DESC: &str = "Paste last dictation (open-whisper, added by the app)";
 /// The overlay window's title; the window rule matches it.
 pub const OVERLAY_TITLE: &str = "open-whisper-overlay";
 
@@ -133,6 +135,11 @@ pub fn remove_overlay_rule() {
     let _ = eval("if _G.open_whisper_desktop_rule then _G.open_whisper_desktop_rule:set_enabled(false); _G.open_whisper_desktop_rule = nil end");
 }
 
+/// The paste-last key's command: this executable with --paste-last.
+pub fn paste_command(exe: &Path) -> String {
+    format!("{} --paste-last", shell_quote(&exe.to_string_lossy()))
+}
+
 /// The meeting key's command: this executable with --meeting toggle.
 pub fn meeting_command(exe: &Path) -> String {
     format!("{} --meeting toggle", shell_quote(&exe.to_string_lossy()))
@@ -205,12 +212,12 @@ pub fn removable_app_keys(binds: &[Value]) -> Vec<String> {
     let names = [(64u64, "SUPER"), (4, "CTRL"), (8, "ALT"), (1, "SHIFT")];
     let user: std::collections::HashSet<_> = binds
         .iter()
-        .filter(|b| !matches!(b["description"].as_str().unwrap_or(""), "" | RUNTIME_DESC | MEETING_DESC))
+        .filter(|b| !matches!(b["description"].as_str().unwrap_or(""), "" | RUNTIME_DESC | MEETING_DESC | PASTE_DESC))
         .map(combo)
         .collect();
     let mut out = Vec::new();
     for b in binds {
-        if matches!(b["description"].as_str(), Some(RUNTIME_DESC | MEETING_DESC)) && !user.contains(&combo(b)) && b["submap"].as_str().unwrap_or("").is_empty() {
+        if matches!(b["description"].as_str(), Some(RUNTIME_DESC | MEETING_DESC | PASTE_DESC)) && !user.contains(&combo(b)) && b["submap"].as_str().unwrap_or("").is_empty() {
             let (mask, key) = combo(b);
             let mut parts: Vec<String> = names.iter().filter(|(m, _)| mask & m != 0).map(|(_, n)| n.to_string()).collect();
             parts.push(key);
@@ -443,10 +450,20 @@ impl Hotkey {
 
     /// The meeting key: a tap starts or stops a meeting recording.
     pub fn new_meeting(key: &str, exe: &Path) -> Arc<Self> {
+        Self::new_single(key, meeting_command(exe), MEETING_DESC)
+    }
+
+    /// The paste-last key: a tap types the last dictation again.
+    pub fn new_paste_last(key: &str, exe: &Path) -> Arc<Self> {
+        Self::new_single(key, paste_command(exe), PASTE_DESC)
+    }
+
+    /// A key with one bind, on press.
+    fn new_single(key: &str, command: String, desc: &'static str) -> Arc<Self> {
         Arc::new(Self {
             key: Mutex::new(key.to_string()),
-            command: meeting_command(exe),
-            desc: MEETING_DESC,
+            command,
+            desc,
             dictation: false,
             state: Mutex::default(),
             stop: Arc::default(),
@@ -585,10 +602,10 @@ impl Hotkey {
     }
 
     fn active_text(&self) -> String {
-        if self.dictation {
-            format!("{} — hold to talk, tap to start/stop (also starts open-whisper when it is closed)", self.key())
-        } else {
-            format!("{} — tap to start or stop a meeting recording (also starts open-whisper when it is closed)", self.key())
+        match self.desc {
+            RUNTIME_DESC => format!("{} — hold to talk, tap to start/stop (also starts open-whisper when it is closed)", self.key()),
+            PASTE_DESC => format!("{} — types the last dictation again", self.key()),
+            _ => format!("{} — tap to start or stop a meeting recording (also starts open-whisper when it is closed)", self.key()),
         }
     }
 
@@ -619,7 +636,7 @@ impl Hotkey {
                                 let _op = me.op.lock(); // after a running change/adopt
                                 let was = { let s = me.state.lock(); s.added || s.rule };
                                 if was {
-                                    eprintln!("  Hyprland config reloaded: adding the {} key again", if me.dictation { "dictation" } else { "meeting" });
+                                    eprintln!("  Hyprland config reloaded: adding the {} key again", me.desc);
                                     let _ = me.install_locked(true);
                                 }
                             }

@@ -7,6 +7,7 @@ pub mod config;
 pub mod dictation;
 pub mod engine;
 pub mod formats;
+pub mod history;
 pub mod hyprland;
 pub mod jobs;
 pub mod llm;

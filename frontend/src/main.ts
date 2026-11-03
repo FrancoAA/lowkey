@@ -2,6 +2,7 @@ import "./style.css";
 import type { AiNotesEvent, JobEvent, JobResult, ModelInfo, Segment, Status } from "./api";
 import { getBackend, type Backend, type FileRef } from "./backend";
 import { Dictation, type DictationState } from "./dictation";
+import { initHistory } from "./history";
 import { initMeetings } from "./meetings";
 import { initVocabulary } from "./vocabulary";
 import { Waveform } from "./waveform";
@@ -181,6 +182,7 @@ function renderPreview(): void {
 }
 
 let lastModelState = "";
+let history: { refresh(): void } | null = null;
 let modelErrorShown = false;
 let statusTimer = 0;
 async function refreshStatus(): Promise<void> {
@@ -212,6 +214,11 @@ function applyStatus(next: Status): void {
     if (status.options?.live_preview !== undefined) previewCheck.checked = status.options.live_preview;
     if (status.options?.preview_engine) previewEngine.value = status.options.preview_engine;
     initVocabulary(backend, status.options?.vocabulary ?? [], showError);
+    history = initHistory(backend, status.history_keep ?? "week", {
+      announce,
+      onError: showError,
+      pasteKey: () => (status?.paste_key_source === "app" ? status.paste_key ?? "" : ""),
+    });
     // Parakeet is built on some systems only: offer it where the app has it.
     const pk = status.models.some((m) => m.name === "parakeet-v3");
     previewEngine.querySelector<HTMLOptionElement>('option[value="parakeet"]')!.hidden = !pk;
@@ -434,6 +441,14 @@ const dictationKeyUi: KeyUi = {
   save: (k) => backend.setHotkey(k),
   message: { text: "", kind: "" },
 };
+const pasteKeyUi: KeyUi = {
+  row: $<HTMLDivElement>("paste-key-row"),
+  current: $<HTMLElement>("paste-key-current"),
+  change: $<HTMLButtonElement>("paste-key-change"),
+  note: $<HTMLElement>("paste-key-note"),
+  save: (k) => backend.setPasteHotkey(k),
+  message: { text: "", kind: "" },
+};
 const meetingKeyUi: KeyUi = {
   row: meetingKeyRow,
   current: meetingKeyCurrent,
@@ -446,6 +461,26 @@ const meetingKeyUi: KeyUi = {
 function renderKey(): void {
   renderDictationKey();
   renderMeetingKey();
+  renderPasteKey();
+}
+
+function renderPasteKey(): void {
+  const ui = pasteKeyUi;
+  if (!status || capturing === ui) return;
+  const key = status.paste_key ?? "";
+  const source = status.paste_key_source ?? "none";
+  const inactive = source === "none" && !!key;
+  ui.current.textContent = key ? prettyKey(key) + (inactive ? " (not active)" : "") : "None";
+  ui.change.textContent = key ? "Change" : "Choose a key";
+  ui.change.hidden = source === "manual";
+  const explain =
+    source === "manual"
+      ? "This desktop does not let apps add keys: bind `open-whisper --paste-last` in its keyboard settings."
+      : inactive
+        ? status.paste_key_problem || "This key is not active. Choose another one."
+        : "Types your last dictation again into the app you are in (also when the history is off).";
+  ui.note.textContent = ui.message.text || explain;
+  ui.note.dataset.kind = ui.message.kind || (inactive ? "error" : "");
 }
 
 function renderMeetingKey(): void {
@@ -536,6 +571,7 @@ function startCapture(ui: KeyUi): void {
 
 keyChange.addEventListener("click", () => startCapture(dictationKeyUi));
 meetingKeyChange.addEventListener("click", () => startCapture(meetingKeyUi));
+pasteKeyUi.change.addEventListener("click", () => startCapture(pasteKeyUi));
 
 // Before every other key handler (the Space dictation key, Esc cancel): while choosing a key,
 // keys only choose the key.
@@ -752,7 +788,7 @@ let section = "transcribe";
 
 /** In a settings section (not Transcribe or Meetings): Ctrl+, and Esc go back to Transcribe. */
 function inSettings(): boolean {
-  return section !== "transcribe" && section !== "meetings";
+  return !["transcribe", "meetings", "history"].includes(section);
 }
 
 function showSection(name: string, focus = false): void {
@@ -766,6 +802,7 @@ function showSection(name: string, focus = false): void {
     if (on && focus) t.focus();
   }
   for (const p of document.querySelectorAll<HTMLElement>(".settings-content .section")) p.hidden = p.dataset.section !== name;
+  if (name === "history") history?.refresh();
 }
 showSection("transcribe");
 

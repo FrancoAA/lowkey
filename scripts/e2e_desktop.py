@@ -57,6 +57,7 @@ if PREVIEW == "parakeet" and not BENCH_PARAKEET.is_dir():
     PREVIEW = "whistle"
 RUNTIME_DESC = "Dictate (open-whisper, added by the app)"
 MEETING_DESC = "Meeting recording (open-whisper, added by the app)"
+PASTE_DESC = "Paste last dictation (open-whisper, added by the app)"
 NESTED_CONFIG = """
 hl.monitor({ output = "", mode = "preferred", position = "auto", scale = 1 })
 -- A taken key: Options must refuse it for the dictation key.
@@ -397,12 +398,31 @@ def main() -> None:
         wait(lambda: typed.read_text().strip() == f"{d1['text']} {d2['text']}", 10, "joined text")
         print("  ok  second dictation within 15 s joined with a space")
 
-        # ---------------------------------------------------------------- Options (keyboard)
         def press_key(k: str) -> None:
             for st in ("down", "up"):
                 run(["hyprctl", "dispatch", f'hl.dsp.send_key_state({{ mods = "", key = "{k}", state = "{st}" }})'], env)
                 time.sleep(0.05)
 
+        # ---------------------------------------------------------------- history and paste last
+        hist_file = tmp / "data" / "open-whisper" / "history.json"
+        kept = wait(lambda: hist_file.exists() and len(json.loads(hist_file.read_text())) >= 3 and json.loads(hist_file.read_text()), 10, "history entries")
+        check([e["text"] for e in kept][-2:] == [d1["text"], d2["text"]] and oct(hist_file.stat().st_mode & 0o777) == "0o600",
+              f"the history keeps every dictation ({len(kept)}: window and key), in a private file")
+        pk = [b for b in hj("binds") if b.get("modmask") == 72 and b.get("key", "").upper() == "V"]
+        check(len(pk) == 1 and pk[0]["description"] == PASTE_DESC, "the paste-last key SUPER+ALT+V is added at start (one bind)")
+        before = typed.read_text()
+        run(["hyprctl", "dispatch", f'hl.dsp.exec_cmd("{APP} --paste-last")'], env)
+        wait(lambda: typed.read_text() == before + d2["text"], 10, "the last dictation typed again")
+        check(True, f"the paste-last key types the last dictation again: {d2['text']!r}")
+        focus(main_win["address"])
+        for st in ("down", "up"):  # Ctrl+, -> General, then Up -> History
+            run(["hyprctl", "dispatch", f'hl.dsp.send_key_state({{ mods = "CTRL", key = "comma", state = "{st}" }})'], env)
+            time.sleep(0.05)
+        press_key("Up")
+        time.sleep(0.8)
+        shot("29-desktop-history.png")
+
+        # ---------------------------------------------------------------- Options (keyboard)
         cfg_file = tmp / "config" / "open-whisper" / "config.toml"
         main_win = wait(lambda: win("open-whisper"), 10, "main window")
         focus(main_win["address"])
@@ -536,6 +556,7 @@ def main() -> None:
         press_combo("SUPER CTRL", "M")
         wait(lambda: 'meeting_hotkey = "SUPER + CTRL + M"' in cfg_file.read_text() and binds_on(68, "M") and not binds_on(72, "M"), 15, "meeting key back")
         print("  ok  meeting key back to SUPER+CTRL+M")
+        press_key("Tab")  # past the paste-last key's Change, to the login switch
         # Start at login: the autostart entry appears and goes (in the test's own XDG_CONFIG_HOME).
         autostart = tmp / "config" / "autostart" / "open-whisper.desktop"
         real_autostart = Path.home() / ".config" / "autostart" / "open-whisper.desktop"

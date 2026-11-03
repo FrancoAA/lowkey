@@ -167,6 +167,17 @@ Record a call or a talk, as text next to your notes (Linux for now). No bot join
 
 Details: [docs/meetings.md](docs/meetings.md).
 
+## History
+
+The **History** section keeps every finished dictation (the global key and the window), newest
+first, grouped by day: search, Copy, Delete, Clear all. **Keep**: off, 1 day, 7 days (default),
+30 days or forever; turning it off deletes what was kept. The file is
+`~/.local/share/open-whisper/history.json` (0600). **Paste last dictation**
+(<kbd>Super</kbd>+<kbd>Alt</kbd>+<kbd>V</kbd> on Linux, <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>V</kbd>
+elsewhere; Settings → Shortcuts) types the last dictation again into the app you are in, also
+with the history off; with the app closed it reads the last one from the file. (Ideas from
+[Hex](https://github.com/anomalyco/hex), MIT.)
+
 ## Vocabulary
 
 Settings → General → Vocabulary: names and terms the model gets wrong (people, projects,
@@ -197,6 +208,8 @@ language = "auto"
 idle_unload_minutes = 15        # free the model's memory after 15 idle minutes; 0 = never
 hotkey = "SUPER + CTRL + X"
 meeting_hotkey = "SUPER + CTRL + M"   # start/stop a meeting recording; "" = no key
+paste_hotkey = "SUPER + ALT + V"      # type the last dictation again; "" = no key
+history_keep = "week"           # off | day | week | month | forever
 ai_engine = "builtin"           # AI notes: builtin | server
 ai_builtin_model = "qwen3.5-4b" # qwen3.5-4b (recommended) | qwen3.5-2b | gemma-4-e4b
 ai_url = "http://localhost:11434/v1"   # own server (OpenAI-compatible); ai_model, ai_key too
@@ -207,7 +220,7 @@ preview_engine = "auto"         # auto (Parakeet when on disk, else Whistle) | w
 
 A model that the app no longer has (the faster-whisper `fw:` models) falls back to the
 default. Command line: `--model <id>` (overrides the file), `--language <code>`, `--hotkey "…"`,
-`--no-hotkey` (no global keys), `--background`, `--meeting toggle|start|stop`, `--transcribe <file>` (prints JSON, no window),
+`--no-hotkey` (no global keys), `--background`, `--meeting toggle|start|stop`, `--paste-last`, `--transcribe <file>` (prints JSON, no window),
 `--print-snippet [lua|conf]`, `--remove-hotkey`, `--dictate press|release|toggle|cancel|quit`.
 
 ## Models

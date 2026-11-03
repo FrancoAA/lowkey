@@ -19,6 +19,13 @@ pub const DEFAULT_MEETING_HOTKEY: &str = "SUPER + CTRL + M";
 #[cfg(not(target_os = "linux"))]
 pub const DEFAULT_MEETING_HOTKEY: &str = "CTRL + ALT + M";
 
+/// Types the last dictation again: Super+Alt+V on Linux (Super+Ctrl+V is Omarchy's clipboard
+/// manager), Ctrl+Alt+V elsewhere.
+#[cfg(target_os = "linux")]
+pub const DEFAULT_PASTE_HOTKEY: &str = "SUPER + ALT + V";
+#[cfg(not(target_os = "linux"))]
+pub const DEFAULT_PASTE_HOTKEY: &str = "CTRL + ALT + V";
+
 /// "SUPER + CTRL + X" → "super+control+KeyX" (the global-shortcut plugin's syntax).
 pub fn to_plugin_shortcut(key: &str) -> Option<String> {
     let parts: Vec<String> = key.split('+').map(|p| p.trim().to_uppercase()).filter(|p| !p.is_empty()).collect();
@@ -65,6 +72,10 @@ pub struct Config {
     pub preview_engine: String,
     /// Global key that starts or stops a meeting recording. Empty = no key.
     pub meeting_hotkey: String,
+    /// Global key that types the last dictation again. Empty = no key.
+    pub paste_hotkey: String,
+    /// How long the dictation history keeps entries: off | day | week | month | forever.
+    pub history_keep: String,
     /// AI notes: "builtin" (Qwen3.5 4B, run by the app) or "server" (an OpenAI-compatible API).
     pub ai_engine: String,
     /// The built-in model: an id from llm::MODELS ("qwen3.5-4b", "qwen3.5-2b", "gemma-4-e4b").
@@ -83,6 +94,8 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self { model: String::new(), language: "auto".into(), idle_unload_minutes: 15, hotkey: DEFAULT_HOTKEY.into(), live_preview: true, preview_engine: "auto".into(), meeting_hotkey: DEFAULT_MEETING_HOTKEY.into(),
+            paste_hotkey: DEFAULT_PASTE_HOTKEY.into(),
+            history_keep: crate::history::DEFAULT_KEEP.into(),
             ai_engine: "builtin".into(),
             ai_builtin_model: crate::llm::DEFAULT_MODEL.into(),
             ai_url: "http://localhost:11434/v1".into(),
@@ -169,6 +182,8 @@ pub struct Cli {
     pub no_hotkey: bool,
     pub dictate: Option<String>,
     pub meeting: Option<String>,
+    /// Type the last dictation again (the paste-last key).
+    pub paste_last: bool,
     pub background: bool,
     pub transcribe: Option<PathBuf>,
     pub language: Option<String>,
@@ -189,6 +204,7 @@ Usage: open-whisper [options] [audio or video files…]
   --no-hotkey             do not add the global keys (dictation and meeting)
   --dictate <action>      press | release | toggle | cancel | quit (used by the key bind)
   --meeting <action>      toggle | start | stop a meeting recording (used by the meeting key)
+  --paste-last            type the last dictation again (used by the paste-last key)
   --background            start without opening the window
   --transcribe <file>     transcribe a file without a window and print JSON
   --print-snippet [lua|conf]  print the Hyprland config lines for the key
@@ -208,6 +224,7 @@ impl Cli {
                 "--no-hotkey" => cli.no_hotkey = true,
                 "--dictate" => cli.dictate = it.next(),
                 "--meeting" => cli.meeting = it.next(),
+                "--paste-last" => cli.paste_last = true,
                 "--background" => cli.background = true,
                 "--transcribe" => cli.transcribe = it.next().map(PathBuf::from),
                 "--remove-hotkey" => cli.remove_hotkey = true,
@@ -312,5 +329,6 @@ mod tests {
         assert_eq!(Cli::parse(argv("--print-snippet conf")).print_snippet.as_deref(), Some("conf"));
         assert_eq!(Cli::parse(argv("--print-snippet")).print_snippet.as_deref(), Some("lua"));
         assert_eq!(Cli::parse(argv("--meeting toggle")).meeting.as_deref(), Some("toggle"));
+        assert!(Cli::parse(argv("--paste-last")).paste_last);
     }
 }

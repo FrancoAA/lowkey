@@ -28,6 +28,10 @@
             Meetings
             <span class="nav-live" aria-label="recording" hidden></span>
           </button>
+          <button type="button" role="tab" class="nav-item" data-section="history" aria-controls="section-history">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8" /><path d="M3 3v5h5M12 7v5l3 3" /></svg>
+            History
+          </button>
           <div class="settings-title" role="presentation">Settings</div>
           <button type="button" role="tab" class="nav-item" data-section="general" aria-controls="section-general">
             <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7h-9M14 17H5" /><circle cx="17" cy="17" r="3" /><circle cx="7" cy="7" r="3" /></svg>
@@ -195,6 +199,35 @@
           </div>
         </section>
 
+        <!-- History: finished dictations -->
+        <section id="section-history" class="section section-wide" role="tabpanel" data-section="history" hidden>
+          <header class="section-head section-head-row">
+            <div>
+              <h2>History</h2>
+              <p>Your dictations, newest first. They stay on this computer. <span id="history-paste-hint"></span></p>
+            </div>
+          </header>
+          <div class="history-bar">
+            <input id="history-search" class="input" type="search" placeholder="Search your dictations" aria-label="Search your dictations" spellcheck="false" />
+            <label class="history-keep"><span>Keep</span>
+              <select id="history-keep" class="select">
+                <option value="off">Off</option>
+                <option value="day">1 day</option>
+                <option value="week">7 days</option>
+                <option value="month">30 days</option>
+                <option value="forever">Forever</option>
+              </select>
+            </label>
+            <button id="history-clear" type="button" class="btn btn-ghost btn-sm danger">Clear all</button>
+          </div>
+          <div id="history-list" class="meetings-list" role="list" aria-label="Dictations"></div>
+          <div id="history-empty" class="meetings-empty" hidden>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8" /><path d="M3 3v5h5M12 7v5l3 3" /></svg>
+            <p class="meetings-empty-title" id="history-empty-title">No dictations yet</p>
+            <p class="meetings-empty-text" id="history-empty-text">Dictate with the dictation key, or here in Transcribe: each one shows up here.</p>
+          </div>
+        </section>
+
         <!-- General -->
         <section id="section-general" class="section" role="tabpanel" data-section="general" hidden>
           <header class="section-head">
@@ -342,6 +375,17 @@
             <div class="key-line">
               <kbd id="meeting-key-current" class="key-current">…</kbd>
               <button id="meeting-key-change" type="button" class="btn btn-outline">Change</button>
+            </div>
+          </div>
+          <div class="separator"></div>
+          <div id="paste-key-row" class="field field-stacked key-row">
+            <div class="field-text">
+              <span class="label">Paste last dictation</span>
+              <p id="paste-key-note" class="field-desc key-note" aria-live="polite"></p>
+            </div>
+            <div class="key-line">
+              <kbd id="paste-key-current" class="key-current">…</kbd>
+              <button id="paste-key-change" type="button" class="btn btn-outline">Change</button>
             </div>
           </div>
           <div class="separator"></div>

@@ -53,6 +53,12 @@ pub struct App {
     meeting_hotkey: Mutex<Option<Arc<hyprland::Hotkey>>>,
     meeting_hotkey_text: Mutex<String>,
     meeting_os_key: Mutex<Option<String>>,
+    /// The paste-last key (types the last dictation again).
+    paste_hotkey: Mutex<Option<Arc<hyprland::Hotkey>>>,
+    paste_hotkey_text: Mutex<String>,
+    paste_os_key: Mutex<Option<String>>,
+    /// Finished dictations (Settings → History), and the last one for the paste-last key.
+    history: Arc<crate::history::History>,
     /// Who wants the overlay: [dictation, meeting]. It shows while either does.
     overlay_wants: [AtomicBool; 2],
     /// AI notes: one job at a time, and its cancel flag.
@@ -66,13 +72,26 @@ pub struct App {
 enum KeyKind {
     Dictation,
     Meeting,
+    PasteLast,
 }
 
 impl KeyKind {
-    fn other(self) -> Self {
+    const ALL: [KeyKind; 3] = [KeyKind::Dictation, KeyKind::Meeting, KeyKind::PasteLast];
+
+    fn name(self) -> &'static str {
         match self {
-            KeyKind::Dictation => KeyKind::Meeting,
-            KeyKind::Meeting => KeyKind::Dictation,
+            KeyKind::Dictation => "dictation",
+            KeyKind::Meeting => "meeting",
+            KeyKind::PasteLast => "paste-last",
+        }
+    }
+
+    /// What a desktop bind runs for this key.
+    fn flag(self) -> &'static str {
+        match self {
+            KeyKind::Dictation => "--dictate toggle",
+            KeyKind::Meeting => "--meeting toggle",
+            KeyKind::PasteLast => "--paste-last",
         }
     }
 }
@@ -126,6 +145,7 @@ impl App {
         match kind {
             KeyKind::Dictation => KeySlot { hotkey: &self.hotkey, text: &self.hotkey_text, os_key: &self.os_key },
             KeyKind::Meeting => KeySlot { hotkey: &self.meeting_hotkey, text: &self.meeting_hotkey_text, os_key: &self.meeting_os_key },
+            KeyKind::PasteLast => KeySlot { hotkey: &self.paste_hotkey, text: &self.paste_hotkey_text, os_key: &self.paste_os_key },
         }
     }
 
@@ -142,6 +162,7 @@ impl App {
         match kind {
             KeyKind::Dictation => String::new(),
             KeyKind::Meeting => self.config.lock().meeting_hotkey.clone(),
+            KeyKind::PasteLast => self.config.lock().paste_hotkey.clone(),
         }
     }
 
@@ -158,10 +179,11 @@ impl App {
         if keys_are_manual() {
             return "manual";
         }
-        if let Some(h) = self.meeting_hotkey.lock().as_ref() {
+        let slot = self.slot(kind);
+        if let Some(h) = slot.hotkey.lock().as_ref() {
             return h.source();
         }
-        if self.meeting_os_key.lock().is_some() {
+        if slot.os_key.lock().is_some() {
             return "app";
         }
         "none"
@@ -238,6 +260,10 @@ impl App {
             "meeting_key": self.key_of(KeyKind::Meeting),
             "meeting_key_source": self.source_of(KeyKind::Meeting),
             "meeting_key_problem": if self.source_of(KeyKind::Meeting) == "none" && !self.key_of(KeyKind::Meeting).is_empty() { self.meeting_hotkey_text.lock().clone() } else { String::new() },
+            "paste_key": self.key_of(KeyKind::PasteLast),
+            "paste_key_source": self.source_of(KeyKind::PasteLast),
+            "paste_key_problem": if self.source_of(KeyKind::PasteLast) == "none" && !self.key_of(KeyKind::PasteLast).is_empty() { self.paste_hotkey_text.lock().clone() } else { String::new() },
+            "history_keep": cfg.history_keep,
             "recording": self.meeting.lock().is_some(),
             "ai": {
                 "engine": cfg.ai_engine, "url": cfg.ai_url, "model": cfg.ai_model, "has_key": !cfg.ai_key.is_empty(),
@@ -262,7 +288,7 @@ impl App {
         self.overlay_wants[who].store(on, Ordering::SeqCst);
         let visible = self.overlay_wants.iter().any(|w| w.load(Ordering::SeqCst));
         let rule = |h: &Mutex<Option<Arc<hyprland::Hotkey>>>| h.lock().as_ref().map(|h| h.rule_installed()).unwrap_or(false);
-        let mut usable = rule(&self.hotkey) || rule(&self.meeting_hotkey) || !hyprland::running();
+        let mut usable = rule(&self.hotkey) || rule(&self.meeting_hotkey) || rule(&self.paste_hotkey) || !hyprland::running();
         if visible && !usable {
             // No key added the window rule (no keys at all): add it now, once.
             if !self.overlay_rule.load(Ordering::SeqCst) && hyprland::install_overlay_rule() {
@@ -286,6 +312,11 @@ impl App {
     }
 
     fn handle_cli(self: &Arc<Self>, cli: &Cli, first: bool) {
+        if cli.paste_last {
+            let me = self.clone();
+            std::thread::spawn(move || me.paste_last());
+            return;
+        }
         if let Some(action) = cli.meeting.clone() {
             // Opening the devices or finishing takes a moment: not on this thread.
             let me = self.clone();
@@ -363,6 +394,20 @@ impl App {
         }
     }
 
+    /// The paste-last key: type the last dictation again into the app that has the focus.
+    fn paste_last(&self) {
+        match self.history.last() {
+            Some(text) => {
+                let delivered = output::deliver(&text, "");
+                emit_logged(&self.handle, "paste-last", json!({"text": text, "delivered": delivered}));
+            }
+            None => {
+                emit_logged(&self.handle, "paste-last", json!({"text": null, "delivered": []}));
+                output::notify("No dictation to paste yet.");
+            }
+        }
+    }
+
     /// After `secs`, the strip goes unless a meeting records again. The check and the change
     /// happen under the meeting's lock, so a meeting that starts meanwhile keeps its strip.
     fn hide_meeting_strip_later(self: &Arc<Self>, secs: u64) {
@@ -393,6 +438,9 @@ impl App {
             h.uninstall();
         }
         if let Some(h) = self.meeting_hotkey.lock().take() {
+            h.uninstall();
+        }
+        if let Some(h) = self.paste_hotkey.lock().take() {
             h.uninstall();
         }
         if self.overlay_rule.load(Ordering::SeqCst) {
@@ -574,6 +622,7 @@ struct OptionsIn {
     ai_key: Option<String>,
     ai_auto: Option<bool>,
     vocabulary: Option<Vec<crate::vocabulary::Term>>,
+    history_keep: Option<String>,
 }
 
 #[tauri::command]
@@ -635,6 +684,13 @@ fn set_options(app: State<'_, AppRef>, options: OptionsIn) -> Result<Value, Stri
         }
         if let Some(on) = options.ai_auto {
             cfg.ai_auto = on;
+        }
+        if let Some(k) = options.history_keep {
+            if !crate::history::KEEP_CHOICES.contains(&k.as_str()) {
+                return Err(format!("Unknown history setting {k:?}"));
+            }
+            app.history.set_keep(&k);
+            cfg.history_keep = k;
         }
         if let Some(v) = options.vocabulary {
             cfg.vocabulary = crate::vocabulary::normalize(&v);
@@ -1036,6 +1092,31 @@ fn set_hotkey(app: State<'_, AppRef>, key: String) -> Result<Value, String> {
     r
 }
 
+/// Settings → Shortcuts → Paste last dictation → Change.
+#[tauri::command]
+fn set_paste_hotkey(app: State<'_, AppRef>, key: String) -> Result<Value, String> {
+    let app = app.inner().clone();
+    let r = set_key_inner(&app, &key, KeyKind::PasteLast);
+    emit_logged(&app.handle, "paste-key-change", json!({"key": key, "result": r.as_ref().map(|_| "ok").map_err(|e| e.clone())}));
+    r
+}
+
+// ------------------------------------------------------------------ history
+#[tauri::command]
+fn history_list(app: State<'_, AppRef>, query: String) -> Vec<crate::history::Entry> {
+    app.history.list(&query)
+}
+
+#[tauri::command]
+fn history_delete(app: State<'_, AppRef>, id: String) -> bool {
+    app.history.delete(&id)
+}
+
+#[tauri::command]
+fn history_clear(app: State<'_, AppRef>) {
+    app.history.clear();
+}
+
 /// Options → Keys → Meeting key → Change.
 #[tauri::command]
 fn set_meeting_hotkey(app: State<'_, AppRef>, key: String) -> Result<Value, String> {
@@ -1050,13 +1131,11 @@ fn set_key_inner(app: &AppRef, key: &str, kind: KeyKind) -> Result<Value, String
     let slot = app.slot(kind);
     let new = hyprland::normalize_key(key)
         .ok_or_else(|| format!("{key} cannot be used: hold Super, Ctrl or Alt and press a letter, a digit, F1-F24 or Space."))?;
-    if app.key_of(kind.other()) == new {
-        let other = if kind == KeyKind::Meeting { "dictation" } else { "meeting" };
-        return Err(format!("{new} is already the {other} key."));
+    if let Some(other) = KeyKind::ALL.into_iter().find(|&k| k != kind && app.key_of(k) == new) {
+        return Err(format!("{new} is already the {} key.", other.name()));
     }
     let text = if keys_are_manual() {
-        let flag = if kind == KeyKind::Meeting { "--meeting toggle" } else { "--dictate toggle" };
-        return Err(format!("This desktop does not let apps add keys: bind `open-whisper {flag}` in its keyboard settings."));
+        return Err(format!("This desktop does not let apps add keys: bind `open-whisper {}` in its keyboard settings.", kind.flag()));
     } else if hyprland::running() {
         let existing = slot.hotkey.lock().clone();
         match existing {
@@ -1064,7 +1143,11 @@ fn set_key_inner(app: &AppRef, key: &str, kind: KeyKind) -> Result<Value, String
             None => {
                 // Started without a key: install it (the bind and the overlay's window rule).
                 let exe = std::env::current_exe().unwrap_or_default();
-                let hk = if kind == KeyKind::Meeting { hyprland::Hotkey::new_meeting(&new, &exe) } else { hyprland::Hotkey::new(&new, &exe) };
+                let hk = match kind {
+                    KeyKind::Dictation => hyprland::Hotkey::new(&new, &exe),
+                    KeyKind::Meeting => hyprland::Hotkey::new_meeting(&new, &exe),
+                    KeyKind::PasteLast => hyprland::Hotkey::new_paste_last(&new, &exe),
+                };
                 let t = hk.install(false).map_err(|e| format!("{e:#}"))?;
                 if hk.source() != "app" {
                     return Err(t);
@@ -1099,16 +1182,19 @@ fn set_key_inner(app: &AppRef, key: &str, kind: KeyKind) -> Result<Value, String
         match kind {
             KeyKind::Dictation => cfg.hotkey = new,
             KeyKind::Meeting => cfg.meeting_hotkey = new,
+            KeyKind::PasteLast => cfg.paste_hotkey = new,
         }
         cfg.save().map_err(|e| e.to_string())?;
     }
     *slot.text.lock() = text;
-    // The dictation key moved: a meeting key that could not be added (it was the same
-    // combination) may work now.
-    if kind == KeyKind::Dictation && app.source_of(KeyKind::Meeting) == "none" {
-        let mk = app.config.lock().meeting_hotkey.clone();
-        if !mk.is_empty() && mk != app.hotkey_key() {
-            let _ = set_key_inner(&app, &mk, KeyKind::Meeting);
+    // A key moved: another key that could not be added (it was the same combination) may
+    // work now.
+    for other in [KeyKind::Meeting, KeyKind::PasteLast] {
+        if other != kind && app.source_of(other) == "none" {
+            let k = app.key_of(other);
+            if !k.is_empty() && KeyKind::ALL.into_iter().all(|x| x == other || app.key_of(x) != k) {
+                let _ = set_key_inner(&app, &k, other);
+            }
         }
     }
     app.emit_status();
@@ -1170,6 +1256,12 @@ fn register_global_shortcut(app: &AppRef, key: &str, kind: KeyKind) -> String {
             }
             return;
         }
+        if kind == KeyKind::PasteLast {
+            if ev.state == ShortcutState::Pressed {
+                std::thread::spawn(move || app.paste_last());
+            }
+            return;
+        }
         let Some(d) = app.dictation.lock().clone() else { return };
         match ev.state {
             ShortcutState::Pressed => {
@@ -1183,10 +1275,10 @@ fn register_global_shortcut(app: &AppRef, key: &str, kind: KeyKind) -> String {
     match result {
         Ok(()) => {
             *app.slot(kind).os_key.lock() = Some(key.to_string());
-            if kind == KeyKind::Meeting {
-                format!("{key} — tap to start or stop a meeting recording (while open-whisper runs)")
-            } else {
-                format!("{key} — hold to talk, tap to start/stop (while open-whisper runs)")
+            match kind {
+                KeyKind::Meeting => format!("{key} — tap to start or stop a meeting recording (while open-whisper runs)"),
+                KeyKind::PasteLast => format!("{key} — types the last dictation again (while open-whisper runs)"),
+                KeyKind::Dictation => format!("{key} — hold to talk, tap to start/stop (while open-whisper runs)"),
             }
         }
         Err(e) => format!("not added: {key} ({e}); it may be taken by another app. Choose another key in Options."),
@@ -1277,6 +1369,10 @@ pub fn run() {
             set_options,
             set_hotkey,
             set_meeting_hotkey,
+            set_paste_hotkey,
+            history_list,
+            history_delete,
+            history_clear,
             adopt_hotkey,
             dictation_state,
             overlay_ready,
@@ -1298,13 +1394,36 @@ pub fn run() {
             if matches!(cli.dictate.as_deref(), Some("release" | "cancel" | "quit")) || cli.meeting.as_deref() == Some("stop") {
                 std::process::exit(0);
             }
+            if cli.paste_last {
+                // The app was not running: type the last dictation from the history file, and end.
+                let keep = Config::load().history_keep;
+                match crate::history::History::open(crate::history::path(), &keep).last() {
+                    Some(text) => {
+                        output::deliver(&text, "");
+                    }
+                    None => output::notify("No dictation to paste yet."),
+                }
+                std::process::exit(0);
+            }
             let handle = tauri_app.handle().clone();
             let config = Config::load();
             let engines = Engines::new(config.idle_unload_minutes);
             engines.set_vocabulary(&config.vocabulary);
             let h_jobs = handle.clone();
+            // Every finished dictation goes to the history (the global key's jobs are
+            // "dictation", the window's "Dictation"); files do not.
+            let history = Arc::new(crate::history::History::open(crate::history::path(), &config.history_keep));
+            let h_hist = history.clone();
             let jobs = Jobs::new(engines.clone(), Arc::new(move |s: &JobSnapshot| {
                 emit_logged(&h_jobs, "job", s.clone());
+                if s.state == "done" && (s.filename == "dictation" || s.filename == "Dictation") {
+                    if let Some(r) = &s.result {
+                        let source = if s.filename == "dictation" { "key" } else { "window" };
+                        if let Some(e) = h_hist.add(&r.text, source, &s.model, r.duration) {
+                            emit_logged(&h_jobs, "history", e);
+                        }
+                    }
+                }
             }));
             let app = Arc::new(App {
                 handle: handle.clone(),
@@ -1337,6 +1456,10 @@ pub fn run() {
                 meeting_hotkey: Mutex::new(None),
                 meeting_hotkey_text: Mutex::new(String::new()),
                 meeting_os_key: Mutex::new(None),
+                paste_hotkey: Mutex::new(None),
+                paste_hotkey_text: Mutex::new(String::new()),
+                paste_os_key: Mutex::new(None),
+                history: history.clone(),
                 overlay_wants: [AtomicBool::new(false), AtomicBool::new(false)],
                 ai_busy: Arc::new(AtomicBool::new(false)),
                 ai_cancel: Arc::new(AtomicBool::new(false)),
@@ -1477,6 +1600,29 @@ pub fn run() {
             };
             println!("  Meeting key: {mtext}");
             *app.meeting_hotkey_text.lock() = mtext;
+
+            // The paste-last key: one bind, like the meeting key.
+            let pkey = config.paste_hotkey.clone();
+            let ptext = if cli.no_hotkey || pkey.trim().is_empty() {
+                "not added".to_string()
+            } else if wayland_other {
+                "this Wayland desktop does not let apps add keys: bind `open-whisper --paste-last` in your desktop's keyboard settings".to_string()
+            } else if pkey == app.hotkey_key() || pkey == app.key_of(KeyKind::Meeting) {
+                format!("not added: {pkey} is already another open-whisper key. Choose another key in Settings → Shortcuts.")
+            } else if !hyprland::running() {
+                register_global_shortcut(&app, &pkey, KeyKind::PasteLast)
+            } else {
+                let hk = hyprland::Hotkey::new_paste_last(&pkey, &std::env::current_exe().unwrap_or_default());
+                let t = match hk.install(cli.paste_last) {
+                    Ok(t) => t,
+                    Err(e) => format!("could not add it ({e})"),
+                };
+                hk.watch_reloads();
+                *app.paste_hotkey.lock() = Some(hk);
+                t
+            };
+            println!("  Paste-last key: {ptext}");
+            *app.paste_hotkey_text.lock() = ptext;
 
             // Load the model now, so the first transcription is quick.
             let (e2, model) = (engines.clone(), app.current_model());

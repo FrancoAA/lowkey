@@ -33,6 +33,12 @@ export interface Status {
   meeting_key?: string;
   meeting_key_source?: "app" | "manual" | "none";
   meeting_key_problem?: string;
+  /** The paste-last key, like the meeting key. */
+  paste_key?: string;
+  paste_key_source?: "app" | "manual" | "none";
+  paste_key_problem?: string;
+  /** off | day | week | month | forever */
+  history_keep?: string;
   /** A meeting is being recorded. */
   recording?: boolean;
   /** AI notes settings (the API key itself never comes to the page). */
@@ -153,4 +159,16 @@ export interface MeetingSummary {
 export interface VocabTerm {
   term: string;
   sounds_like: string[];
+}
+
+/** A finished dictation (desktop/src-tauri/src/history.rs). */
+export interface HistoryEntry {
+  id: string;
+  /** Unix seconds. */
+  at: number;
+  text: string;
+  /** "key" (the global dictation key) or "window". */
+  source: string;
+  model: string;
+  seconds: number;
 }
