@@ -1,4 +1,4 @@
-//! open-whisper desktop app (Tauri v2).
+//! Lowkey desktop app (Tauri v2).
 
 pub mod app;
 pub mod audio;
@@ -18,6 +18,7 @@ pub mod microphones;
 pub mod models;
 pub mod output;
 pub mod preview;
+pub mod rename;
 pub mod system_audio;
 pub mod vocabulary;
 pub mod whisper_tokens;

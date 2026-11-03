@@ -664,7 +664,7 @@ impl Io for TauriIo {
 }
 
 pub fn runtime_dir() -> PathBuf {
-    std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).unwrap_or_else(std::env::temp_dir).join("open-whisper")
+    std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).unwrap_or_else(std::env::temp_dir).join(crate::rename::NAME)
 }
 
 /// Private (0700) runtime dir; refuses one that another user owns or a symlink.
@@ -1413,7 +1413,7 @@ fn set_key_inner(app: &AppRef, key: &str, kind: KeyKind) -> Result<Value, String
         return Err(format!("{new} is already the {} key.", other.name()));
     }
     let text = if keys_are_manual() {
-        return Err(format!("This desktop does not let apps add keys: bind `open-whisper {}` in its keyboard settings.", kind.flag()));
+        return Err(format!("This desktop does not let apps add keys: bind `lowkey {}` in its keyboard settings.", kind.flag()));
     } else if hyprland::running() {
         let existing = slot.hotkey.lock().clone();
         match existing {
@@ -1479,7 +1479,7 @@ fn set_key_inner(app: &AppRef, key: &str, kind: KeyKind) -> Result<Value, String
     Ok(app.status())
 }
 
-/// Options → "Let the app manage it": the key comes from the open-whisper block in the user's
+/// Options → "Let the app manage it": the key comes from the Lowkey block in the user's
 /// Hyprland config. Remove that block (backup next to it), reload, and add the key from the app.
 #[tauri::command]
 async fn adopt_hotkey(app: State<'_, AppRef>) -> Result<Value, String> {
@@ -1554,9 +1554,9 @@ fn register_global_shortcut(app: &AppRef, key: &str, kind: KeyKind) -> String {
         Ok(()) => {
             *app.slot(kind).os_key.lock() = Some(key.to_string());
             match kind {
-                KeyKind::Meeting => format!("{key} — tap to start or stop a meeting recording (while open-whisper runs)"),
-                KeyKind::PasteLast => format!("{key} — types the last dictation again (while open-whisper runs)"),
-                KeyKind::Dictation => format!("{key} — hold to talk, tap to start/stop (while open-whisper runs)"),
+                KeyKind::Meeting => format!("{key} — tap to start or stop a meeting recording (while Lowkey runs)"),
+                KeyKind::PasteLast => format!("{key} — types the last dictation again (while Lowkey runs)"),
+                KeyKind::Dictation => format!("{key} — hold to talk, tap to start/stop (while Lowkey runs)"),
             }
         }
         Err(e) => format!("not added: {key} ({e}); it may be taken by another app. Choose another key in Options."),
@@ -1566,13 +1566,13 @@ fn register_global_shortcut(app: &AppRef, key: &str, kind: KeyKind) -> String {
 // ------------------------------------------------------------------ entry
 /// Headless commands that need no window. Returns true when handled.
 pub fn headless(cli: &Cli) -> bool {
-    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("open-whisper"));
+    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("lowkey"));
     if cli.help {
         print!("{HELP}");
         return true;
     }
     if cli.version {
-        println!("open-whisper {}", env!("CARGO_PKG_VERSION"));
+        println!("Lowkey {}", env!("CARGO_PKG_VERSION"));
         return true;
     }
     if let Some(kind) = &cli.print_snippet {
@@ -1586,6 +1586,7 @@ pub fn headless(cli: &Cli) -> bool {
         return true;
     }
     if let Some(path) = &cli.transcribe {
+        crate::rename::migrate();
         let cfg = Config::load();
         let engines = Engines::new(cfg.idle_unload_minutes);
         engines.set_vocabulary(&cfg.vocabulary);
@@ -1623,6 +1624,8 @@ pub fn run() {
     if headless(&cli) {
         return;
     }
+    // Before any path is read: the folders from the old name move to the new one.
+    crate::rename::migrate();
     let first_cli = cli.clone();
 
     let builder = tauri::Builder::default()
@@ -1779,7 +1782,7 @@ pub fn run() {
             // Windows: the main window, and the dictation overlay (hidden; never focused).
             let background = cli.background || cli.dictate.is_some() || cli.meeting.is_some();
             let main = WebviewWindowBuilder::new(tauri_app, "main", WebviewUrl::App("index.html".into()))
-                .title("open-whisper")
+                .title("Lowkey")
                 .inner_size(860.0, 820.0)
                 .min_inner_size(420.0, 520.0)
                 .visible(!background)
@@ -1816,13 +1819,13 @@ pub fn run() {
                 });
             }
 
-            let open = MenuItem::with_id(tauri_app, "open", "Open open-whisper", true, None::<&str>)?;
+            let open = MenuItem::with_id(tauri_app, "open", "Open Lowkey", true, None::<&str>)?;
             let quit = MenuItem::with_id(tauri_app, "quit", "Quit", true, None::<&str>)?;
             let menu = Menu::with_items(tauri_app, &[&open, &quit])?;
             let tray_app = app.clone();
             TrayIconBuilder::with_id("main")
                 .icon(tauri_app.default_window_icon().cloned().expect("app icon"))
-                .tooltip("open-whisper")
+                .tooltip("Lowkey")
                 .menu(&menu)
                 .on_menu_event(move |h, ev| match ev.id().as_ref() {
                     "open" => tray_app.show_main(),
@@ -1847,7 +1850,7 @@ pub fn run() {
                 "not added (--no-hotkey)".to_string()
             } else if wayland_other {
                 // GNOME/KDE/sway: apps cannot grab keys on Wayland; the desktop binds them.
-                "this Wayland desktop does not let apps add keys: bind `open-whisper --dictate press` (and `--dictate release` on key release, or `--dictate toggle`) in your desktop's keyboard settings".to_string()
+                "this Wayland desktop does not let apps add keys: bind `lowkey --dictate press` (and `--dictate release` on key release, or `--dictate toggle`) in your desktop's keyboard settings".to_string()
             } else if !hyprland::running() {
                 register_global_shortcut(&app, &key, KeyKind::Dictation)
             } else if cli.no_hotkey || key.trim().is_empty() {
@@ -1857,7 +1860,7 @@ pub fn run() {
                     t += &format!("; removed {}", removed.join(", "));
                 }
                 if hyprland::key_owners(crate::config::DEFAULT_HOTKEY).iter().any(|o| o == hyprland::CONFIG_DESC) {
-                    t += ". The key in your Hyprland config (open-whisper.dictation block) still works; delete that block to turn it off";
+                    t += ". The key in your Hyprland config (Lowkey block) still works; delete that block to turn it off";
                 }
                 t
             } else {
@@ -1865,13 +1868,13 @@ pub fn run() {
                 let hk = hyprland::Hotkey::new(&key, &exe);
                 let t = match hk.install(cli.dictate.is_some()) {
                     Ok(t) => t,
-                    Err(e) => format!("could not add it ({e}); see `open-whisper --print-snippet`"),
+                    Err(e) => format!("could not add it ({e}); see `lowkey --print-snippet`"),
                 };
                 hk.watch_reloads();
                 *app.hotkey.lock() = Some(hk);
                 t
             };
-            println!("  open-whisper {}: {}, model {}", env!("CARGO_PKG_VERSION"), app.engines.hw.gpu.clone().map(|g| format!("GPU {g}")).unwrap_or("CPU".into()), app.current_model());
+            println!("  Lowkey {}: {}, model {}", env!("CARGO_PKG_VERSION"), app.engines.hw.gpu.clone().map(|g| format!("GPU {g}")).unwrap_or("CPU".into()), app.current_model());
             println!("  Global dictation key: {text}");
             *app.hotkey_text.lock() = text;
 
@@ -1880,7 +1883,7 @@ pub fn run() {
             let mtext = if cli.no_hotkey || mkey.trim().is_empty() {
                 "not added".to_string()
             } else if wayland_other {
-                "this Wayland desktop does not let apps add keys: bind `open-whisper --meeting toggle` in your desktop's keyboard settings".to_string()
+                "this Wayland desktop does not let apps add keys: bind `lowkey --meeting toggle` in your desktop's keyboard settings".to_string()
             } else if same_key(&mkey, &app.hotkey_key()) {
                 format!("not added: {mkey} is the dictation key. Choose another key in Options.")
             } else if !hyprland::running() {
@@ -1903,9 +1906,9 @@ pub fn run() {
             let ptext = if cli.no_hotkey || pkey.trim().is_empty() {
                 "not added".to_string()
             } else if wayland_other {
-                "this Wayland desktop does not let apps add keys: bind `open-whisper --paste-last` in your desktop's keyboard settings".to_string()
+                "this Wayland desktop does not let apps add keys: bind `lowkey --paste-last` in your desktop's keyboard settings".to_string()
             } else if same_key(&pkey, &app.hotkey_key()) || same_key(&pkey, &app.key_of(KeyKind::Meeting)) {
-                format!("not added: {pkey} is already another open-whisper key. Choose another key in Settings → Shortcuts.")
+                format!("not added: {pkey} is already another Lowkey key. Choose another key in Settings → Shortcuts.")
             } else if !hyprland::running() {
                 register_global_shortcut(&app, &pkey, KeyKind::PasteLast)
             } else {
@@ -1943,7 +1946,7 @@ pub fn run() {
     #[cfg(not(target_os = "linux"))]
     let builder = builder.plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, Some(vec!["--background"])));
     let context = tauri::generate_context!();
-    let app = builder.build(context).expect("open-whisper failed to start");
+    let app = builder.build(context).expect("Lowkey failed to start");
     app.run(|handle, event| {
         if let RunEvent::Exit = event {
             if let Some(a) = handle.try_state::<AppRef>() {

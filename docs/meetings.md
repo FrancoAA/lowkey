@@ -12,11 +12,11 @@ macOS and Windows, a prompt when a call starts, and questions over past meetings
 ## The meeting key and the strip
 
 - Settings → Shortcuts → **Meeting key**: Super+Ctrl+M on Linux, Ctrl+Alt+M on macOS and Windows
-  (`meeting_hotkey` in config.toml). It runs `open-whisper --meeting toggle`: a tap starts a
+  (`meeting_hotkey` in config.toml). It runs `lowkey --meeting toggle`: a tap starts a
   meeting, the next tap stops and saves it. A tap while it starts is remembered (it stops
   right after the start). On Hyprland a closed app starts in the background for it; on X11,
   macOS and Windows the key lives in the running app.
-- Hyprland: one bind (no release bind), described "Meeting recording (open-whisper, added by
+- Hyprland: one bind (no release bind), described "Meeting recording (Lowkey, added by
   the app)". The dictation key and the meeting key never share a combination: each counts the
   other's bind as someone else's, and the app refuses the dictation key as the meeting key.
   X11, macOS, Windows: the global-shortcut plugin, as for dictation.
@@ -85,7 +85,7 @@ others spoke stay. Chinese and Japanese count each character as a word.
   you stop typing), with its length so far. One write at a time; each file is synced before it
   replaces the old one. A crash keeps what was transcribed; the list then says "interrupted".
   When a save of your notes fails, the page keeps them and tries again at the next change.
-- Files: `~/.local/share/open-whisper/meetings/m-<unix ms>.json` (the folder is 0700). The id
+- Files: `~/.local/share/lowkey/meetings/m-<unix ms>.json` (the folder is 0700). The id
   is `m-` plus digits only, so a command never names a path outside the folder.
 - Quitting the app during a recording keeps what is transcribed and does not wait for the rest.
 - **Export .md** and **Copy**: the title, the date in your time zone, the length, your notes,
@@ -113,7 +113,7 @@ models wrote English notes for a Spanish meeting (bench/summary/results.md).
 - **Built in**: Qwen3.5 4B Q4_K_M (Apache-2.0, 2.74 GB, SHA-256 pinned, HF revision e87f176) and
   llama.cpp's `llama-server` from the pinned release b12047 (Vulkan on Linux and Windows, Metal
   on macOS; SHA-256 as GitHub publishes it). Both download on the first **Write notes** with
-  progress in the meeting, into `~/.local/share/open-whisper/models/llm`. The server runs in its
+  progress in the meeting, into `~/.local/share/lowkey/models/llm`. The server runs in its
   own process on 127.0.0.1 with a random 192-bit API key from the system's random generator,
   given through its environment (`LLAMA_API_KEY`; the command line is readable by other users,
   the environment is not), so no web page and no other user can use it. 64K context (about four

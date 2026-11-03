@@ -1,5 +1,7 @@
 # Speech-to-text benchmark on this machine
 
+> The app is now called **Lowkey** (it was open-whisper when this was written).
+
 > **History.** This benchmark chose the default of the first version (a Python web app with
 > faster-whisper, CPU only). The app is now a Rust desktop app with whisper.cpp only; its
 > default (`large-v3-turbo-q5_0`, Vulkan GPU) and the whisper.cpp numbers are in the

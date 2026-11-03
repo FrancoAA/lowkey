@@ -4,7 +4,7 @@
 //! `hl.window_rule` + `set_enabled`, `hyprctl reload`. (`Keybind:remove()` aborts Hyprland
 //! 0.56.2.) Binds are added to the running Hyprland and re-added after a config reload. One
 //! config edit exists, and only on the user's click in Options: removing the marked
-//! `open-whisper.dictation` block (with a backup) so the app can manage the key.
+//! `lowkey.dictation` block (or the older `open-whisper.dictation` one), with a backup, so the app can manage the key.
 
 #[cfg(unix)]
 use std::io::{BufRead, BufReader};
@@ -19,15 +19,36 @@ use std::time::Duration;
 use parking_lot::Mutex;
 use serde_json::Value;
 
-/// Binds that the app adds say so; the permanent config snippet says just "Dictate (open-whisper)".
-pub const RUNTIME_DESC: &str = "Dictate (open-whisper, added by the app)";
-pub const CONFIG_DESC: &str = "Dictate (open-whisper)";
+/// Binds that the app adds say so; the permanent config snippet says just "Dictate (Lowkey)".
+pub const RUNTIME_DESC: &str = "Dictate (Lowkey, added by the app)";
+pub const CONFIG_DESC: &str = "Dictate (Lowkey)";
 /// The meeting key (one bind: a tap starts or stops the recording). Only the app adds it.
-pub const MEETING_DESC: &str = "Meeting recording (open-whisper, added by the app)";
+pub const MEETING_DESC: &str = "Meeting recording (Lowkey, added by the app)";
 /// The key that types the last dictation again.
-pub const PASTE_DESC: &str = "Paste last dictation (open-whisper, added by the app)";
+pub const PASTE_DESC: &str = "Paste last dictation (Lowkey, added by the app)";
 /// The overlay window's title; the window rule matches it.
-pub const OVERLAY_TITLE: &str = "open-whisper-overlay";
+pub const OVERLAY_TITLE: &str = "lowkey-overlay";
+
+/// A bind's description, with the app's old name ("open-whisper") read as the new one: binds
+/// and config blocks from before the rename are still the app's own.
+pub fn description(b: &Value) -> String {
+    current_desc(b["description"].as_str().unwrap_or(""))
+}
+
+fn current_desc(d: &str) -> String {
+    if let Some(head) = d.strip_suffix("(open-whisper, added by the app)") {
+        format!("{head}(Lowkey, added by the app)")
+    } else if let Some(head) = d.strip_suffix("(open-whisper)") {
+        format!("{head}(Lowkey)")
+    } else {
+        d.to_string()
+    }
+}
+
+/// A bind from before the rename (its command runs the old program).
+fn old_name(b: &Value) -> bool {
+    b["description"].as_str().is_some_and(|d| d.contains("(open-whisper"))
+}
 
 pub fn running() -> bool {
     std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_some() && crate::audio::which("hyprctl")
@@ -102,8 +123,8 @@ fn shell_quote(s: &str) -> String {
 /// `rounding = 0` and `no_blur`: the window is transparent, the page draws the rounded strip.
 pub fn overlay_rule_lua() -> String {
     format!(
-        "if _G.open_whisper_desktop_rule then _G.open_whisper_desktop_rule:set_enabled(false) end\n\
-         _G.open_whisper_desktop_rule = hl.window_rule({{ name = \"open-whisper-desktop-overlay\", \
+        "if _G.lowkey_desktop_rule then _G.lowkey_desktop_rule:set_enabled(false) end\n\
+         _G.lowkey_desktop_rule = hl.window_rule({{ name = \"lowkey-desktop-overlay\", \
          match = {{ title = {} }}, float = true, pin = true, no_initial_focus = true, no_focus = true, \
          size = {{ 380, 76 }}, move = {{ \"(monitor_w/2-190)\", \"(monitor_h-150)\" }}, \
          border_size = 0, rounding = 0, no_shadow = true, no_blur = true, decorate = false, no_anim = true }})",
@@ -132,7 +153,7 @@ pub fn install_overlay_rule() -> bool {
 }
 
 pub fn remove_overlay_rule() {
-    let _ = eval("if _G.open_whisper_desktop_rule then _G.open_whisper_desktop_rule:set_enabled(false); _G.open_whisper_desktop_rule = nil end");
+    let _ = eval("if _G.lowkey_desktop_rule then _G.lowkey_desktop_rule:set_enabled(false); _G.lowkey_desktop_rule = nil end");
 }
 
 /// The paste-last key's command: this executable with --paste-last.
@@ -153,7 +174,7 @@ pub fn dictate_command(exe: &Path) -> String {
 /// Lines for ~/.config/hypr/bindings.lua (permanent key).
 pub fn permanent_snippet(key: &str, exe: &Path) -> String {
     format!(
-        "-- open-whisper: global dictation (hold = talk, tap = start/stop)\n{}\n{}",
+        "-- Lowkey: global dictation (hold = talk, tap = start/stop)\n{}\n{}",
         bind_lua(key, &dictate_command(exe), CONFIG_DESC),
         overlay_rule_lua()
     )
@@ -164,7 +185,7 @@ pub fn conf_snippet(key: &str, exe: &Path) -> String {
     let (mods, k) = key.rsplit_once('+').map(|(m, k)| (m, k.trim())).unwrap_or(("", key.trim()));
     let mods = mods.split('+').map(str::trim).filter(|m| !m.is_empty()).collect::<Vec<_>>().join(" ");
     let cmd = dictate_command(exe);
-    format!("# open-whisper: global dictation (hold = talk, tap = start/stop)\nbind = {mods}, {k}, exec, {cmd} press\nbindr = {mods}, {k}, exec, {cmd} release")
+    format!("# Lowkey: global dictation (hold = talk, tap = start/stop)\nbind = {mods}, {k}, exec, {cmd} press\nbindr = {mods}, {k}, exec, {cmd} release")
 }
 
 pub fn mods_mask(key: &str) -> (u64, String) {
@@ -203,7 +224,7 @@ pub fn owners_in(binds: &[Value], key: &str) -> Vec<String> {
     binds
         .iter()
         .filter(|b| combo(b) == want && !b["mouse"].as_bool().unwrap_or(false) && b["submap"].as_str().unwrap_or("").is_empty())
-        .map(|b| b["description"].as_str().unwrap_or("").to_string())
+        .map(description)
         .collect()
 }
 
@@ -212,12 +233,12 @@ pub fn removable_app_keys(binds: &[Value]) -> Vec<String> {
     let names = [(64u64, "SUPER"), (4, "CTRL"), (8, "ALT"), (1, "SHIFT")];
     let user: std::collections::HashSet<_> = binds
         .iter()
-        .filter(|b| !matches!(b["description"].as_str().unwrap_or(""), "" | RUNTIME_DESC | MEETING_DESC | PASTE_DESC))
+        .filter(|b| !matches!(description(b).as_str(), "" | RUNTIME_DESC | MEETING_DESC | PASTE_DESC))
         .map(combo)
         .collect();
     let mut out = Vec::new();
     for b in binds {
-        if matches!(b["description"].as_str(), Some(RUNTIME_DESC | MEETING_DESC | PASTE_DESC)) && !user.contains(&combo(b)) && b["submap"].as_str().unwrap_or("").is_empty() {
+        if matches!(description(b).as_str(), RUNTIME_DESC | MEETING_DESC | PASTE_DESC) && !user.contains(&combo(b)) && b["submap"].as_str().unwrap_or("").is_empty() {
             let (mask, key) = combo(b);
             let mut parts: Vec<String> = names.iter().filter(|(m, _)| mask & m != 0).map(|(_, n)| n.to_string()).collect();
             parts.push(key);
@@ -238,8 +259,11 @@ pub fn remove_app_binds() -> Vec<String> {
     keys
 }
 
-pub const BLOCK_BEGIN: &str = "-- BEGIN open-whisper.dictation";
-pub const BLOCK_END: &str = "-- END open-whisper.dictation";
+pub const BLOCK_BEGIN: &str = "-- BEGIN lowkey.dictation";
+pub const BLOCK_END: &str = "-- END lowkey.dictation";
+/// The markers from before the rename: such a block is the app's too.
+const OLD_BLOCK_BEGIN: &str = "-- BEGIN open-whisper.dictation";
+const OLD_BLOCK_END: &str = "-- END open-whisper.dictation";
 
 /// "SUPER + CTRL + X" written the same way every time; None when it is not a usable key: at
 /// least one of Super, Ctrl or Alt (a plain key would be taken from every app), and one main
@@ -302,12 +326,12 @@ pub fn find_config_block() -> anyhow::Result<PathBuf> {
             0 => continue,
             1 => return Ok(found.into_iter().next().unwrap()),
             _ => anyhow::bail!(
-                "the open-whisper block is in several files ({}); remove the extra copies first",
+                "the Lowkey block is in several files ({}); remove the extra copies first",
                 found.iter().map(|f| f.display().to_string()).collect::<Vec<_>>().join(", ")
             ),
         }
     }
-    anyhow::bail!("could not find the open-whisper block in your Hyprland config")
+    anyhow::bail!("could not find the Lowkey block in your Hyprland config")
 }
 
 /// A `.lua` config file, not a backup or a copy ("bindings.lua.bak.…", "bindings copy.lua").
@@ -327,8 +351,10 @@ pub fn without_block(text: &str) -> Option<String> {
     let mut out = String::with_capacity(text.len());
     let (mut i, mut removed) = (0, false);
     while i < lines.len() {
-        if lines[i].trim_start().starts_with(BLOCK_BEGIN) {
-            let end = i + lines[i..].iter().position(|l| l.trim_start().starts_with(BLOCK_END))?; // never cut to EOF
+        let line = lines[i].trim_start();
+        if line.starts_with(BLOCK_BEGIN) || line.starts_with(OLD_BLOCK_BEGIN) {
+            let is_end = |l: &&str| l.trim_start().starts_with(BLOCK_END) || l.trim_start().starts_with(OLD_BLOCK_END);
+            let end = i + lines[i..].iter().position(is_end)?; // never cut to EOF
             i = end + 1;
             removed = true;
             continue;
@@ -345,10 +371,10 @@ pub fn without_block(text: &str) -> Option<String> {
 pub fn remove_config_block(file: &Path) -> anyhow::Result<PathBuf> {
     let file = std::fs::canonicalize(file)?;
     let text = std::fs::read_to_string(&file)?;
-    let new = without_block(&text).ok_or_else(|| anyhow::anyhow!("no complete open-whisper block in {}", file.display()))?;
+    let new = without_block(&text).ok_or_else(|| anyhow::anyhow!("no complete Lowkey block in {}", file.display()))?;
     let name = file.file_name().unwrap_or_default().to_string_lossy().into_owned();
     let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
-    let backup = file.with_file_name(format!("{name}.bak.open-whisper.{stamp}"));
+    let backup = file.with_file_name(format!("{name}.bak.lowkey.{stamp}"));
     std::fs::copy(&file, &backup)?;
     write_atomically(&file, &new)?;
     Ok(backup)
@@ -363,7 +389,7 @@ pub fn restore_config(file: &Path, backup: &Path) -> anyhow::Result<()> {
 fn write_atomically(file: &Path, text: &str) -> anyhow::Result<()> {
     use std::io::Write;
     let name = file.file_name().unwrap_or_default().to_string_lossy().into_owned();
-    let part = file.with_file_name(format!(".{name}.open-whisper.part"));
+    let part = file.with_file_name(format!(".{name}.lowkey.part"));
     {
         let mut f = std::fs::File::create(&part)?;
         f.write_all(text.as_bytes())?;
@@ -379,11 +405,13 @@ fn write_atomically(file: &Path, text: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// One bind on a key: its description, and whether it fires on release.
-#[derive(Debug, Clone, PartialEq)]
+/// One bind on a key: its description, whether it fires on release, and whether it is from
+/// before the rename.
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct BindInfo {
     pub description: String,
     pub release: bool,
+    pub old_name: bool,
 }
 
 pub fn binds_on_key(binds: &[Value], key: &str) -> Vec<BindInfo> {
@@ -391,7 +419,7 @@ pub fn binds_on_key(binds: &[Value], key: &str) -> Vec<BindInfo> {
     binds
         .iter()
         .filter(|b| combo(b) == want && !b["mouse"].as_bool().unwrap_or(false) && b["submap"].as_str().unwrap_or("").is_empty())
-        .map(|b| BindInfo { description: b["description"].as_str().unwrap_or("").to_string(), release: b["release"].as_bool().unwrap_or(false) })
+        .map(|b| BindInfo { description: description(b), release: b["release"].as_bool().unwrap_or(false), old_name: old_name(b) })
         .collect()
 }
 
@@ -573,7 +601,7 @@ impl Hotkey {
     fn install_locked(&self, keep_existing: bool) -> anyhow::Result<String> {
         if !lua_config() {
             *self.state.lock() = State::default();
-            return Ok("not added: this Hyprland has no Lua config. Run `open-whisper --print-snippet conf` and add the lines.".into());
+            return Ok("not added: this Hyprland has no Lua config. Run `lowkey --print-snippet conf` and add the lines.".into());
         }
         eval(&overlay_rule_lua())?;
         let mut st = State { rule: true, ..State::default() };
@@ -584,7 +612,7 @@ impl Hotkey {
         let text = if self.dictation && on_key.iter().any(|b| b.description == CONFIG_DESC) {
             st.from_config = true;
             format!("{key} (from your Hyprland config)")
-        } else if ours && keep_existing && foreign.is_empty() {
+        } else if ours && keep_existing && foreign.is_empty() && !on_key.iter().any(|b| b.old_name) {
             st.added = true;
             self.active_text()
         } else if let Some(other) = foreign.first() {
@@ -603,9 +631,9 @@ impl Hotkey {
 
     fn active_text(&self) -> String {
         match self.desc {
-            RUNTIME_DESC => format!("{} — hold to talk, tap to start/stop (also starts open-whisper when it is closed)", self.key()),
+            RUNTIME_DESC => format!("{} — hold to talk, tap to start/stop (also starts Lowkey when it is closed)", self.key()),
             PASTE_DESC => format!("{} — types the last dictation again", self.key()),
-            _ => format!("{} — tap to start or stop a meeting recording (also starts open-whisper when it is closed)", self.key()),
+            _ => format!("{} — tap to start or stop a meeting recording (also starts Lowkey when it is closed)", self.key()),
         }
     }
 
@@ -656,7 +684,7 @@ impl Hotkey {
         self.stop.store(true, Ordering::Relaxed);
         let mut st = self.state.lock();
         if st.rule {
-            let _ = eval("if _G.open_whisper_desktop_rule then _G.open_whisper_desktop_rule:set_enabled(false); _G.open_whisper_desktop_rule = nil end");
+            let _ = eval("if _G.lowkey_desktop_rule then _G.lowkey_desktop_rule:set_enabled(false); _G.lowkey_desktop_rule = nil end");
             st.rule = false;
         }
     }
@@ -692,16 +720,16 @@ mod tests {
 
     #[test]
     fn binds_and_snippets() {
-        let exe = Path::new("/opt/open whisper/open-whisper");
+        let exe = Path::new("/opt/low key/lowkey");
         let lua = bind_lua("SUPER + CTRL + X", &dictate_command(exe), RUNTIME_DESC);
-        assert!(lua.contains("'/opt/open whisper/open-whisper' --dictate press"));
+        assert!(lua.contains("'/opt/low key/lowkey' --dictate press"));
         assert!(lua.contains("release = true") && lua.contains("added by the app"));
-        assert!(overlay_rule_lua().contains("no_focus = true") && overlay_rule_lua().contains("open_whisper_desktop_rule"));
+        assert!(overlay_rule_lua().contains("no_focus = true") && overlay_rule_lua().contains("lowkey_desktop_rule"));
         // No plugin fields (an unknown field is a config error): decorate = false covers title bars.
         assert!(overlay_rule_lua().contains("decorate = false") && !overlay_rule_lua().contains("hyprbars"));
-        let conf = conf_snippet("SUPER + CTRL + X", Path::new("/usr/bin/open-whisper"));
-        assert!(conf.contains("bind = SUPER CTRL, X, exec, /usr/bin/open-whisper --dictate press"));
-        assert!(conf.contains("bindr = SUPER CTRL, X, exec, /usr/bin/open-whisper --dictate release"));
+        let conf = conf_snippet("SUPER + CTRL + X", Path::new("/usr/bin/lowkey"));
+        assert!(conf.contains("bind = SUPER CTRL, X, exec, /usr/bin/lowkey --dictate press"));
+        assert!(conf.contains("bindr = SUPER CTRL, X, exec, /usr/bin/lowkey --dictate release"));
     }
 
     #[test]
@@ -731,7 +759,7 @@ mod tests {
         let crlf = "a\r\n-- BEGIN open-whisper.dictation\r\nx\r\n-- END open-whisper.dictation\r\nb\r\n-- BEGIN open-whisper.dictation\r\ny\r\n-- END open-whisper.dictation";
         assert_eq!(without_block(crlf).unwrap(), "a\r\nb\r\n");
         assert!(config_candidate(Path::new("/h/bindings.lua")));
-        for skip in ["/h/bindings.lua.bak.123", "/h/bindings copy.lua", "/h/bindings-old.lua", "/h/.bindings.lua.open-whisper.part", "/h/hyprland.conf"] {
+        for skip in ["/h/bindings.lua.bak.123", "/h/bindings copy.lua", "/h/bindings-old.lua", "/h/.bindings.lua.lowkey.part", "/h/hyprland.conf"] {
             assert!(!config_candidate(Path::new(skip)), "{skip}");
         }
         let dir = std::env::temp_dir().join(format!("ow-block-{}", std::process::id()));
@@ -756,8 +784,22 @@ mod tests {
     }
 
     #[test]
+    fn binds_and_blocks_from_before_the_rename_are_still_ours() {
+        let old = json!({"modmask": 68, "key": "X", "description": "Dictate (open-whisper, added by the app)", "submap": ""});
+        assert_eq!(description(&old), RUNTIME_DESC);
+        assert_eq!(description(&json!({"description": "Dictate (open-whisper)"})), CONFIG_DESC);
+        assert_eq!(description(&json!({"description": "Paste last dictation (open-whisper, added by the app)"})), PASTE_DESC);
+        assert_eq!(description(&json!({"description": "Screenshot"})), "Screenshot");
+        let on_key = binds_on_key(&[old.clone()], "SUPER + CTRL + X");
+        assert!(on_key[0].old_name, "re-added, so the key runs the new program");
+        assert_eq!(removable_app_keys(&[old]), vec!["SUPER + CTRL + X"]);
+        let text = "a\n-- BEGIN open-whisper.dictation\nx\n-- END open-whisper.dictation\nb\n-- BEGIN lowkey.dictation\ny\n-- END lowkey.dictation\n";
+        assert_eq!(without_block(text).as_deref(), Some("a\nb\n"));
+    }
+
+    #[test]
     fn the_apps_binds_are_told_apart_from_others() {
-        let b = |d: &str, r: bool| BindInfo { description: d.into(), release: r };
+        let b = |d: &str, r: bool| BindInfo { description: d.into(), release: r, ..Default::default() };
         // The app's press + release: nothing foreign.
         assert!(foreign_binds(&[b(RUNTIME_DESC, false), b("", true)]).is_empty());
         // A release bind without our press bind, an undescribed press bind, a described one: foreign.
@@ -769,9 +811,9 @@ mod tests {
 
     #[test]
     fn the_meeting_key_and_the_dictation_key_never_share_a_combination() {
-        let dictation = BindInfo { description: RUNTIME_DESC.into(), release: false };
-        let release = BindInfo { description: String::new(), release: true };
-        let meeting = BindInfo { description: MEETING_DESC.into(), release: false };
+        let dictation = BindInfo { description: RUNTIME_DESC.into(), ..Default::default() };
+        let release = BindInfo { release: true, ..Default::default() };
+        let meeting = BindInfo { description: MEETING_DESC.into(), ..Default::default() };
         assert!(foreign_binds_for(&[meeting.clone()], MEETING_DESC, false).is_empty());
         assert_eq!(foreign_binds_for(&[dictation.clone(), release.clone()], MEETING_DESC, false), vec![RUNTIME_DESC.to_string(), "another shortcut".into()]);
         // A user's release bind next to the meeting key is theirs (the meeting key has none).
@@ -779,8 +821,8 @@ mod tests {
         assert_eq!(foreign_binds(&[meeting]), vec![MEETING_DESC.to_string()]);
         assert!(foreign_binds(&[dictation, release]).is_empty());
         assert_eq!(
-            bind_once_lua("SUPER + CTRL + M", &meeting_command(Path::new("/opt/o w/open-whisper")), MEETING_DESC),
-            "hl.bind(\"SUPER + CTRL + M\", hl.dsp.exec_cmd(\"'/opt/o w/open-whisper' --meeting toggle\"), { description = \"Meeting recording (open-whisper, added by the app)\" })"
+            bind_once_lua("SUPER + CTRL + M", &meeting_command(Path::new("/opt/o w/lowkey")), MEETING_DESC),
+            "hl.bind(\"SUPER + CTRL + M\", hl.dsp.exec_cmd(\"'/opt/o w/lowkey' --meeting toggle\"), { description = \"Meeting recording (Lowkey, added by the app)\" })"
         );
         let binds = vec![json!({"modmask": 68, "key": "M", "description": MEETING_DESC, "submap": ""})];
         assert_eq!(removable_app_keys(&binds), vec!["SUPER + CTRL + M".to_string()], "--remove-hotkey removes the meeting key too");

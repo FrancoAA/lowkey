@@ -2581,6 +2581,43 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5d15f86d12da44cd8d4ec3c73984537eb7f4cadcb9776a575a0a8a05ca11005c"
 
 [[package]]
+name = "lowkey"
+version = "0.3.0"
+dependencies = [
+ "anyhow",
+ "arboard",
+ "cpal",
+ "dirs 6.0.0",
+ "enigo",
+ "flate2",
+ "getrandom 0.3.4",
+ "gtk",
+ "hound",
+ "libloading 0.8.9",
+ "log",
+ "parking_lot",
+ "regex",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "sherpa-onnx",
+ "symphonia",
+ "tar",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-autostart",
+ "tauri-plugin-dialog",
+ "tauri-plugin-global-shortcut",
+ "tauri-plugin-single-instance",
+ "toml 0.9.12+spec-1.1.0",
+ "url",
+ "webkit2gtk",
+ "whatlang",
+ "whisper-rs",
+]
+
+[[package]]
 name = "lru-slab"
 version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3098,43 +3135,6 @@ name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
-
-[[package]]
-name = "open-whisper"
-version = "0.3.0"
-dependencies = [
- "anyhow",
- "arboard",
- "cpal",
- "dirs 6.0.0",
- "enigo",
- "flate2",
- "getrandom 0.3.4",
- "gtk",
- "hound",
- "libloading 0.8.9",
- "log",
- "parking_lot",
- "regex",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "sherpa-onnx",
- "symphonia",
- "tar",
- "tauri",
- "tauri-build",
- "tauri-plugin-autostart",
- "tauri-plugin-dialog",
- "tauri-plugin-global-shortcut",
- "tauri-plugin-single-instance",
- "toml 0.9.12+spec-1.1.0",
- "url",
- "webkit2gtk",
- "whatlang",
- "whisper-rs",
-]
 
 [[package]]
 name = "option-ext"

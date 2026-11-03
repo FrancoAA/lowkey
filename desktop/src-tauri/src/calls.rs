@@ -110,7 +110,7 @@ fn page_of(title: &str) -> Option<(&'static str, &'static str)> {
 pub fn classify(u: &MicUser, title: &dyn Fn(u32) -> Option<String>) -> Option<Call> {
     let hay = format!("{} {}", u.binary, u.app).to_lowercase();
     // Our own streams (dictation, meetings) never count.
-    if hay.contains("open-whisper") || hay.contains("open_whisper") {
+    if hay.contains("lowkey") || hay.contains("open-whisper") || hay.contains("open_whisper") {
         return None;
     }
     if let Some((_, key, label)) = BROWSERS.iter().map(|(n, l)| (n, n, l)).find(|(n, _, _)| hay.contains(*n)) {
@@ -224,6 +224,7 @@ mod tests {
         assert_eq!(classify(&user("Firefox", "firefox", 7), &calendar).unwrap().known, false, "'meet - ' inside a title is not a call");
         assert_eq!(page_of("Daily | Microsoft Teams"), Some(("teams", "Microsoft Teams")));
         assert_eq!(classify(&user("open-whisper", "open-whisper", 9), &none), None, "our own streams never count");
+        assert_eq!(classify(&user("Lowkey", "lowkey", 9), &none), None, "under the new name too");
         assert_eq!(classify(&user("ALSA plug-in [obs]", "obs", 3), &none), None, "not a call app");
         let json = r#"[{"properties":{"application.name":"ZOOM VoiceEngine","application.process.binary":"zoom","application.process.id":"4242"}},{"properties":{}}]"#;
         assert_eq!(parse_users(json)[0], user("ZOOM VoiceEngine", "zoom", 4242));

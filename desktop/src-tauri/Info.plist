@@ -5,6 +5,6 @@
 <plist version="1.0">
 <dict>
   <key>NSMicrophoneUsageDescription</key>
-  <string>open-whisper records your voice to turn it into text, on this computer.</string>
+  <string>Lowkey records your voice to turn it into text, on this computer.</string>
 </dict>
 </plist>

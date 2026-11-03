@@ -407,7 +407,7 @@ for (const btn of downloadButtons) {
 // ------------------------------------------------------------------ options
 languageSelect.addEventListener("change", () => void backend.saveOptions({ language: languageSelect.value }));
 modelSelect.addEventListener("change", () => {
-  // Desktop: saved to ~/.config/open-whisper/config.toml and loaded at once.
+  // Desktop: saved to ~/.config/lowkey/config.toml and loaded at once.
   void backend.saveOptions({ model: modelSelect.value }).catch((err) => showError(String(err)));
   renderStatus();
 });
@@ -480,7 +480,7 @@ function renderPasteKey(): void {
   ui.change.hidden = source === "manual";
   const explain =
     source === "manual"
-      ? "This desktop does not let apps add keys: bind `open-whisper --paste-last` in its keyboard settings."
+      ? "This desktop does not let apps add keys: bind `lowkey --paste-last` in its keyboard settings."
       : inactive
         ? status.paste_key_problem || "This key is not active. Choose another one."
         : "Types your last dictation again into the app you are in (also when the history is off).";
@@ -498,7 +498,7 @@ function renderMeetingKey(): void {
   meetingKeyChange.hidden = source === "manual";
   const explain =
     source === "manual"
-      ? "This desktop does not let apps add keys: bind `open-whisper --meeting toggle` in its keyboard settings."
+      ? "This desktop does not let apps add keys: bind `lowkey --meeting toggle` in its keyboard settings."
       : inactive
         ? status.meeting_key_problem || "This key is not active. Choose another one."
         : "Tap it to start recording a meeting (your mic and the computer's sound), and again to stop. A strip at the bottom of the screen shows the recording.";
@@ -519,9 +519,9 @@ function renderDictationKey(): void {
   loginCheck.checked = !!status.start_at_login;
   const explain =
     source === "config"
-      ? "This key comes from your Hyprland config (the open-whisper block in bindings.lua). To change it here, let the app manage it: the block is removed from your config, and a backup is kept next to it."
+      ? "This key comes from your Hyprland config (the Lowkey block in bindings.lua). To change it here, let the app manage it: the block is removed from your config, and a backup is kept next to it."
       : source === "manual"
-        ? "This desktop does not let apps add keys: bind `open-whisper --dictate toggle` in its keyboard settings."
+        ? "This desktop does not let apps add keys: bind `lowkey --dictate toggle` in its keyboard settings."
         : inactive
           ? status.hotkey_problem || "This key is not active. Choose another one."
           : "Hold it to talk, or tap it to start and again to stop.";

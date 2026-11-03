@@ -36,7 +36,7 @@ Status: added on 2026-11-01 as an option in Options (`parakeet-v3`). Franco chos
 
 ## Measurements (Ryzen 7 H 255; whisper.cpp on the Radeon 780M through Vulkan)
 
-Through the app (`open-whisper --transcribe … --model …`; "seconds" is the transcription with
+Through the app (`lowkey --transcribe … --model …`; "seconds" is the transcription with
 the model already loaded, as in normal use). Clips: the 5 benchmark clips, plus English and
 Spanish with pink noise at 10 and 5 dB SNR (full band), plus a 3 s dictation.
 

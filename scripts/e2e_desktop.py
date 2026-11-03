@@ -30,7 +30,7 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-APP = Path(os.environ.get("OW_E2E_APP") or ROOT / "desktop" / "src-tauri" / "target" / "release" / "open-whisper")
+APP = Path(os.environ.get("OW_E2E_APP") or ROOT / "desktop" / "src-tauri" / "target" / "release" / "lowkey")
 # OW_E2E_HYPRBARS=<hyprbars.so>: load that title-bar plugin in the nested Hyprland (bars in pure red) and
 # check that the overlay has no bar. Omarchy's window controls use it.
 HYPRBARS = os.environ.get("OW_E2E_HYPRBARS")
@@ -55,9 +55,9 @@ BENCH_LLM = ROOT / "bench" / ".work" / "llm"
 if PREVIEW == "parakeet" and not BENCH_PARAKEET.is_dir():
     print(f"  note: OW_E2E_PREVIEW=parakeet but no {BENCH_PARAKEET}: using whistle")
     PREVIEW = "whistle"
-RUNTIME_DESC = "Dictate (open-whisper, added by the app)"
-MEETING_DESC = "Meeting recording (open-whisper, added by the app)"
-PASTE_DESC = "Paste last dictation (open-whisper, added by the app)"
+RUNTIME_DESC = "Dictate (Lowkey, added by the app)"
+MEETING_DESC = "Meeting recording (Lowkey, added by the app)"
+PASTE_DESC = "Paste last dictation (Lowkey, added by the app)"
 NESTED_CONFIG = """
 hl.monitor({ output = "", mode = "preferred", position = "auto", scale = 1 })
 -- A taken key: Options must refuse it for the dictation key.
@@ -122,7 +122,8 @@ def main() -> None:
     snippet = ""
     if config_bind:  # exactly what Franco's bindings.lua block contains
         # The same lines as Franco's block in bindings.lua (markers included: the app can take
-        # the key over by removing exactly this block).
+        # the key over by removing exactly this block). It is from before the rename (the app was
+        # "open-whisper"): the app must still know it as its own.
         shim = ROOT / "scripts" / "ow-dictate"
         snippet = ("-- BEGIN open-whisper.dictation\n"
                    "-- open-whisper: global dictation (hold = talk, tap = start/stop)\n"
@@ -288,7 +289,15 @@ esac
         print(f"nested Hyprland {inst['wl_socket']} on {OUTPUT}; private runtime, config, data and D-Bus")
 
         # ---------------------------------------------------------------- start
+        # Settings, data and the login entry where the app had them before the rename
+        # ("open-whisper"): it moves them to "lowkey" at start.
         (tmp / "config" / "open-whisper").mkdir(parents=True)
+        (tmp / "data" / "open-whisper").mkdir(parents=True)
+        (tmp / "data" / "open-whisper" / "history.json").write_text("[]")
+        old_autostart = tmp / "config" / "autostart" / "open-whisper.desktop"
+        if not config_bind:  # that run checks that taking the key over turns it on
+            old_autostart.parent.mkdir(parents=True)
+            old_autostart.write_text(f'[Desktop Entry]\nType=Application\nName=open-whisper\nExec="{APP.with_name("open-whisper")}" --background\n')
         # AI notes after Stop only with the cached model: the test never downloads 2.7 GB.
         ai_auto = "true" if (models / "llm").is_dir() else "false"
         # A vocabulary term: "open whisper" (as Whisper hears it) must come out as "OpenWhisper".
@@ -296,8 +305,15 @@ esac
             f'idle_unload_minutes = 5\npreview_engine = "{PREVIEW}"\nai_auto = {ai_auto}\n\n'
             '[[vocabulary]]\nterm = "OpenWhisper"\nsounds_like = ["open whisper", "Open Wish"]\n')
         app = subprocess.Popen([APP], env=env, stdout=open(tmp / "app.log", "w"), stderr=subprocess.STDOUT)
-        main_win = wait(lambda: win("open-whisper"), 30, "main window")
+        main_win = wait(lambda: win("Lowkey"), 30, "main window")
         print("  ok  main window opened")
+        check((tmp / "config" / "lowkey" / "config.toml").is_file() and not (tmp / "config" / "open-whisper").exists()
+              and (tmp / "data" / "lowkey" / "history.json").is_file() and not (tmp / "data" / "open-whisper").exists(),
+              "the settings and data moved from open-whisper to lowkey")
+        if not config_bind:
+            new_autostart = tmp / "config" / "autostart" / "lowkey.desktop"
+            check(not old_autostart.exists() and new_autostart.exists() and f'Exec="{APP}"' in new_autostart.read_text(),
+                  "the old login entry became lowkey.desktop, for this program")
         if first_run:  # empty model folder: the pill shows the download
             wait(lambda: any(m["state"] == "downloading" and m["progress"] >= 0.1
                              for st in events("status")[-3:] for m in st["models"]), 300, "first-run download in the window")
@@ -318,7 +334,7 @@ esac
             check("from your Hyprland config" in (tmp / "app.log").read_text(), "the app reports the config key")
         else:
             check(len(b) == 2 and any(x["description"] == RUNTIME_DESC for x in b), "SUPER+CTRL+X added at runtime")
-        check(win("open-whisper-overlay") is None, "overlay hidden at start")
+        check(win("lowkey-overlay") is None, "overlay hidden at start")
         time.sleep(1.0)
         shot("09-desktop-main.png")
 
@@ -374,11 +390,11 @@ esac
         n_key = len(events("dictation"))
         key("press")
         wait(lambda: dict_state()["state"] == "listening", 10, "listening")
-        ov = wait(lambda: win("open-whisper-overlay"), 10, "overlay window")
+        ov = wait(lambda: win("lowkey-overlay"), 10, "overlay window")
         check(ov["floating"] and ov["pinned"], f"overlay floating and pinned (size {ov['size']}, at {ov['at']})")
         check((hj("activewindow") or {}).get("address") == target["address"], "overlay did not take keyboard focus")
         if HYPRBARS:
-            main_red = red_pixels_around(wait(lambda: win("open-whisper"), 10, "main window"))
+            main_red = red_pixels_around(wait(lambda: win("Lowkey"), 10, "main window"))
             check(main_red > 1000, f"hyprbars draws its bar on normal windows (main window: {main_red} red pixels)")
             red = red_pixels_around(ov)
             check(red == 0, f"no title bar on the overlay ({red} red pixels around it)")
@@ -425,7 +441,7 @@ esac
                 time.sleep(0.05)
 
         # ---------------------------------------------------------------- history and paste last
-        hist_file = tmp / "data" / "open-whisper" / "history.json"
+        hist_file = tmp / "data" / "lowkey" / "history.json"
         kept = wait(lambda: hist_file.exists() and len(json.loads(hist_file.read_text())) >= 3 and json.loads(hist_file.read_text()), 10, "history entries")
         check([e["text"] for e in kept][-2:] == [d1["text"], d2["text"]] and oct(hist_file.stat().st_mode & 0o777) == "0o600",
               f"the history keeps every dictation ({len(kept)}: window and key), in a private file")
@@ -444,8 +460,8 @@ esac
         shot("29-desktop-history.png")
 
         # ---------------------------------------------------------------- Options (keyboard)
-        cfg_file = tmp / "config" / "open-whisper" / "config.toml"
-        main_win = wait(lambda: win("open-whisper"), 10, "main window")
+        cfg_file = tmp / "config" / "lowkey" / "config.toml"
+        main_win = wait(lambda: win("Lowkey"), 10, "main window")
         focus(main_win["address"])
         # Settings: Ctrl+, opens them with the focus on the section list; Down moves to Model,
         # Tab to its first control (the model list).
@@ -524,10 +540,10 @@ esac
             press_key("Return")  # "Let the app manage it"
             wait(lambda: latest_status().get("hotkey_source") == "app", 20, "key managed by the app")
             check("open-whisper.dictation" not in block_file.read_text(), "the block is gone from the Hyprland config")
-            backups = list(tmp.glob("hyprland.lua.bak.open-whisper.*"))
+            backups = list(tmp.glob("hyprland.lua.bak.lowkey.*"))
             check(len(backups) == 1 and "open-whisper.dictation" in backups[0].read_text(), f"a backup of the old config: {backups[0].name if backups else None}")
             check(len(x_binds()) == 2 and all(b["description"] in (RUNTIME_DESC, "") for b in x_binds()), "SUPER+CTRL+X now comes from the app")
-            check((tmp / "config" / "autostart" / "open-whisper.desktop").exists(), "taking the key over turned on start at login")
+            check((tmp / "config" / "autostart" / "lowkey.desktop").exists(), "taking the key over turned on start at login")
         # A combination that another shortcut uses is refused; the key stays.
         n_ev = len(events("hotkey-change"))
         press_key("Return")  # Change
@@ -579,9 +595,10 @@ esac
         print("  ok  meeting key back to SUPER+CTRL+M")
         press_key("Tab")  # past the paste-last key's Change, to the login switch
         # Start at login: the autostart entry appears and goes (in the test's own XDG_CONFIG_HOME).
-        autostart = tmp / "config" / "autostart" / "open-whisper.desktop"
-        real_autostart = Path.home() / ".config" / "autostart" / "open-whisper.desktop"
-        real_before = real_autostart.exists()
+        autostart = tmp / "config" / "autostart" / "lowkey.desktop"
+        # Franco's real entries (old and new name): never touched.
+        real_autostart = [Path.home() / ".config" / "autostart" / n for n in ("open-whisper.desktop", "lowkey.desktop")]
+        real_before = [f.exists() for f in real_autostart]
         was = autostart.exists()  # on after taking the key over (--config-bind)
         press_key("Tab")
         press_key("space")
@@ -594,7 +611,7 @@ esac
         check("--background" in autostart.read_text(), "start at login: the entry starts the app in the background")
         press_key("space")
         wait(lambda: not autostart.exists(), 10, "autostart entry removed")
-        check(real_autostart.exists() == real_before, "your real ~/.config/autostart was not touched")
+        check([f.exists() for f in real_autostart] == real_before, "your real ~/.config/autostart was not touched")
         print("  ok  start at login turned off again")
         press_key("Escape")
         # Settings → Models → AI notes (General, down to Models, then Tab past the speech model
@@ -610,7 +627,7 @@ esac
         press_key("Escape")
 
         # ---------------------------------------------------------------- Meetings
-        meetings_dir = tmp / "data" / "open-whisper" / "meetings"
+        meetings_dir = tmp / "data" / "lowkey" / "meetings"
         press_key("Down")  # Meetings (from the Transcribe tab)
         press_key("Tab")  # Start recording
         n_m = len(events("meeting"))
@@ -664,10 +681,10 @@ esac
             print(f"  SKIP AI notes: no cached Qwen3.5 4B and runner in {BENCH_LLM}")
         # A wide window: AI notes and transcript side by side (the nested window, full screen).
         def fullscreen() -> bool:
-            before = win("open-whisper")["size"]
+            before = win("Lowkey")["size"]
             run(["hyprctl", "dispatch", f'hl.dsp.window.fullscreen({{ window = "address:{main_win["address"]}" }})'], env, check=False)
             time.sleep(1.0)
-            return (win("open-whisper") or {}).get("size") != before
+            return (win("Lowkey") or {}).get("size") != before
 
         if fullscreen():
             shot("27-desktop-meeting-wide.png")
@@ -689,7 +706,7 @@ esac
             run(["hyprctl", "dispatch", f'hl.dsp.exec_cmd("{APP} --meeting toggle")'], env)
 
         meeting_key()
-        strip = wait(lambda: win("open-whisper-overlay"), 15, "the recording strip")
+        strip = wait(lambda: win("lowkey-overlay"), 15, "the recording strip")
         rec = wait(lambda: next((m for m in reversed(events("meeting")[n_k:]) if m["state"] == "recording" and m["meeting"]["lines"]), None),
                    90, "lines from the key's meeting")
         check(strip["pinned"] and (hj("activewindow") or {}).get("address") == target["address"],
@@ -700,8 +717,8 @@ esac
         done = wait(lambda: next((m for m in events("meeting")[n_k:] if m["state"] == "done"), None), 60, "the key's meeting saved")
         check(done["meeting"]["lines"] and (meetings_dir / f"{done['meeting']['id']}.json").exists(), "the key again stops and saves it")
         time.sleep(0.5)
-        check(win("open-whisper-overlay") is not None, "the strip says it is saved")
-        wait(lambda: win("open-whisper-overlay") is None, 10, "the strip goes after the save")
+        check(win("lowkey-overlay") is not None, "the strip says it is saved")
+        wait(lambda: win("lowkey-overlay") is None, 10, "the strip goes after the save")
         print("  ok  the strip goes a moment after the save")
 
         # ---------------------------------------------------------------- calls: Zoom on the microphone
@@ -709,7 +726,9 @@ esac
         outputs.write_text(json.dumps([{"properties": {"application.name": "ZOOM VoiceEngine", "application.process.binary": "zoom",
                                                         "application.process.id": "4242"}}]))
         offer = wait(lambda: next((e for e in events("call")[n_c:] if e["state"] == "offer"), None), 15, "call offer")
-        check(offer["label"] == "Zoom" and win("open-whisper-overlay") is not None, "Zoom on the microphone for 2 s: the strip offers to record it")
+        # The event comes first; the strip window can take a moment to show.
+        wait(lambda: win("lowkey-overlay"), 5, "the strip with the offer")
+        check(offer["label"] == "Zoom", "Zoom on the microphone for 2 s: the strip offers to record it")
         time.sleep(0.6)
         shot("30-desktop-call-offer.png")
         n_z = len(events("meeting"))
@@ -729,12 +748,12 @@ esac
         # ---------------------------------------------------------------- close, quit, key starts the app
         run(["hyprctl", "dispatch", f'hl.dsp.window.close({{ window = "address:{main_win["address"]}" }})'], env)
         time.sleep(1.0)
-        check(app.poll() is None and win("open-whisper") is None, "closing the window keeps the app running (for the key)")
+        check(app.poll() is None and win("Lowkey") is None, "closing the window keeps the app running (for the key)")
         key("quit")
         app.wait(20)
         app = None
         check(len(x_binds()) == 2, "the key stays after quitting")
-        check(not (runtime / "open-whisper" / "desktop.json").exists(), "runtime file removed on quit")
+        check(not (runtime / "lowkey" / "desktop.json").exists(), "runtime file removed on quit")
 
         if first_run:  # make the key-started app download again, to show it in the overlay
             for f in models.glob("ggml-large-v3-turbo-q5_0*"):
@@ -744,7 +763,7 @@ esac
         wait(lambda: any(d["state"] == "starting" for d in events("dictation")[n_before:]), 60, "starting state")
         print("  ok  the key started the closed app (background, no main window)")
         starting = [d for d in events("dictation")[n_before:] if d["state"] == "starting"]
-        wait(lambda: win("open-whisper-overlay"), 30, "overlay during start-up")
+        wait(lambda: win("lowkey-overlay"), 30, "overlay during start-up")
         if first_run:
             def pct(d):
                 try:
@@ -756,7 +775,7 @@ esac
             time.sleep(1.0)
         shot("15-desktop-key-starting.png")
         check(any(d["detail"] for d in starting), f"start-up detail shown: {starting[-1]['detail']!r}")
-        check(win("open-whisper") is None, "main window stays closed")
+        check(win("Lowkey") is None, "main window stays closed")
         wait(lambda: dict_state()["state"] == "listening", 600 if first_run else 60, "listening after start")
         time.sleep(3.0)
         key("release")

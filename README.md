@@ -1,6 +1,6 @@
 <img src="assets/icon.png" width="64" height="64" alt="">
 
-# open-whisper
+# Lowkey
 
 Local speech to text as a desktop app. Drop an audio or video file and get the text, hold
 a key and talk into any app, or record a meeting as text next to your notes. Everything runs on your computer with open-source software and
@@ -11,12 +11,19 @@ It is one native program (Rust + Tauri v2) with whisper.cpp inside: on the GPU t
 
 ![Desktop app](docs/screenshots/10-desktop-transcript.png)
 
+**It was called open-whisper before.** The first start of Lowkey moves your settings
+(`~/.config/open-whisper` → `~/.config/lowkey`), your data (models, meetings, history:
+`~/.local/share/open-whisper` → `~/.local/share/lowkey`) and the Start at login entry. An old
+app that still runs is asked to quit first. A Hyprland block with the old markers
+(`open-whisper.dictation`) still works. `make install-desktop` removes the old program and
+launcher entry.
+
 ## Download
 
 Installers for Linux (AppImage, .deb, .rpm), Windows (.exe, .msi) and macOS on Apple Silicon
 (.dmg) are on the repository's **Releases** page, one release per version. They are not signed:
 Windows SmartScreen asks once (More info → Run anyway); on macOS run
-`xattr -dr com.apple.quarantine /Applications/open-whisper.app` after copying the app. Each push
+`xattr -dr com.apple.quarantine /Applications/Lowkey.app` after copying the app. Each push
 also leaves them as artifacts of its run (Actions → the run → Artifacts, kept 90 days).
 
 **Make a release:** set the version in `desktop/src-tauri/tauri.conf.json` and `Cargo.toml`,
@@ -31,15 +38,15 @@ libappindicator, Vulkan loader and `glslc` packages (Omarchy has them). `make de
 the Vulkan and SPIR-V headers into `desktop/.deps` if your system does not have them.
 
 ```sh
-make install-desktop     # builds the app and copies it to ~/.local/bin/open-whisper
-open-whisper             # start it
+make install-desktop     # builds the app and copies it to ~/.local/bin/lowkey
+lowkey                   # start it
 ```
 
 The first start downloads the speech model (0.55 GB) and the live preview model (17 MB), once.
 The window shows the progress. Other builds:
 
 ```sh
-make desktop             # only build: desktop/src-tauri/target/release/open-whisper
+make desktop             # only build: desktop/src-tauri/target/release/lowkey
                          # (also fetches the checked sherpa-onnx libraries into desktop/.deps)
 make desktop-bundle      # AppImage / .deb / .rpm in desktop/src-tauri/target/release/bundle/
 ```
@@ -62,7 +69,7 @@ make desktop-bundle      # AppImage / .deb / .rpm in desktop/src-tauri/target/re
   <kbd>Ctrl</kbd>+<kbd>,</kbd> jumps to the settings, <kbd>Esc</kbd> back to Transcribe.
 - Files given on the command line open in the app. **Closing the window keeps the app
   running** in the tray, so the dictation key stays instant. Quit from the tray or with
-  `open-whisper --dictate quit`.
+  `lowkey --dictate quit`.
 
 ## Dictate into any app
 
@@ -91,12 +98,12 @@ The global key is **<kbd>Super</kbd>+<kbd>Ctrl</kbd>+<kbd>X</kbd>** on Linux and
 **Hyprland (0.56+, Lua config): no setup.** The app adds the key and the overlay window rule
 to the running Hyprland with `hyprctl eval`, and again when Hyprland reloads its config. No
 config file is changed. To keep the key after a logout (and to start the closed app), put it in
-your config: `open-whisper --print-snippet lua` prints the lines; add them to
-`~/.config/hypr/bindings.lua` between `-- BEGIN open-whisper.dictation` and
-`-- END open-whisper.dictation`. A block that runs `scripts/ow-dictate` (from earlier versions)
-keeps working: the script hands the key to the app, or starts `~/.local/bin/open-whisper`
+your config: `lowkey --print-snippet lua` prints the lines; add them to
+`~/.config/hypr/bindings.lua` between `-- BEGIN lowkey.dictation` and
+`-- END lowkey.dictation`. A block that runs `scripts/ow-dictate` (from earlier versions)
+keeps working: the script hands the key to the app, or starts `~/.local/bin/lowkey`
 (else this folder's build; `OPENWHISPER_DESKTOP_BIN` overrides) with its output in
-`$XDG_RUNTIME_DIR/open-whisper/app.log`. When the key is in your config, the app
+`$XDG_RUNTIME_DIR/lowkey/app.log`. When the key is in your config, the app
 sees it and does not add it again. Classic `hyprland.conf`: `--print-snippet conf`.
 
 - **Change the key in Settings → Shortcuts → Change**, then press the new combination
@@ -107,7 +114,7 @@ sees it and does not add it again. Classic `hyprland.conf`: `--print-snippet con
   key works; if not, your config is put back. It also turns on "Start at login" (the config's
   bind worked after a logout; the app's bind needs the app).
 - **Settings → Shortcuts → Start when you log in**: the app starts hidden at login, so the key
-  works all the time (Linux: `~/.config/autostart/open-whisper.desktop`).
+  works all the time (Linux: `~/.config/autostart/lowkey.desktop`).
 - Command line: `--hotkey "…"` (this run), `hotkey = "…"` in the settings, `--no-hotkey` adds
   none; `--remove-hotkey` removes a key that the app added (never yours).
 - Title-bar plugins (hyprbars, as in Omarchy's window controls) skip the overlay: its rule
@@ -117,7 +124,7 @@ sees it and does not add it again. Classic `hyprland.conf`: `--print-snippet con
 - **X11, macOS, Windows:** the app registers the key while it runs. Typing uses xdotool (X11)
   or the system API (macOS asks once for Accessibility permission). Not tested on this
   machine.
-- **GNOME, KDE, sway (Wayland):** apps cannot add keys there. Bind `open-whisper --dictate
+- **GNOME, KDE, sway (Wayland):** apps cannot add keys there. Bind `lowkey --dictate
   press` / `--dictate release` (or `--dictate toggle`) in the desktop's keyboard settings.
 
 ### Live preview
@@ -171,7 +178,7 @@ Record a call or a talk, as text next to your notes (Linux for now). No bot join
 - Use headphones. Without them the microphone also hears the others; the app removes a "Me"
   line when most of its words are in a "Them" line at the same time.
 - Tell the others that you record. Meetings are saved as JSON in
-  `~/.local/share/open-whisper/meetings` (a private folder). The audio is not kept.
+  `~/.local/share/lowkey/meetings` (a private folder). The audio is not kept.
 - macOS and Windows record the microphone only, for now.
 
 Details: [docs/meetings.md](docs/meetings.md).
@@ -193,7 +200,7 @@ Bluetooth detection yet. (Idea from [Hex](https://github.com/anomalyco/hex), MIT
 The **History** section keeps every finished dictation (the global key and the window), newest
 first, grouped by day: search, Copy, Delete, Clear all. **Keep**: off, 1 day, 7 days (default),
 30 days or forever; turning it off deletes what was kept. The file is
-`~/.local/share/open-whisper/history.json` (0600). **Paste last dictation**
+`~/.local/share/lowkey/history.json` (0600). **Paste last dictation**
 (<kbd>Super</kbd>+<kbd>Alt</kbd>+<kbd>V</kbd> on Linux, <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>V</kbd>
 elsewhere; Settings → Shortcuts) types the last dictation again into the app you are in, also
 with the history off; with the app closed it reads the last one from the file. (Ideas from
@@ -221,7 +228,7 @@ brings another build of libstdc++'s `std::regex` and the linker keeps one copy f
 
 ## Settings (all optional)
 
-Settings in the window save them to `~/.config/open-whisper/config.toml`:
+Settings in the window save them to `~/.config/lowkey/config.toml`:
 
 ```toml
 model = "large-v3-turbo-q5_0"   # empty or missing: the default for this machine
@@ -267,7 +274,7 @@ Radeon 780M; [docs/tauri-desktop-options.md](docs/tauri-desktop-options.md)):
 it makes 2–4× more errors than the default. Details: [docs/parakeet.md](docs/parakeet.md).
 
 A model that is not on disk downloads the first time you use it, into
-`~/.local/share/open-whisper/models`. Silero VAD drops silence, so silent audio gives no text.
+`~/.local/share/lowkey/models`. Silero VAD drops silence, so silent audio gives no text.
 
 ## How it works
 

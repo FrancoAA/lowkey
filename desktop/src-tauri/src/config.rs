@@ -1,6 +1,6 @@
 //! Settings. Nothing is required: every value has a default, the file is optional.
 //!
-//! Precedence: command line > ~/.config/open-whisper/config.toml > automatic choice.
+//! Precedence: command line > ~/.config/lowkey/config.toml > automatic choice.
 
 use std::path::PathBuf;
 
@@ -121,11 +121,11 @@ impl Default for Config {
 }
 
 pub fn config_path() -> PathBuf {
-    dirs::config_dir().unwrap_or_else(|| PathBuf::from(".")).join("open-whisper").join("config.toml")
+    dirs::config_dir().unwrap_or_else(|| PathBuf::from(".")).join(crate::rename::folder()).join("config.toml")
 }
 
 pub fn data_dir() -> PathBuf {
-    dirs::data_dir().unwrap_or_else(|| PathBuf::from(".")).join("open-whisper")
+    dirs::data_dir().unwrap_or_else(|| PathBuf::from(".")).join(crate::rename::folder())
 }
 
 impl Config {
@@ -160,7 +160,7 @@ impl Config {
         let path = config_path();
         std::fs::create_dir_all(path.parent().unwrap())?;
         let body = format!(
-            "# open-whisper settings. Every line is optional; delete the file to go back to defaults.\n{}",
+            "# Lowkey settings. Every line is optional; delete the file to go back to defaults.\n{}",
             toml::to_string_pretty(self)?
         );
         // It can hold an API key: readable by you only, from its first byte (a new file, then a rename).
@@ -207,9 +207,9 @@ pub struct Cli {
     pub remove_hotkey: bool,
 }
 
-pub const HELP: &str = "open-whisper — local speech to text
+pub const HELP: &str = "Lowkey — local speech to text
 
-Usage: open-whisper [options] [audio or video files…]
+Usage: lowkey [options] [audio or video files…]
 
   --model <id>            model to use (see Options in the app; default: picked for this machine)
   --language <code>       force a language instead of auto-detect
@@ -264,7 +264,7 @@ mod tests {
     use super::*;
 
     fn argv(s: &str) -> Vec<String> {
-        std::iter::once("open-whisper").chain(s.split_whitespace()).map(String::from).collect()
+        std::iter::once("lowkey").chain(s.split_whitespace()).map(String::from).collect()
     }
 
     #[test]
@@ -308,7 +308,7 @@ mod tests {
         let path = config_path();
         assert!(path.starts_with(&dir));
         let text = std::fs::read_to_string(&path).unwrap();
-        assert!(text.starts_with("# open-whisper settings"));
+        assert!(text.starts_with("# Lowkey settings"));
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;

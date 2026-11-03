@@ -88,10 +88,10 @@ fn type_text(text: &str) -> bool {
 pub fn notify(message: &str) {
     #[cfg(target_os = "linux")]
     {
-        let _ = Command::new("notify-send").args(["-a", "open-whisper", "open-whisper", message]).spawn();
+        let _ = Command::new("notify-send").args(["-a", "Lowkey", "Lowkey", message]).spawn();
     }
     #[cfg(not(target_os = "linux"))]
-    eprintln!("open-whisper: {message}");
+    eprintln!("lowkey: {message}");
 }
 
 #[cfg(test)]

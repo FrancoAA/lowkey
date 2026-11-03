@@ -94,7 +94,7 @@ jobs:
 
       - uses: actions/upload-artifact@v7
         with:
-          name: open-whisper-${{ runner.os }}-${{ runner.arch }}
+          name: lowkey-${{ runner.os }}-${{ runner.arch }}
           if-no-files-found: error
           path: |
             desktop/src-tauri/target/release/bundle/appimage/*.AppImage
@@ -127,6 +127,6 @@ jobs:
           [ "${#files[@]}" -ge 6 ] || { echo "::error::expected 6 or more installers, found ${#files[@]}"; exit 1; }
           notes="Installers for Linux (AppImage, .deb, .rpm), Windows (.exe installer, .msi) and macOS on Apple Silicon (.dmg).
           They are not signed: Windows SmartScreen asks once (More info → Run anyway); on macOS run
-          \`xattr -dr com.apple.quarantine /Applications/open-whisper.app\` after copying the app."
-          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title "open-whisper ${GITHUB_REF_NAME#v}" \
+          \`xattr -dr com.apple.quarantine /Applications/Lowkey.app\` after copying the app."
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title "Lowkey ${GITHUB_REF_NAME#v}" \
             --notes "$notes" --generate-notes "${files[@]}"

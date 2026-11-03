@@ -1,5 +1,5 @@
 [package]
-name = "open-whisper"
+name = "lowkey"
 version = "0.3.0"
 description = "Local, open-source speech to text: desktop app"
 edition = "2021"
@@ -7,11 +7,11 @@ rust-version = "1.80"
 license = "MIT"
 
 [lib]
-name = "open_whisper_lib"
+name = "lowkey_lib"
 crate-type = ["rlib"]
 
 [[bin]]
-name = "open-whisper"
+name = "lowkey"
 path = "src/main.rs"
 
 [build-dependencies]

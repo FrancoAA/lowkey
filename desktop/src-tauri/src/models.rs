@@ -211,7 +211,7 @@ fn download_locked(url: &str, dest: &Path, progress: &mut impl FnMut(u64, u64), 
     let client = reqwest::blocking::Client::builder()
         .connect_timeout(Duration::from_secs(15))
         .timeout(None)
-        .user_agent(concat!("open-whisper/", env!("CARGO_PKG_VERSION")))
+        .user_agent(concat!("lowkey/", env!("CARGO_PKG_VERSION")))
         .build()?;
     let mut last_err = None;
     for attempt in 1..=4u32 {

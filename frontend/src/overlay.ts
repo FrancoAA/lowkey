@@ -133,7 +133,7 @@ function renderMeeting(now: number): void {
   if (note?.state === "offer" && (!meet || meet.state === "done")) {
     root.dataset.state = "offer";
     label.textContent = `${note.label} call detected`;
-    detail.textContent = note.key ? `${prettyKey(note.key)} records it` : "Record it in open-whisper → Meetings";
+    detail.textContent = note.key ? `${prettyKey(note.key)} records it` : "Record it in Lowkey → Meetings";
     return;
   }
   const m = meet!;
@@ -153,7 +153,7 @@ function renderMeeting(now: number): void {
     detail.textContent = m.pending ? `${m.pending} part${m.pending > 1 ? "s" : ""} to transcribe` : "One moment";
   } else {
     label.textContent = "Meeting saved";
-    detail.textContent = `${clock(m.meeting.duration * 1000)} · open it in open-whisper → Meetings`;
+    detail.textContent = `${clock(m.meeting.duration * 1000)} · open it in Lowkey → Meetings`;
   }
 }
 

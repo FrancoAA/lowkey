@@ -1,8 +1,9 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "open-whisper",
+  "productName": "Lowkey",
+  "mainBinaryName": "lowkey",
   "version": "0.3.0",
-  "identifier": "dev.openwhisper.app",
+  "identifier": "dev.lowkey.app",
   "build": {
     "frontendDist": "../../frontend/dist",
     "devUrl": "http://localhost:5173",

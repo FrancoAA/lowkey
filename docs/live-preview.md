@@ -20,7 +20,7 @@ is typed and copied still comes from the main model (default whisper.cpp
 | Engine | `libneedle3.so` (C API `needle.h`, libc++ inside, only libc/libm/pthread needed) | 1.6 MB | from `cactus_needle-3.3.3-py3-none-manylinux2014_x86_64.whl` in `Cactus-Compute/needle3` @ `d6c7d6a2`, SHA-256 of the wheel `b909897e…` and of the library `87476ff7…` |
 
 - Both files are downloaded once at app start into
-  `~/.local/share/open-whisper/models/whistle/` (or `$OPENWHISPER_MODELS_DIR/whistle`). The
+  `~/.local/share/lowkey/models/whistle/` (or `$OPENWHISPER_MODELS_DIR/whistle`). The
   checksums are checked at every start: a wrong or truncated file (or a new pin in the code)
   is deleted and downloaded again. If the download fails, the preview is off until the next
   start, or until it is turned off and on again in Options.

@@ -171,7 +171,7 @@ mod platform {
             Some(s) => std::ffi::CString::new(s).map_err(|_| anyhow::anyhow!("bad source name"))?,
             None => DEVICE.to_owned(),
         };
-        let stream = std::ffi::CString::new(stream_name).unwrap_or_else(|_| c"open-whisper".to_owned());
+        let stream = std::ffi::CString::new(stream_name).unwrap_or_else(|_| c"Lowkey".to_owned());
         let is_mic = source.is_some();
         let stop = Arc::new(AtomicBool::new(false));
         let (ready_tx, ready_rx) = std::sync::mpsc::channel::<anyhow::Result<()>>();
@@ -193,7 +193,7 @@ mod platform {
             let pa = unsafe {
                 (api.new)(
                     std::ptr::null(),
-                    c"open-whisper".as_ptr(),
+                    c"Lowkey".as_ptr(),
                     PA_STREAM_RECORD,
                     device.as_ptr(),
                     stream.as_ptr(),

@@ -1,5 +1,7 @@
 # open-whisper as a Tauri v2 desktop app — decisions
 
+> The app is now called **Lowkey** (it was open-whisper when this was written).
+
 Status: **decided by Franco on 2026-11-01 and built** on branch `feat/tauri-desktop`:
 engine **C** (whisper.cpp in Rust by default, faster-whisper as an optional engine through the
 Python helper, picked automatically without a GPU), hotkey **"Hyprland as today + per-OS

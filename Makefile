@@ -2,9 +2,9 @@
 
 CARGO ?= $(shell command -v cargo 2>/dev/null || echo $(HOME)/.cargo/bin/cargo)
 TAURI = $(CURDIR)/frontend/node_modules/.bin/tauri
-DESKTOP_BIN = desktop/src-tauri/target/release/open-whisper
+DESKTOP_BIN = desktop/src-tauri/target/release/lowkey
 
-desktop:        ## build the desktop app -> desktop/src-tauri/target/release/open-whisper
+desktop:        ## build the desktop app -> desktop/src-tauri/target/release/lowkey
 	cd frontend && ([ -d node_modules ] || npm ci) && npm run build
 	./desktop/scripts/vulkan-sdk.sh
 	./desktop/scripts/sherpa-onnx.sh
@@ -34,11 +34,15 @@ e2e-desktop: desktop  ## desktop app in a nested Hyprland (your session is not t
 	python3 scripts/e2e_desktop.py
 
 install-desktop: desktop  ## the app in ~/.local/bin, plus its launcher entry and icon (the key then uses it)
-	install -Dm755 $(DESKTOP_BIN) $(HOME)/.local/bin/open-whisper
-	install -Dm644 desktop/src-tauri/icons/128x128.png $(HOME)/.local/share/icons/hicolor/128x128/apps/open-whisper.png
+	install -Dm755 $(DESKTOP_BIN) $(HOME)/.local/bin/lowkey
+	install -Dm644 desktop/src-tauri/icons/128x128.png $(HOME)/.local/share/icons/hicolor/128x128/apps/lowkey.png
 	mkdir -p $(HOME)/.local/share/applications
-	bin='$(HOME)/.local/bin/open-whisper'; esc=$$(printf '%s' "$$bin" | sed 's/[\\&|]/\\&/g'); \
-	  sed "s|@BIN@|$$esc|" desktop/open-whisper.desktop > $(HOME)/.local/share/applications/open-whisper.desktop
+	bin='$(HOME)/.local/bin/lowkey'; esc=$$(printf '%s' "$$bin" | sed 's/[\\&|]/\\&/g'); \
+	  sed "s|@BIN@|$$esc|" desktop/lowkey.desktop > $(HOME)/.local/share/applications/lowkey.desktop
+	@# The app's old name (open-whisper): its program, launcher entry and icon go. Lowkey moves
+	@# its settings, data and Start at login entry the first time it starts.
+	rm -f $(HOME)/.local/bin/open-whisper $(HOME)/.local/share/applications/open-whisper.desktop \
+	  $(HOME)/.local/share/icons/hicolor/128x128/apps/open-whisper.png
 
 bench:          ## research: benchmark models on this machine (docs/benchmark.md; Python via uv, not used by the app)
 	HF_HUB_DISABLE_XET=1 uv run bench/make_samples.py

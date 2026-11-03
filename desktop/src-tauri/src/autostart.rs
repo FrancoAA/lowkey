@@ -4,7 +4,7 @@
 
 use std::path::{Path, PathBuf};
 
-pub const FILE: &str = "open-whisper.desktop";
+pub const FILE: &str = "lowkey.desktop";
 
 pub fn dir() -> PathBuf {
     dirs::config_dir().unwrap_or_else(|| PathBuf::from(".")).join("autostart")
@@ -31,7 +31,7 @@ pub fn entry(exe: &Path) -> String {
         }
     }
     format!(
-        "[Desktop Entry]\nType=Application\nName=open-whisper\nComment=Local speech to text: the dictation key, in the background\nExec=\"{quoted}\" --background\nIcon=open-whisper\nTerminal=false\nX-GNOME-Autostart-enabled=true\n"
+        "[Desktop Entry]\nType=Application\nName=Lowkey\nComment=Local speech to text: the dictation key, in the background\nExec=\"{quoted}\" --background\nIcon=lowkey\nTerminal=false\nX-GNOME-Autostart-enabled=true\n"
     )
 }
 
@@ -77,7 +77,7 @@ mod tests {
     fn the_entry_is_written_quoted_and_removed() {
         let root = std::env::temp_dir().join(format!("ow-autostart-{}", std::process::id()));
         let dir = root.join("autostart");
-        let exe = Path::new("/opt/my apps/open-whisper");
+        let exe = Path::new("/opt/my apps/lowkey");
         assert!(!enabled_in(&dir));
         set_in(&dir, true, exe).unwrap();
         assert!(!enabled_in(&dir), "the program does not exist: the entry would start nothing");
@@ -86,14 +86,14 @@ mod tests {
         assert!(enabled_in(&dir));
         set_in(&dir, true, exe).unwrap();
         let text = std::fs::read_to_string(dir.join(FILE)).unwrap();
-        assert!(text.contains("Exec=\"/opt/my apps/open-whisper\" --background"), "{text}");
+        assert!(text.contains("Exec=\"/opt/my apps/lowkey\" --background"), "{text}");
         set_in(&dir, false, exe).unwrap();
         set_in(&dir, false, exe).unwrap(); // already off: fine
         assert!(!enabled_in(&dir));
         assert!(entry(Path::new("/a\"b$c")).contains(r#"Exec="/a\"b\$c" --background"#));
-        let odd = Path::new("/x/100% \"real\"/open-whisper");
+        let odd = Path::new("/x/100% \"real\"/lowkey");
         assert!(entry(odd).contains("100%%"));
-        assert_eq!(exec_program(&entry(odd)).as_deref(), Some("/x/100% \"real\"/open-whisper"));
+        assert_eq!(exec_program(&entry(odd)).as_deref(), Some("/x/100% \"real\"/lowkey"));
         let _ = std::fs::remove_dir_all(root);
     }
 }
