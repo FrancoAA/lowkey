@@ -12,7 +12,7 @@ export class Waveform {
   private raf = 0;
   private source: LevelSource | null = null;
   private lastPush = 0;
-  private color = "#c026d3";
+  private color = "#27272a";
 
   constructor(private canvas: HTMLCanvasElement) {
     this.ctx = canvas.getContext("2d")!;
@@ -104,7 +104,7 @@ export class DualWaveform {
   private raf = 0;
   private lastPush = 0;
   private smooth = [0, 0];
-  private colors = ["#c026d3", "#0e7490"];
+  private colors = ["#3f3f46", "#4f6d8a"];
   private running = false;
   /** The newest levels, 0..1, set by whoever receives them. */
   levels = { me: 0, them: 0 };

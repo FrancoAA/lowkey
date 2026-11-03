@@ -1,9 +1,9 @@
 :root {
   color-scheme: dark;
   font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  --accent: #e879f9;
-  --me: #e879f9;
-  --them: #22d3ee;
+  --accent: #e4e4e7;
+  --me: #e4e4e7;
+  --them: #8aa4bf;
 }
 * { box-sizing: border-box; }
 /* The window is transparent: only the rounded strip is drawn. */

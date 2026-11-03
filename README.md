@@ -163,7 +163,7 @@ Record a call or a talk, as text next to your notes (Linux for now). No bot join
   <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>M</kbd> on macOS and Windows; change it in Settings → Shortcuts)
   starts a recording from any app, and stops it. On Hyprland (or with your own desktop bind)
   it also starts the app when it is closed; on X11, macOS and Windows the app must run. A
-  strip at the bottom of the screen shows the time, a two-colour wave (Me magenta, Them cyan) and the newest line,
+  strip at the bottom of the screen shows the time, a two-colour wave (Me light grey, Them steel blue) and the newest line,
   and "saved" at the end. It never takes the keyboard focus.
 - **Record** (in the window, next to the search field) does the same, and so does the tray menu. It records two sources: your microphone (**Me**) and the computer's sound
   (**Them**: the others in Zoom, Meet, Teams…, through PipeWire or PulseAudio).

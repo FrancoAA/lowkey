@@ -22,7 +22,7 @@ macOS and Windows, a prompt when a call starts, and questions over past meetings
   X11, macOS, Windows: the global-shortcut plugin, as for dictation.
 - The **strip** is the dictation overlay (same window, same Hyprland rule: floating, pinned,
   never focused). While a meeting records it shows a red dot, the time, a two-colour wave (Me
-  above the line in magenta, Them below it in cyan) and the newest line, its speaker in its
+  above the line in light grey, Them below it in steel blue) and the newest line, its speaker in its
   colour. At Stop it says "Saving the
   meeting…", then "Meeting saved" for 3 s. A dictation during a meeting takes the strip and
   gives it back when it is done. A meeting started in the window shows the strip too (with no

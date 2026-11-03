@@ -1,5 +1,6 @@
-/* Design tokens after shadcn/ui (zinc base, "new-york" style). The brand colour (magenta) is
-   kept for the microphone, the waveform and progress; controls are neutral as in shadcn. */
+/* Design tokens after shadcn/ui (zinc base, "new-york" style). Sober: the "brand" (the
+   microphone, the waveform, progress, highlights) is neutral zinc; the one quiet hue is Them's
+   steel blue in meetings, so the two voices stay apart. Red only means recording or an error. */
 :root {
   --radius: 0.625rem;
   --background: #ffffff;
@@ -15,12 +16,12 @@
   --primary-foreground: #fafafa;
   --destructive: #dc2626;
   --success: #16a34a;
-  --brand: #c026d3;
-  --brand-soft: #fdf4ff;
-  /* Meeting voices: Me (the microphone) is the brand; Them (the computer's sound) is cyan. */
-  --me: #c026d3;
-  --them: #0e7490;
-  --them-soft: #ecfeff;
+  --brand: #27272a;
+  --brand-soft: #f4f4f5;
+  /* Meeting voices: Me (the microphone) is neutral; Them (the computer's sound) is steel blue. */
+  --me: #3f3f46;
+  --them: #4f6d8a;
+  --them-soft: #eef2f6;
   --rec: #dc2626;
   color-scheme: light dark;
   font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Inter", sans-serif;
@@ -45,11 +46,11 @@
     --primary-foreground: #18181b;
     --destructive: #f87171;
     --success: #4ade80;
-    --brand: #e879f9;
-    --brand-soft: #2a1530;
-    --me: #e879f9;
-    --them: #22d3ee;
-    --them-soft: #0c2a30;
+    --brand: #e4e4e7;
+    --brand-soft: #1c1c1f;
+    --me: #e4e4e7;
+    --them: #8aa4bf;
+    --them-soft: #141b22;
     --rec: #f87171;
   }
 }
@@ -167,7 +168,7 @@ h1 { font-size: 20px; font-weight: 600; }
 .mic svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .mic:hover { background: var(--brand-soft); }
 .dictation[data-state="listening"] .mic,
-.dictation[data-state="starting"] .mic { background: var(--brand); color: #fff; border-color: var(--brand); animation: ring 1.4s ease-out infinite; }
+.dictation[data-state="starting"] .mic { background: var(--brand); color: var(--primary-foreground); border-color: var(--brand); animation: ring 1.4s ease-out infinite; }
 .dictation-body { flex: 1; min-width: 0; height: 56px; display: flex; align-items: center; gap: 12px; }
 .dictation-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .dictation-label { font-weight: 600; }
@@ -321,7 +322,7 @@ h1 { font-size: 20px; font-weight: 600; }
 @media (hover: none) { .meeting-item-delete { opacity: 1; } }
 .meeting-item-where { font-weight: 500; color: var(--foreground); }
 /* Search results: the searched words. */
-mark { background: color-mix(in srgb, var(--brand) 22%, transparent); color: inherit; border-radius: 3px; padding: 0 1px; }
+mark { background: color-mix(in srgb, var(--brand) 20%, transparent); color: inherit; font-weight: 600; border-radius: 3px; padding: 0 1px; }
 .meeting-item-main { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .meeting-item-top { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .meeting-item-title { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -359,7 +360,6 @@ mark { background: color-mix(in srgb, var(--brand) 22%, transparent); color: inh
 .meeting-head .meta { margin: 0; }
 .danger { color: var(--destructive); }
 .danger:hover { background: color-mix(in srgb, var(--destructive) 10%, transparent); }
-.danger[data-armed] { background: var(--destructive); color: #fff; }
 
 /* Recording: the clock, the two voices, Stop */
 /* Row 1: the clock, the legend, Stop. Row 2: the wave, full width. */
