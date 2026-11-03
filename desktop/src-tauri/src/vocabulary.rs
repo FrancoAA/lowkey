@@ -25,7 +25,16 @@ pub const MAX_SPELLINGS: usize = 10;
 #[derive(Debug, Default)]
 pub struct Vocabulary {
     terms: Vec<Term>,
-    rules: Vec<(Regex, String)>,
+    /// Every spelling of every term in one pattern, longest first: one pass over the text, so
+    /// a term's replacement is never rewritten by another term.
+    pattern: Option<Regex>,
+    /// A spelling (lower case, single spaces) -> its term.
+    by_spelling: std::collections::HashMap<String, String>,
+}
+
+/// How a spelling is looked up: lower case, runs of spaces as one.
+fn key(s: &str) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
 }
 
 fn clean(s: &str) -> String {
@@ -75,17 +84,23 @@ fn pattern(spelling: &str) -> String {
 impl Vocabulary {
     pub fn new(terms: &[Term]) -> Self {
         let terms = normalize(terms);
-        let mut rules = Vec::new();
+        let mut by_spelling = std::collections::HashMap::new();
+        let mut spellings: Vec<&str> = Vec::new();
         for t in &terms {
-            // Longer spellings first, so "Lee Sandro" wins over "Sandro".
-            let mut spellings: Vec<&str> = t.sounds_like.iter().map(String::as_str).chain([t.term.as_str()]).collect();
-            spellings.sort_by_key(|s| std::cmp::Reverse(s.chars().count()));
-            let alts: Vec<String> = spellings.iter().map(|s| pattern(s)).collect();
-            if let Ok(re) = Regex::new(&format!("(?i)(?:{})", alts.join("|"))) {
-                rules.push((re, t.term.clone()));
+            for s in t.sounds_like.iter().map(String::as_str).chain([t.term.as_str()]) {
+                // The first term that claims a spelling keeps it.
+                if !by_spelling.contains_key(&key(s)) {
+                    by_spelling.insert(key(s), t.term.clone());
+                    spellings.push(s);
+                }
             }
         }
-        Self { terms, rules }
+        // Longer spellings first: at one position the regex takes the first alternative that
+        // matches, so "N M R" wins over "M R" and "Lee Sandro" over "Sandro".
+        spellings.sort_by_key(|s| std::cmp::Reverse(s.chars().count()));
+        let alts: Vec<String> = spellings.iter().map(|s| pattern(s)).collect();
+        let pattern = (!alts.is_empty()).then(|| Regex::new(&format!("(?i)(?:{})", alts.join("|"))).ok()).flatten();
+        Self { terms, pattern, by_spelling }
     }
 
     pub fn is_empty(&self) -> bool {
@@ -98,13 +113,12 @@ impl Vocabulary {
 
     /// The text with every spelling of a term written as the term.
     pub fn apply(&self, text: &str) -> String {
-        let mut out = text.to_string();
-        for (re, term) in &self.rules {
-            if re.is_match(&out) {
-                out = re.replace_all(&out, regex::NoExpand(term)).into_owned();
-            }
-        }
-        out
+        let Some(re) = &self.pattern else { return text.to_string() };
+        re.replace_all(text, |c: &regex::Captures| {
+            let found = &c[0];
+            self.by_spelling.get(&key(found)).cloned().unwrap_or_else(|| found.to_string())
+        })
+        .into_owned()
     }
 
     /// Whisper's initial prompt: the terms as a short glossary (its prompt holds about 220
@@ -150,6 +164,17 @@ mod tests {
         assert_eq!(v.apply("lisandro"), "Lisandro", "the term in another case is fixed too");
         assert_eq!(v.apply("Lisandrooo and Lisandos"), "Lisandrooo and Lisandos", "never inside a word");
         assert_eq!(Vocabulary::new(&[]).apply("anything at all"), "anything at all");
+    }
+
+    #[test]
+    fn one_pass_the_longest_spelling_wins_and_a_term_is_never_rewritten() {
+        // "M R" is listed first, but "N M R" is longer: it wins where both start.
+        let v = Vocabulary::new(&[t("MR", &["M R"]), t("NMR", &["N M R"])]);
+        assert_eq!(v.apply("ticket N M R-1 and M R"), "ticket NMR-1 and MR");
+        // A term that is another term's spelling is not rewritten again.
+        let v = Vocabulary::new(&[t("Open", &["opn"]), t("OpenWhisper", &["open whisper"])]);
+        assert_eq!(v.apply("opn the open whisper app"), "Open the OpenWhisper app");
+        assert_eq!(v.apply(&v.apply("opn the open whisper app")), "Open the OpenWhisper app", "applying twice changes nothing");
     }
 
     #[test]

@@ -64,6 +64,12 @@ fn open(on_level: LevelFn, on_end: EndFn, on_audio: Option<AudioFn>, keep: bool)
         let source = device.unwrap_or_else(|| "@DEFAULT_SOURCE@".into());
         return Box::new(PulseMic { source, on_level, on_end, shared, capture: None });
     }
+    // Without that library a source name means nothing to cpal: the default input.
+    #[cfg(target_os = "linux")]
+    let device: Option<String> = {
+        let _ = device;
+        None
+    };
     Box::new(CpalMic { device, on_level, on_end, shared, stop_tx: None, thread: None })
 }
 

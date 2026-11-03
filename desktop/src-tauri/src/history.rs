@@ -52,15 +52,19 @@ pub struct History {
     keep: Mutex<String>,
     entries: Mutex<Vec<Entry>>,
     last: Mutex<Option<String>>,
+    /// One save at a time, each with the entries as they are when it starts: an older state
+    /// never lands after a newer one (a delete is never undone by a dictation saved meanwhile).
+    saving: Mutex<()>,
 }
 
 impl History {
     /// Reads the file (a missing or broken one is an empty history) and drops what is too old.
     pub fn open(file: PathBuf, keep: &str) -> Self {
         let entries: Vec<Entry> = std::fs::read_to_string(&file).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
-        let last = entries.last().map(|e| e.text.clone());
-        let h = Self { file, keep: Mutex::new(keep.into()), entries: Mutex::new(entries), last: Mutex::new(last) };
+        let h = Self { file, keep: Mutex::new(keep.into()), entries: Mutex::new(entries), last: Mutex::new(None), saving: Mutex::new(()) };
         h.prune(now());
+        // After the pruning: a dictation that is gone is never typed again.
+        *h.last.lock() = h.entries.lock().last().map(|e| e.text.clone());
         h
     }
 
@@ -120,9 +124,16 @@ impl History {
     pub fn delete(&self, id: &str) -> bool {
         let removed = {
             let mut e = self.entries.lock();
-            let before = e.len();
+            let gone: Option<Entry> = e.iter().find(|x| x.id == id).cloned();
             e.retain(|x| x.id != id);
-            e.len() != before
+            // A deleted dictation is not typed by Paste last any more.
+            if let Some(g) = &gone {
+                let mut last = self.last.lock();
+                if last.as_deref() == Some(g.text.as_str()) {
+                    *last = e.last().map(|x| x.text.clone());
+                }
+            }
+            gone.is_some()
         };
         if removed {
             self.save();
@@ -132,6 +143,7 @@ impl History {
 
     pub fn clear(&self) {
         self.entries.lock().clear();
+        *self.last.lock() = None;
         self.save();
     }
 
@@ -151,6 +163,7 @@ impl History {
 
     /// Written whole to a temporary file, then renamed; readable by you only.
     fn save(&self) {
+        let _one = self.saving.lock();
         let body = serde_json::to_vec(&*self.entries.lock()).unwrap_or_default();
         if let Err(e) = write_private(&self.file, &body) {
             eprintln!("  history: could not save {}: {e}", self.file.display());
@@ -172,6 +185,12 @@ fn write_private(file: &Path, body: &[u8]) -> std::io::Result<()> {
         opts.mode(0o600);
     }
     let mut f = opts.open(&tmp)?;
+    #[cfg(unix)]
+    {
+        // A temporary file left by an older build keeps its mode: private again.
+        use std::os::unix::fs::PermissionsExt;
+        f.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    }
     f.write_all(body)?;
     f.sync_all()?;
     std::fs::rename(&tmp, file)
@@ -212,6 +231,27 @@ mod tests {
         }
         again.clear();
         assert!(History::open(f.clone(), "week").list("").is_empty());
+        assert_eq!(again.last(), None, "Clear all: nothing to paste");
+        let _ = std::fs::remove_dir_all(f.parent().unwrap());
+    }
+
+    #[test]
+    fn a_deleted_or_pruned_dictation_is_never_pasted() {
+        let f = temp("last");
+        let h = History::open(f.clone(), "week");
+        let a = h.add("first words", "key", "small", 1.0).unwrap();
+        let b = h.add("secret words", "key", "small", 1.0).unwrap();
+        assert!(h.delete(&b.id));
+        assert_eq!(h.last().as_deref(), Some("first words"), "the newest left");
+        assert!(h.delete(&a.id));
+        assert_eq!(h.last(), None);
+        // An old file opened with a short retention: the pruned text is not the last one.
+        let mut old = Entry { id: "h-1".into(), at: 1, text: "very old".into(), source: "key".into(), model: "small".into(), seconds: 1.0 };
+        std::fs::write(&f, serde_json::to_vec(&vec![old.clone()]).unwrap()).unwrap();
+        assert_eq!(History::open(f.clone(), "day").last(), None);
+        old.at = now();
+        std::fs::write(&f, serde_json::to_vec(&vec![old]).unwrap()).unwrap();
+        assert_eq!(History::open(f.clone(), "day").last().as_deref(), Some("very old"));
         let _ = std::fs::remove_dir_all(f.parent().unwrap());
     }
 

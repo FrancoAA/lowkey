@@ -73,32 +73,48 @@ const BROWSERS: &[(&str, &str)] = &[
     ("opera", "Opera"),
 ];
 
-/// Call pages, found in a browser window's title: (substring, key, label).
-const PAGES: &[(&str, &str, &str)] = &[
-    ("meet - ", "google-meet", "Google Meet"),
-    ("meet – ", "google-meet", "Google Meet"),
-    ("google meet", "google-meet", "Google Meet"),
-    ("zoom meeting", "zoom", "Zoom"),
-    ("| microsoft teams", "teams", "Microsoft Teams"),
-    ("jitsi meet", "jitsi", "Jitsi Meet"),
-    ("whereby", "whereby", "Whereby"),
-    ("discord", "discord", "Discord"),
-    ("huddle", "slack", "Slack"),
-    ("whatsapp", "whatsapp", "WhatsApp"),
+/// Where a call page's mark is in the window title.
+#[derive(Clone, Copy)]
+enum At {
+    Start,
+    Anywhere,
+}
+
+/// Call pages, found in a browser window's title (lower case): (where, text, key, label).
+/// Strict where a word is common: "Meet - …" only at the start (a calendar title "… meet - …"
+/// is not a call).
+const PAGES: &[(At, &str, &str, &str)] = &[
+    (At::Start, "meet - ", "google-meet", "Google Meet"),
+    (At::Start, "meet – ", "google-meet", "Google Meet"),
+    (At::Start, "zoom meeting", "zoom", "Zoom"),
+    (At::Anywhere, "| microsoft teams", "teams", "Microsoft Teams"),
+    (At::Anywhere, "jitsi meet", "jitsi", "Jitsi Meet"),
+    (At::Anywhere, "| whereby", "whereby", "Whereby"),
+    (At::Anywhere, "| discord", "discord", "Discord"),
+    (At::Anywhere, "huddle", "slack", "Slack"),
 ];
 
-/// What call (if any) a microphone user is. `titles`: the window titles of a pid.
-pub fn classify(u: &MicUser, titles: &dyn Fn(u32) -> Vec<String>) -> Option<Call> {
+fn page_of(title: &str) -> Option<(&'static str, &'static str)> {
+    let t = title.to_lowercase();
+    PAGES
+        .iter()
+        .find(|(at, p, _, _)| match at {
+            At::Start => t.starts_with(p),
+            At::Anywhere => t.contains(p),
+        })
+        .map(|(_, _, k, l)| (*k, *l))
+}
+
+/// What call (if any) a microphone user is. `title`: the title of the pid's most recently
+/// used window (a browser's other windows say nothing about which one holds the microphone).
+pub fn classify(u: &MicUser, title: &dyn Fn(u32) -> Option<String>) -> Option<Call> {
     let hay = format!("{} {}", u.binary, u.app).to_lowercase();
     // Our own streams (dictation, meetings) never count.
     if hay.contains("open-whisper") || hay.contains("open_whisper") {
         return None;
     }
     if let Some((_, key, label)) = BROWSERS.iter().map(|(n, l)| (n, n, l)).find(|(n, _, _)| hay.contains(*n)) {
-        let page = u.pid.map(titles).unwrap_or_default().iter().find_map(|t| {
-            let t = t.to_lowercase();
-            PAGES.iter().find(|(p, _, _)| t.contains(p)).map(|(_, k, l)| (k.to_string(), l.to_string()))
-        });
+        let page = u.pid.and_then(title).as_deref().and_then(page_of).map(|(k, l)| (k.to_string(), l.to_string()));
         return Some(match page {
             Some((k, l)) => Call { key: k, label: l, known: true },
             None => Call { key: format!("browser:{key}"), label: label.to_string(), known: false },
@@ -112,7 +128,7 @@ pub fn label_for(key: &str) -> String {
     if let Some(b) = key.strip_prefix("browser:") {
         return BROWSERS.iter().find(|(n, _)| *n == b).map(|(_, l)| l.to_string()).unwrap_or_else(|| b.to_string());
     }
-    APPS.iter().map(|(_, k, l)| (k, l)).chain(PAGES.iter().map(|(_, k, l)| (k, l))).find(|(k, _)| **k == key).map(|(_, l)| l.to_string()).unwrap_or_else(|| key.to_string())
+    APPS.iter().map(|(_, k, l)| (k, l)).chain(PAGES.iter().map(|(_, _, k, l)| (k, l))).find(|(k, _)| **k == key).map(|(_, l)| l.to_string()).unwrap_or_else(|| key.to_string())
 }
 
 pub const POLICIES: &[&str] = &["ask", "always", "never"];
@@ -198,12 +214,15 @@ mod tests {
 
     #[test]
     fn mic_users_are_named() {
-        let none = |_: u32| Vec::<String>::new();
-        let meet = |_: u32| vec!["Meet - Weekly sync — Mozilla Firefox".to_string()];
+        let none = |_: u32| None::<String>;
+        let meet = |_: u32| Some("Meet - Weekly sync — Mozilla Firefox".to_string());
+        let calendar = |_: u32| Some("Calendar – meet - Thursday — Mozilla Firefox".to_string());
         assert_eq!(classify(&user("ZOOM VoiceEngine", "zoom", 1), &none).unwrap().label, "Zoom");
         assert_eq!(classify(&user("teams-for-linux", "teams-for-linux", 1), &none).unwrap().key, "teams");
         assert_eq!(classify(&user("Firefox", "firefox", 7), &meet), Some(Call { key: "google-meet".into(), label: "Google Meet".into(), known: true }));
         assert_eq!(classify(&user("Firefox", "firefox", 7), &none), Some(Call { key: "browser:firefox".into(), label: "Firefox".into(), known: false }));
+        assert_eq!(classify(&user("Firefox", "firefox", 7), &calendar).unwrap().known, false, "'meet - ' inside a title is not a call");
+        assert_eq!(page_of("Daily | Microsoft Teams"), Some(("teams", "Microsoft Teams")));
         assert_eq!(classify(&user("open-whisper", "open-whisper", 9), &none), None, "our own streams never count");
         assert_eq!(classify(&user("ALSA plug-in [obs]", "obs", 3), &none), None, "not a call app");
         let json = r#"[{"properties":{"application.name":"ZOOM VoiceEngine","application.process.binary":"zoom","application.process.id":"4242"}},{"properties":{}}]"#;

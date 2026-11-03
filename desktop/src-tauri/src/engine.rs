@@ -241,7 +241,8 @@ impl Engines {
             s.state = "loading".into();
             s.progress = 1.0;
         });
-        // One model in memory at a time.
+        // One model in memory at a time (and the old model's token table goes with it).
+        *self.whisper_vocab.lock() = None;
         if let Some((old, _)) = self.loaded.lock().take() {
             self.set_state(&old, |s| *s = ModelState::new("downloaded"));
         }

@@ -163,7 +163,10 @@ export function initHistory(backend: Backend, keep: string, ui: HistoryUi): { re
     clearBtn.textContent = "Clear all";
     delete clearBtn.dataset.armed;
   }
-  api.onAdded(() => void refresh());
+  // A new dictation: rebuilt now only when the section is on screen (opening it refreshes).
+  api.onAdded(() => {
+    if (list.offsetParent) void refresh();
+  });
   void refresh();
   return { refresh: () => void refresh() };
 }

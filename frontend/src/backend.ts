@@ -37,6 +37,8 @@ export interface Microphones {
   avoid_bluetooth: boolean;
   /** Bluetooth inputs are recognised here (Linux). */
   bluetooth_aware: boolean;
+  /** A microphone can be chosen here (Linux: needs the PipeWire/PulseAudio library). */
+  selectable: boolean;
 }
 
 export interface Backend {

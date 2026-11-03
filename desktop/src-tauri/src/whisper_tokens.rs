@@ -70,8 +70,10 @@ impl WhisperVocab {
     }
 }
 
-/// GPT-2's word split, as whisper.cpp writes it (without its look-ahead alternative, which
-/// the regex crate lacks; `\s+` covers it).
+/// GPT-2's word split, as whisper.cpp writes it, without its look-ahead alternative
+/// (`\s+(?!\S)`, which the regex crate lacks). Runs of spaces therefore split differently
+/// ("a  b": here "  " + "b", in whisper.cpp " " + " b"); the vocabulary prompt has single
+/// spaces only, so its tokens are the same.
 fn words(text: &str) -> Vec<&str> {
     static SPLIT: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
     let re = SPLIT.get_or_init(|| {

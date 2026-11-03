@@ -27,7 +27,8 @@ export function initMicrophone(backend: Backend, onError: (message: string) => v
       select.replaceChildren(...options);
       select.dataset.signature = signature;
     }
-    select.value = m.saved;
+    select.value = m.selectable ? m.saved : "";
+    select.disabled = !m.selectable;
     note.textContent = m.using.note ?? `Using ${m.using.name}.`;
     btRow.hidden = !m.bluetooth_aware;
     bt.checked = m.avoid_bluetooth;

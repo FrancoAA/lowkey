@@ -61,6 +61,8 @@ pub struct App {
     history: Arc<crate::history::History>,
     /// Settings' microphone test is running.
     mic_testing: AtomicBool,
+    /// The paste-last key is typing.
+    pasting: AtomicBool,
     /// A call offered now (the strip says so; the meeting key records it with its name).
     call_offer: Mutex<Option<(crate::calls::Call, Instant)>>,
     /// The meeting recording a detected call: its id, the call, started automatically.
@@ -399,6 +401,10 @@ impl App {
                 }
                 Err(e) if e == ALREADY_RECORDING => {} // another tap won the start
                 Err(e) => {
+                    if let Some(c) = offered {
+                        // The call stays offered: another tap can still record it by its name.
+                        *self.call_offer.lock() = Some((c, Instant::now()));
+                    }
                     // The strip says why for a moment (it reads the meeting-start event).
                     emit_logged(&self.handle, "meeting-start", json!({"result": {"Err": e}}));
                     self.want_overlay(1, true);
@@ -436,7 +442,7 @@ impl App {
             .spawn(move || {
                 let mut detector = crate::calls::Detector::default();
                 loop {
-                    std::thread::sleep(Duration::from_secs(1));
+                    std::thread::sleep(Duration::from_secs(2));
                     let Some(app) = weak.upgrade() else { return };
                     if !app.config.lock().call_detection {
                         continue;
@@ -447,8 +453,10 @@ impl App {
                         let _ = detector.step(Instant::now(), vec![]);
                         continue;
                     }
-                    let titles = window_titles();
-                    let calls: Vec<crate::calls::Call> = users.iter().filter_map(|u| crate::calls::classify(u, &|pid| titles.get(&pid).cloned().unwrap_or_default())).collect();
+                    // Window titles only when a browser asks (one hyprctl call per look at most).
+                    let titles = std::cell::OnceCell::new();
+                    let calls: Vec<crate::calls::Call> =
+                        users.iter().filter_map(|u| crate::calls::classify(u, &|pid| titles.get_or_init(window_titles).get(&pid).cloned())).collect();
                     for action in detector.step(Instant::now(), calls) {
                         app.on_call(action);
                     }
@@ -477,10 +485,21 @@ impl App {
                     "never" => {}
                     "always" => {
                         let title = format!("{} call", call.label);
-                        if let Ok(live) = meeting_start_inner(self, &title) {
-                            *self.call_session.lock() = Some((live.meeting.id.clone(), call.clone(), true));
-                            emit_logged(&self.handle, "meeting-start", json!({"result": {"Ok": live.meeting.id}}));
-                            emit_logged(&self.handle, "call", json!({"state": "auto", "key": call.key, "label": call.label}));
+                        match meeting_start_inner(self, &title) {
+                            Ok(live) => {
+                                *self.call_session.lock() = Some((live.meeting.id.clone(), call.clone(), true));
+                                emit_logged(&self.handle, "meeting-start", json!({"result": {"Ok": live.meeting.id}}));
+                                emit_logged(&self.handle, "call", json!({"state": "auto", "key": call.key, "label": call.label}));
+                            }
+                            Err(e) if e == ALREADY_RECORDING => {}
+                            Err(e) => {
+                                // Say so, and leave the call offered: the meeting key can still record it.
+                                emit_logged(&self.handle, "meeting-start", json!({"result": {"Err": e}}));
+                                output::notify(&format!("The {} call was not recorded: {e}", call.label));
+                                *self.call_offer.lock() = Some((call.clone(), Instant::now()));
+                                self.want_overlay(1, true);
+                                self.hide_meeting_strip_later(4);
+                            }
                         }
                     }
                     _ => {
@@ -534,6 +553,11 @@ impl App {
 
     /// The paste-last key: type the last dictation again into the app that has the focus.
     fn paste_last(&self) {
+        // One at a time: a second press while it types is dropped (no interleaved text).
+        if self.pasting.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let _done = ClearOnDrop(&self.pasting);
         match self.history.last() {
             Some(text) => {
                 let delivered = output::deliver(&text, "");
@@ -963,6 +987,12 @@ async fn meeting_start(app: State<'_, AppRef>, title: String) -> Result<meeting:
 
 const ALREADY_RECORDING: &str = "A meeting is already being recorded.";
 
+/// Two key strings name the same combination ("super+alt+v" = "SUPER + ALT + V").
+fn same_key(a: &str, b: &str) -> bool {
+    let n = |k: &str| hyprland::normalize_key(k).unwrap_or_else(|| k.split_whitespace().collect::<String>().to_uppercase());
+    !a.trim().is_empty() && n(a) == n(b)
+}
+
 /// Clears a flag when dropped: also when the code under it panics.
 struct ClearOnDrop<'a>(&'a AtomicBool);
 
@@ -1274,35 +1304,58 @@ fn detector_idle(app: &AppRef) -> bool {
 
 /// Window titles by process id (Hyprland), to name a browser's call.
 #[cfg(target_os = "linux")]
-fn window_titles() -> std::collections::HashMap<u32, Vec<String>> {
-    let mut out: std::collections::HashMap<u32, Vec<String>> = std::collections::HashMap::new();
+/// The title of each process's most recently used window (Hyprland's focus history).
+fn window_titles() -> std::collections::HashMap<u32, String> {
+    let mut best: std::collections::HashMap<u32, (i64, String)> = std::collections::HashMap::new();
     if !hyprland::running() {
-        return out;
+        return Default::default();
     }
     if let Ok(Value::Array(clients)) = serde_json::from_str::<Value>(&hyprland::hyprctl(&["clients", "-j"])) {
         for c in clients {
             if let (Some(pid), Some(title)) = (c["pid"].as_u64(), c["title"].as_str()) {
-                out.entry(pid as u32).or_default().push(title.to_string());
+                // focusHistoryID: 0 = focused now, higher = longer ago, -1 = never focused.
+                let rank = c["focusHistoryID"].as_i64().filter(|r| *r >= 0).unwrap_or(i64::MAX);
+                let e = best.entry(pid as u32).or_insert((i64::MAX, String::new()));
+                if rank <= e.0 {
+                    *e = (rank, title.to_string());
+                }
             }
         }
     }
-    out
+    best.into_iter().map(|(pid, (_, t))| (pid, t)).collect()
 }
 
 // ------------------------------------------------------------------ microphone
 /// Settings → General → Microphone: the inputs, and the one the app uses now (with why).
 #[tauri::command]
-fn microphones(app: State<'_, AppRef>) -> Value {
-    let cfg = app.config.lock().clone();
-    let mics = crate::microphones::list();
-    let using = crate::microphones::resolve(&cfg.microphone, cfg.avoid_bluetooth_mic, &mics);
-    json!({"mics": mics, "using": using, "saved": cfg.microphone, "avoid_bluetooth": cfg.avoid_bluetooth_mic, "bluetooth_aware": cfg!(target_os = "linux")})
+async fn microphones(app: State<'_, AppRef>) -> Result<Value, String> {
+    let app = app.inner().clone();
+    // Off the window's thread: pactl can take a moment.
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = app.config.lock().clone();
+        let mics = crate::microphones::list();
+        let selectable = crate::microphones::selectable();
+        let mut using = crate::microphones::resolve(&cfg.microphone, cfg.avoid_bluetooth_mic, &mics);
+        if !selectable {
+            using = crate::microphones::Choice { id: None, name: "System default".into(), note: Some("Choosing a microphone needs PipeWire or PulseAudio (libpulse-simple): the system default is used.".into()) };
+        }
+        json!({"mics": mics, "using": using, "saved": cfg.microphone, "avoid_bluetooth": cfg.avoid_bluetooth_mic,
+               "bluetooth_aware": cfg!(target_os = "linux") && selectable, "selectable": selectable})
+    })
+    .await
+    .map_err(|e| e.to_string())
 }
 
 /// Settings → General → Microphone → Test: the chosen microphone for 4 s, its level as
 /// "mic-level" events (nothing is kept).
 #[tauri::command]
-fn mic_test(app: State<'_, AppRef>) -> Result<(), String> {
+async fn mic_test(app: State<'_, AppRef>) -> Result<(), String> {
+    let app = app.inner().clone();
+    // Off the window's thread: opening a microphone can take seconds.
+    tauri::async_runtime::spawn_blocking(move || mic_test_inner(&app)).await.map_err(|e| e.to_string())?
+}
+
+fn mic_test_inner(app: &AppRef) -> Result<(), String> {
     if app.mic_testing.swap(true, Ordering::SeqCst) {
         return Ok(());
     }
@@ -1315,7 +1368,7 @@ fn mic_test(app: State<'_, AppRef>) -> Result<(), String> {
         app.mic_testing.store(false, Ordering::SeqCst);
         return Err(format!("Could not open the microphone: {e}"));
     }
-    let (app2, h2) = (app.inner().clone(), app.handle.clone());
+    let (app2, h2) = (app.clone(), app.handle.clone());
     std::thread::spawn(move || {
         std::thread::sleep(Duration::from_secs(4));
         rec.stop();
@@ -1328,7 +1381,8 @@ fn mic_test(app: State<'_, AppRef>) -> Result<(), String> {
 // ------------------------------------------------------------------ history
 #[tauri::command]
 fn history_list(app: State<'_, AppRef>, query: String) -> Vec<crate::history::Entry> {
-    app.history.list(&query)
+    // The newest 500 (search reaches every entry).
+    app.history.list(&query).into_iter().take(500).collect()
 }
 
 #[tauri::command]
@@ -1355,7 +1409,7 @@ fn set_key_inner(app: &AppRef, key: &str, kind: KeyKind) -> Result<Value, String
     let slot = app.slot(kind);
     let new = hyprland::normalize_key(key)
         .ok_or_else(|| format!("{key} cannot be used: hold Super, Ctrl or Alt and press a letter, a digit, F1-F24 or Space."))?;
-    if let Some(other) = KeyKind::ALL.into_iter().find(|&k| k != kind && app.key_of(k) == new) {
+    if let Some(other) = KeyKind::ALL.into_iter().find(|&k| k != kind && same_key(&app.key_of(k), &new)) {
         return Err(format!("{new} is already the {} key.", other.name()));
     }
     let text = if keys_are_manual() {
@@ -1416,7 +1470,7 @@ fn set_key_inner(app: &AppRef, key: &str, kind: KeyKind) -> Result<Value, String
     for other in [KeyKind::Meeting, KeyKind::PasteLast] {
         if other != kind && app.source_of(other) == "none" {
             let k = app.key_of(other);
-            if !k.is_empty() && KeyKind::ALL.into_iter().all(|x| x == other || app.key_of(x) != k) {
+            if !k.is_empty() && KeyKind::ALL.into_iter().all(|x| x == other || !same_key(&app.key_of(x), &k)) {
                 let _ = set_key_inner(&app, &k, other);
             }
         }
@@ -1687,6 +1741,7 @@ pub fn run() {
                 paste_os_key: Mutex::new(None),
                 history: history.clone(),
                 mic_testing: AtomicBool::new(false),
+                pasting: AtomicBool::new(false),
                 call_offer: Mutex::new(None),
                 call_session: Mutex::new(None),
                 calls_seen: Mutex::new(Vec::new()),
@@ -1826,7 +1881,7 @@ pub fn run() {
                 "not added".to_string()
             } else if wayland_other {
                 "this Wayland desktop does not let apps add keys: bind `open-whisper --meeting toggle` in your desktop's keyboard settings".to_string()
-            } else if mkey == app.hotkey_key() {
+            } else if same_key(&mkey, &app.hotkey_key()) {
                 format!("not added: {mkey} is the dictation key. Choose another key in Options.")
             } else if !hyprland::running() {
                 register_global_shortcut(&app, &mkey, KeyKind::Meeting)
@@ -1849,7 +1904,7 @@ pub fn run() {
                 "not added".to_string()
             } else if wayland_other {
                 "this Wayland desktop does not let apps add keys: bind `open-whisper --paste-last` in your desktop's keyboard settings".to_string()
-            } else if pkey == app.hotkey_key() || pkey == app.key_of(KeyKind::Meeting) {
+            } else if same_key(&pkey, &app.hotkey_key()) || same_key(&pkey, &app.key_of(KeyKind::Meeting)) {
                 format!("not added: {pkey} is already another open-whisper key. Choose another key in Settings → Shortcuts.")
             } else if !hyprland::running() {
                 register_global_shortcut(&app, &pkey, KeyKind::PasteLast)

@@ -61,15 +61,21 @@ pub fn resolve(saved: &str, avoid_bluetooth: bool, mics: &[Mic]) -> Choice {
 /// The microphones now (cached for 2 s: a dictation start asks too).
 pub fn list() -> Vec<Mic> {
     static CACHE: Mutex<Option<(Instant, Vec<Mic>)>> = Mutex::new(None);
-    let mut c = CACHE.lock();
-    if let Some((at, mics)) = c.as_ref() {
+    if let Some((at, mics)) = CACHE.lock().as_ref() {
         if at.elapsed() < Duration::from_secs(2) {
             return mics.clone();
         }
     }
+    // Not under the lock: a slow pactl never holds up another caller's cached answer.
     let mics = platform::list();
-    *c = Some((Instant::now(), mics.clone()));
+    *CACHE.lock() = Some((Instant::now(), mics.clone()));
     mics
+}
+
+/// The chosen microphone can be opened by name here (Linux: needs the PipeWire/PulseAudio
+/// library; the list's names are its source names).
+pub fn selectable() -> bool {
+    !cfg!(target_os = "linux") || crate::system_audio::available()
 }
 
 /// Who uses the microphone now (Linux: pactl's source outputs as JSON).
@@ -82,11 +88,38 @@ pub fn mic_users_json() -> Option<String> {
 mod platform {
     use super::*;
 
-    /// OPENWHISPER_PACTL: another pactl (tests); default "pactl".
+    /// OPENWHISPER_PACTL: another pactl (tests); default "pactl". At most 2 s: a sound server
+    /// that does not answer never holds up a dictation or the window.
     pub fn pactl(args: &[&str]) -> Option<String> {
+        use std::io::Read;
         let bin = std::env::var("OPENWHISPER_PACTL").unwrap_or_else(|_| "pactl".into());
-        let out = std::process::Command::new(bin).args(args).output().ok()?;
-        out.status.success().then(|| String::from_utf8_lossy(&out.stdout).into_owned())
+        let mut child = std::process::Command::new(bin)
+            .args(args)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .ok()?;
+        let mut stdout = child.stdout.take()?;
+        let reader = std::thread::spawn(move || {
+            let mut s = String::new();
+            let _ = stdout.read_to_string(&mut s);
+            s
+        });
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(st)) => break st,
+                Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(10)),
+                _ => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return None;
+                }
+            }
+        };
+        let out = reader.join().ok()?;
+        status.success().then_some(out)
     }
 
     pub fn list() -> Vec<Mic> {
