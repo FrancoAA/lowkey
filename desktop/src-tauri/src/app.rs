@@ -1323,6 +1323,7 @@ fn start_ai_notes(app: &AppRef, id: String) -> Result<(), String> {
     let busy = llm::Busy::take(&app.ai_busy).ok_or_else(|| ai_busy_reason(app, &id))?;
     app.ai_cancel.store(false, Ordering::SeqCst);
     *app.ai_job.lock() = Some(id.clone());
+    let job_slot = app.clone();
     let app = app.clone();
     std::thread::Builder::new()
         .name("ai-notes".into())
@@ -1332,7 +1333,10 @@ fn start_ai_notes(app: &AppRef, id: String) -> Result<(), String> {
             *app.ai_job.lock() = None;
             app.emit_status();
         })
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| {
+            *job_slot.ai_job.lock() = None;
+            e.to_string()
+        })?;
     Ok(())
 }
 
@@ -1416,6 +1420,7 @@ fn meeting_chat(app: State<'_, AppRef>, id: String, question: String) -> Result<
     let busy = llm::Busy::take(&app.ai_busy).ok_or_else(|| ai_busy_reason(&app, &id))?;
     app.ai_cancel.store(false, Ordering::SeqCst);
     *app.chat_job.lock() = Some(id.clone());
+    let job_slot = app.clone();
     std::thread::Builder::new()
         .name("ai-chat".into())
         .spawn(move || {
@@ -1424,7 +1429,10 @@ fn meeting_chat(app: State<'_, AppRef>, id: String, question: String) -> Result<
             *app.chat_job.lock() = None;
             app.emit_status();
         })
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| {
+            *job_slot.chat_job.lock() = None; // no thread: no job (the busy flag went with it)
+            e.to_string()
+        })?;
     Ok(())
 }
 

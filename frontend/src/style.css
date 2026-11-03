@@ -407,7 +407,8 @@ mark { background: color-mix(in srgb, var(--brand) 20%, transparent); color: inh
 .notes-pane { display: flex; flex-direction: column; gap: 12px; min-height: 0; }
 .notes-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; min-height: 32px; }
 .notes-head .actions { margin-left: auto; flex: none; flex-wrap: nowrap; }
-.notes-panel, .transcript-panel { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 10px; }
+.notes-panel, .transcript-panel { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 10px; border-radius: 4px; }
+.notes-panel:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 35%, transparent); }
 /* A two-way switch (shadcn's tabs): the chosen one raised on a muted track. */
 .seg { display: inline-flex; padding: 3px; gap: 2px; border-radius: var(--radius); background: var(--muted); flex: none; }
 .seg-item {

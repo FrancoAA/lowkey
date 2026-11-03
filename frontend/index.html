@@ -185,13 +185,14 @@
                     <button id="ai-cancel" type="button" class="btn btn-ghost btn-sm" hidden>Cancel</button>
                   </div>
                 </div>
-                <div id="notes-panel" class="notes-panel" role="tabpanel" aria-labelledby="tab-notes">
-                  <div id="ai-progress" class="progress" hidden>
-                    <div class="progress-track"><div id="ai-progress-fill" class="progress-fill"></div></div>
-                    <span id="ai-progress-text" class="progress-text"></span>
-                  </div>
+                <!-- The notes job's progress and error: seen from both tabs (Cancel is in the head). -->
+                <div id="ai-progress" class="progress" hidden>
+                  <div class="progress-track"><div id="ai-progress-fill" class="progress-fill"></div></div>
+                  <span id="ai-progress-text" class="progress-text"></span>
+                </div>
+                <p id="ai-error" class="ai-error" role="alert" hidden></p>
+                <div id="notes-panel" class="notes-panel" role="tabpanel" aria-labelledby="tab-notes" tabindex="0">
                   <div id="ai-body" class="ai-body" aria-live="off"></div>
-                  <p id="ai-error" class="ai-error" role="alert" hidden></p>
                 </div>
                 <div id="transcript-panel" class="transcript-panel" role="tabpanel" aria-labelledby="tab-transcript" hidden>
                   <div id="meeting-transcript" class="meeting-transcript" tabindex="0" aria-label="Transcript"></div>
@@ -204,7 +205,7 @@
                   <button id="chat-clear" type="button" class="btn btn-ghost btn-sm" hidden>Clear</button>
                 </div>
                 <div id="chat-log" class="chat-log" role="log" aria-live="off" aria-label="Questions and answers"></div>
-                <div id="chat-suggestions" class="chat-suggestions" aria-label="Suggested questions">
+                <div id="chat-suggestions" class="chat-suggestions" role="group" aria-label="Suggested questions">
                   <button type="button" class="chip-btn" data-ask="Write a follow-up email to the participants, in the language of the meeting.">Write a follow-up email</button>
                   <button type="button" class="chip-btn" data-ask="Write a TL;DR of this meeting in three lines, in the language of the meeting.">Write a TL;DR</button>
                   <button type="button" class="chip-btn" data-ask="List my tasks from this meeting (the tasks for Me), with their dates, in the language of the meeting.">List my tasks</button>

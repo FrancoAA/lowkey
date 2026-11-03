@@ -104,7 +104,6 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): void {
   const aiProgressText = $<HTMLElement>("ai-progress-text");
   const aiBody = $<HTMLDivElement>("ai-body");
   const aiError = $<HTMLElement>("ai-error");
-  const aiActions = aiWrite.parentElement as HTMLElement;
   const chatLog = $<HTMLDivElement>("chat-log");
   const chatClear = $<HTMLButtonElement>("chat-clear");
   const chatSuggestions = $<HTMLDivElement>("chat-suggestions");
@@ -255,7 +254,8 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): void {
     }
     notesPanel.hidden = tab !== "notes";
     transcriptPanel.hidden = tab !== "transcript";
-    aiMeta.hidden = aiActions.hidden = tab !== "notes";
+    // Write notes and the model's name belong to the notes; Cancel shows from both tabs.
+    aiMeta.hidden = tab !== "notes";
     pending.hidden = tab !== "transcript";
   }
 
@@ -263,6 +263,7 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): void {
     const changed = tab !== t;
     tab = t;
     renderTab();
+    renderAi();
     if (focus) (t === "notes" ? tabNotes : tabTranscript).focus();
     // The transcript opens at its end while it records (the newest words), else at the start.
     if (changed && t === "transcript" && isLive()) transcript.scrollTop = transcript.scrollHeight;
@@ -299,7 +300,7 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): void {
     const mine = aiJob?.id === shown.id ? aiJob : null;
     const running = !!mine && aiRunning();
     // Only when there are no notes yet (not written, or the writing failed).
-    aiWrite.hidden = running || !!shown.ai_notes;
+    aiWrite.hidden = running || !!shown.ai_notes || tab !== "notes";
     aiWrite.disabled = aiRunning() || chatRunning(); // the model is at work for something else
     aiCancel.hidden = !running;
     aiProgress.hidden = !running || mine!.state === "writing";
@@ -442,7 +443,7 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): void {
       );
     }
     chatLog.replaceChildren(...nodes);
-    if (nearEnd || mine) chatLog.scrollTop = chatLog.scrollHeight;
+    if (nearEnd) chatLog.scrollTop = chatLog.scrollHeight; // a reader who scrolled up stays there
 
     // The box: off while it records, and while the model is at work for something else.
     const busyElsewhere = (aiRunning() || chatRunning()) && !answering;
@@ -473,6 +474,7 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): void {
     chatJob = { id, state: "preparing", detail: "Getting ready…", progress: 0, text: "" };
     chatInput.value = "";
     renderChat();
+    chatLog.scrollTop = chatLog.scrollHeight; // the new question
     await flush(); // the model reads the latest title
     try {
       await api.chat(id, q);
@@ -499,7 +501,9 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): void {
           { role: "user", text: mine.question, at },
           { role: "assistant", text: e.text, at },
         ];
-        shown.chat = [...(shown.chat ?? []), ...added];
+        const old = shown.chat ?? [];
+        const saved = old.length >= 2 && old[old.length - 2].text === mine.question && old[old.length - 1].text === e.text;
+        if (!saved) shown.chat = [...old, ...added]; // (opened again after the save: already there)
         ui.announce("Answer ready.");
       }
       asking = null;
