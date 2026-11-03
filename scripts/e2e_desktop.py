@@ -154,6 +154,26 @@ def main() -> None:
     run(["ffmpeg", "-loglevel", "error", "-y", "-i", SPEECH, "-af", "apad=pad_dur=4", "-ar", "16000", "-ac", "1", mic])
     them = tmp / "them.wav"
     run(["ffmpeg", "-loglevel", "error", "-y", "-i", THEM_SPEECH, "-af", "apad=pad_dur=3", "-ar", "16000", "-ac", "1", them])
+    # A fake pactl (OPENWHISPER_PACTL): a Bluetooth headset is the default input, a built-in
+    # microphone exists; source-outputs (who uses the microphone) come from a file the test writes.
+    pactl = tmp / "pactl"
+    outputs = tmp / "source-outputs.json"
+    outputs.write_text("[]")
+    sources = tmp / "sources.json"
+    sources.write_text(json.dumps([
+        {"name": "bluez_input.e2e", "description": "WH-1000XM4", "properties": {"device.api": "bluez5", "device.bus": "bluetooth"}},
+        {"name": "alsa_input.pci.e2e", "description": "Built-in Microphone", "properties": {"device.api": "alsa", "device.bus": "pci", "device.class": "sound"}},
+        {"name": "alsa_output.pci.e2e.monitor", "description": "Monitor of Speakers", "properties": {"device.class": "monitor"}},
+    ]))
+    pactl.write_text(f"""#!/bin/sh
+case "$*" in
+  "get-default-source") echo bluez_input.e2e ;;
+  "-f json list sources") cat "{sources}" ;;
+  "-f json list source-outputs") cat "{outputs}" ;;
+  *) exit 1 ;;
+esac
+""")
+    pactl.chmod(0o755)
     log = tmp / "events.jsonl"
     typed = tmp / "typed.txt"
     bus = subprocess.Popen(["dbus-daemon", "--session", "--nofork", "--print-address=1", f"--address=unix:path={runtime}/bus"],
@@ -170,6 +190,7 @@ def main() -> None:
         "DBUS_SESSION_BUS_ADDRESS": bus_addr,
         "OPENWHISPER_FAKE_MIC": str(mic),
         "OPENWHISPER_FAKE_SYSTEM": str(them),  # never your real sound
+        "OPENWHISPER_PACTL": str(pactl),
         "OPENWHISPER_TEST_LOG": str(log),
         "OPENWHISPER_MODELS_DIR": str(models),
     }

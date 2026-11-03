@@ -13,6 +13,7 @@ pub mod jobs;
 pub mod llm;
 pub mod meeting;
 pub mod mic;
+pub mod microphones;
 pub mod models;
 pub mod output;
 pub mod preview;

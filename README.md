@@ -167,6 +167,18 @@ Record a call or a talk, as text next to your notes (Linux for now). No bot join
 
 Details: [docs/meetings.md](docs/meetings.md).
 
+## Microphone
+
+Settings → General → Microphone: the system default or any input, with a line that says which
+one is in use and why, and **Test** (a level meter for 4 s). On Linux the list is the
+PipeWire/PulseAudio sources (`pactl`), and the app records the exact source through PipeWire.
+**Use another microphone instead of a Bluetooth headset** (on by default, Linux): with the
+system default, a Bluetooth headset's microphone would switch the headset to call mode (mono,
+poor sound for everything else), so the first other real microphone is used; a virtual source
+(a noise filter) is never chosen for you, only by you. A saved microphone that is not
+connected falls back to the default. macOS and Windows choose by device name (cpal), with no
+Bluetooth detection yet. (Idea from [Hex](https://github.com/anomalyco/hex), MIT.)
+
 ## History
 
 The **History** section keeps every finished dictation (the global key and the window), newest
@@ -210,6 +222,8 @@ hotkey = "SUPER + CTRL + X"
 meeting_hotkey = "SUPER + CTRL + M"   # start/stop a meeting recording; "" = no key
 paste_hotkey = "SUPER + ALT + V"      # type the last dictation again; "" = no key
 history_keep = "week"           # off | day | week | month | forever
+microphone = ""                 # "" = system default; else a PipeWire source / device name
+avoid_bluetooth_mic = true      # with the default: not a Bluetooth headset's microphone
 ai_engine = "builtin"           # AI notes: builtin | server
 ai_builtin_model = "qwen3.5-4b" # qwen3.5-4b (recommended) | qwen3.5-2b | gemma-4-e4b
 ai_url = "http://localhost:11434/v1"   # own server (OpenAI-compatible); ai_model, ai_key too

@@ -246,6 +246,25 @@
           <div class="separator"></div>
           <div class="field field-stacked">
             <div class="field-text">
+              <label for="mic-select">Microphone</label>
+              <p id="mic-note" class="field-desc" aria-live="polite"></p>
+            </div>
+            <div class="key-line">
+              <select id="mic-select" class="select mic-select"></select>
+              <button id="mic-test" type="button" class="btn btn-outline">Test</button>
+            </div>
+            <div id="mic-meter" class="mic-meter" hidden aria-hidden="true"><div id="mic-meter-fill"></div></div>
+          </div>
+          <div id="mic-bt-row" class="field" hidden>
+            <div class="field-text">
+              <label for="mic-bt">Use another microphone instead of a Bluetooth headset</label>
+              <p class="field-desc">With "System default": a Bluetooth headset's microphone switches it to call mode, with poor sound for everything else. Another microphone is used when there is one.</p>
+            </div>
+            <input id="mic-bt" type="checkbox" role="switch" class="switch" />
+          </div>
+          <div class="separator"></div>
+          <div class="field field-stacked">
+            <div class="field-text">
               <span class="label" id="vocab-label">Vocabulary</span>
               <p class="field-desc">Names and terms the model gets wrong. In every transcript, their "sounds like" spellings become the term. Whisper and the AI notes also get the list as a hint.</p>
             </div>

@@ -38,11 +38,68 @@ pub fn new_tap(on_level: LevelFn, on_end: EndFn, on_audio: AudioFn) -> Box<dyn R
     open(on_level, on_end, Some(on_audio), false)
 }
 
+/// Which microphone to open (Settings → General → Microphone): a source name on Linux, a
+/// device name elsewhere; None = the system default. Set by the app, asked at every open.
+pub type ResolveFn = Arc<dyn Fn() -> Option<String> + Send + Sync>;
+static RESOLVER: Mutex<Option<ResolveFn>> = Mutex::new(None);
+
+pub fn set_resolver(f: ResolveFn) {
+    *RESOLVER.lock() = Some(f);
+}
+
+fn chosen_device() -> Option<String> {
+    let f = RESOLVER.lock().clone();
+    f.and_then(|f| f())
+}
+
 fn open(on_level: LevelFn, on_end: EndFn, on_audio: Option<AudioFn>, keep: bool) -> Box<dyn Recorder> {
     let shared = Shared::new(on_audio, keep);
-    match std::env::var_os("OPENWHISPER_FAKE_MIC") {
-        Some(path) => Box::new(FakeMic { path: path.into(), on_level, on_end, shared, thread: None }),
-        None => Box::new(CpalMic { on_level, on_end, shared, stop_tx: None, thread: None }),
+    if let Some(path) = std::env::var_os("OPENWHISPER_FAKE_MIC") {
+        return Box::new(FakeMic { path: path.into(), on_level, on_end, shared, thread: None });
+    }
+    let device = chosen_device();
+    // Linux: the exact PipeWire/PulseAudio source (the device list comes from there too).
+    #[cfg(target_os = "linux")]
+    if crate::system_audio::available() {
+        let source = device.unwrap_or_else(|| "@DEFAULT_SOURCE@".into());
+        return Box::new(PulseMic { source, on_level, on_end, shared, capture: None });
+    }
+    Box::new(CpalMic { device, on_level, on_end, shared, stop_tx: None, thread: None })
+}
+
+/// Linux: a microphone source through PipeWire/PulseAudio, 16 kHz mono blocks of 100 ms.
+#[cfg(target_os = "linux")]
+pub struct PulseMic {
+    source: String,
+    on_level: LevelFn,
+    on_end: EndFn,
+    shared: Arc<Shared>,
+    capture: Option<crate::system_audio::Capture>,
+}
+
+#[cfg(target_os = "linux")]
+impl Recorder for PulseMic {
+    fn start(&mut self) -> anyhow::Result<()> {
+        *self.shared.rate.lock() = audio::RATE;
+        let (shared, on_level, on_end) = (self.shared.clone(), self.on_level.clone(), self.on_end.clone());
+        let pending = Mutex::new(Vec::new());
+        let on_block: crate::system_audio::BlockFn = Arc::new(move |b: &[f32]| shared.push(b, &mut pending.lock(), &on_level, &on_end));
+        let (shared, on_end) = (self.shared.clone(), self.on_end.clone());
+        let on_fail: EndFn = Arc::new(move |why: String| {
+            if !shared.stopping.load(Ordering::Relaxed) && !shared.ended.swap(true, Ordering::Relaxed) {
+                on_end(why);
+            }
+        });
+        self.capture = Some(crate::system_audio::record_source(&self.source, "Microphone", on_block, on_fail)?);
+        Ok(())
+    }
+
+    fn stop(&mut self) -> Vec<f32> {
+        self.shared.stopping.store(true, Ordering::Relaxed);
+        if let Some(mut c) = self.capture.take() {
+            c.stop();
+        }
+        self.shared.take_16k()
     }
 }
 
@@ -109,6 +166,8 @@ impl Shared {
 }
 
 pub struct CpalMic {
+    /// A device name; None = the default input.
+    device: Option<String>,
     on_level: LevelFn,
     on_end: EndFn,
     shared: Arc<Shared>,
@@ -122,10 +181,13 @@ impl Recorder for CpalMic {
         let (ready_tx, ready_rx) = mpsc::channel::<anyhow::Result<()>>();
         let (stop_tx, stop_rx) = mpsc::channel::<()>();
         let (shared, on_level, on_end) = (self.shared.clone(), self.on_level.clone(), self.on_end.clone());
+        let wanted = self.device.clone();
         let thread = std::thread::spawn(move || {
             let result = (|| -> anyhow::Result<cpal::Stream> {
                 let host = cpal::default_host();
-                let device = host.default_input_device().ok_or_else(|| anyhow::anyhow!("no microphone found"))?;
+                // The chosen device by name, else the default input.
+                let named = wanted.and_then(|n| host.input_devices().ok()?.find(|d| d.name().ok().as_deref() == Some(n.as_str())));
+                let device = named.or_else(|| host.default_input_device()).ok_or_else(|| anyhow::anyhow!("no microphone found"))?;
                 let config = device.default_input_config()?;
                 let channels = config.channels() as usize;
                 *shared.rate.lock() = config.sample_rate().0;
@@ -264,6 +326,33 @@ mod tests {
         let (on_level, on_end): (LevelFn, EndFn) = (Arc::new(|_| {}), Arc::new(|_| {}));
         shared.push(&[0.1; 16_000], &mut Vec::new(), &on_level, &on_end);
         assert_eq!(shared.take_16k().len(), 16_000);
+    }
+
+    /// The real default microphone through PipeWire/PulseAudio for one second: blocks arrive at
+    /// 16 kHz and the level moves. Nothing is kept. Run with --ignored on a desktop.
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore]
+    fn the_real_default_microphone_opens_through_pipewire() {
+        let got: Arc<Mutex<usize>> = Arc::default();
+        let levels: Arc<Mutex<usize>> = Arc::default();
+        let (g, l) = (got.clone(), levels.clone());
+        let mut rec = PulseMic {
+            source: "@DEFAULT_SOURCE@".into(),
+            on_level: Arc::new(move |_| *l.lock() += 1),
+            on_end: Arc::new(|why| panic!("{why}")),
+            shared: Shared::new(Some(Arc::new(move |pcm: &[f32], rate: u32| {
+                assert_eq!(rate, 16_000);
+                *g.lock() += pcm.len();
+            })), false),
+            capture: None,
+        };
+        rec.start().expect("the default microphone");
+        std::thread::sleep(Duration::from_millis(1000));
+        assert!(rec.stop().is_empty(), "a tap keeps nothing");
+        let n = *got.lock();
+        assert!((12_000..=20_000).contains(&n), "{n} samples in a second");
+        assert!(*levels.lock() >= 15, "levels about every 50 ms");
     }
 
     #[test]

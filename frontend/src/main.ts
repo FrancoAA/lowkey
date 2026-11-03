@@ -4,6 +4,7 @@ import { getBackend, type Backend, type FileRef } from "./backend";
 import { Dictation, type DictationState } from "./dictation";
 import { initHistory } from "./history";
 import { initMeetings } from "./meetings";
+import { initMicrophone } from "./microphone";
 import { initVocabulary } from "./vocabulary";
 import { Waveform } from "./waveform";
 
@@ -183,6 +184,7 @@ function renderPreview(): void {
 
 let lastModelState = "";
 let history: { refresh(): void } | null = null;
+let microphone: { refresh(): void } | null = null;
 let modelErrorShown = false;
 let statusTimer = 0;
 async function refreshStatus(): Promise<void> {
@@ -214,6 +216,7 @@ function applyStatus(next: Status): void {
     if (status.options?.live_preview !== undefined) previewCheck.checked = status.options.live_preview;
     if (status.options?.preview_engine) previewEngine.value = status.options.preview_engine;
     initVocabulary(backend, status.options?.vocabulary ?? [], showError);
+    microphone = initMicrophone(backend, showError);
     history = initHistory(backend, status.history_keep ?? "week", {
       announce,
       onError: showError,
@@ -803,6 +806,7 @@ function showSection(name: string, focus = false): void {
   }
   for (const p of document.querySelectorAll<HTMLElement>(".settings-content .section")) p.hidden = p.dataset.section !== name;
   if (name === "history") history?.refresh();
+  if (name === "general") microphone?.refresh();
 }
 showSection("transcribe");
 

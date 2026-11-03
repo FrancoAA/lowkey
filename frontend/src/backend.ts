@@ -24,6 +24,17 @@ export interface Options {
   ai_auto?: boolean;
   vocabulary?: { term: string; sounds_like: string[] }[];
   history_keep?: string;
+  microphone?: string;
+  avoid_bluetooth_mic?: boolean;
+}
+
+export interface Microphones {
+  mics: { id: string; name: string; bluetooth: boolean; hardware: boolean; default: boolean }[];
+  using: { id: string | null; name: string; note: string | null };
+  saved: string;
+  avoid_bluetooth: boolean;
+  /** Bluetooth inputs are recognised here (Linux). */
+  bluetooth_aware: boolean;
 }
 
 export interface Backend {
@@ -41,6 +52,10 @@ export interface Backend {
   setMeetingHotkey(key: string): Promise<Status>;
   /** Move the paste-last key now. */
   setPasteHotkey(key: string): Promise<Status>;
+  microphones(): Promise<Microphones>;
+  /** Open the chosen microphone for 4 s; its level comes through onMicLevel (-1 = ended). */
+  micTest(): Promise<void>;
+  onMicLevel(cb: (level: number) => void): void;
   history: {
     list(query: string): Promise<HistoryEntry[]>;
     remove(id: string): Promise<boolean>;
@@ -123,6 +138,11 @@ async function desktopBackend(): Promise<Backend> {
     setHotkey: (key) => invoke<Status>("set_hotkey", { key }),
     setMeetingHotkey: (key) => invoke<Status>("set_meeting_hotkey", { key }),
     setPasteHotkey: (key) => invoke<Status>("set_paste_hotkey", { key }),
+    microphones: () => invoke<Microphones>("microphones"),
+    micTest: () => invoke("mic_test"),
+    onMicLevel(cb) {
+      void listen<number>("mic-level", (e) => cb(e.payload));
+    },
     history: {
       list: (query) => invoke<HistoryEntry[]>("history_list", { query }),
       remove: (id) => invoke<boolean>("history_delete", { id }),

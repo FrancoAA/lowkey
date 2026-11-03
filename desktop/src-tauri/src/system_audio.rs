@@ -52,7 +52,18 @@ pub fn start(on_block: BlockFn, on_end: EndFn) -> anyhow::Result<Capture> {
     if let Some(path) = std::env::var_os("OPENWHISPER_FAKE_SYSTEM") {
         return fake(path.into(), on_block);
     }
-    platform::start(on_block, on_end)
+    platform::record(None, "Meeting: computer sound", on_block, on_end)
+}
+
+/// Any PulseAudio/PipeWire source by name (a microphone), as 16 kHz mono blocks of 100 ms.
+/// Linux only; elsewhere an error.
+pub fn record_source(source: &str, stream_name: &str, on_block: BlockFn, on_end: EndFn) -> anyhow::Result<Capture> {
+    platform::record(Some(source), stream_name, on_block, on_end)
+}
+
+/// The library is there (Linux with PipeWire or PulseAudio).
+pub fn available() -> bool {
+    platform::available()
 }
 
 fn fake(path: std::path::PathBuf, on_block: BlockFn) -> anyhow::Result<Capture> {
@@ -149,7 +160,19 @@ mod platform {
         }
     }
 
-    pub fn start(on_block: BlockFn, on_end: EndFn) -> anyhow::Result<Capture> {
+    pub fn available() -> bool {
+        static OK: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        *OK.get_or_init(|| Api::load().is_ok())
+    }
+
+    /// `source`: a source name; None = the monitor of the default output.
+    pub fn record(source: Option<&str>, stream_name: &str, on_block: BlockFn, on_end: EndFn) -> anyhow::Result<Capture> {
+        let device = match source {
+            Some(s) => std::ffi::CString::new(s).map_err(|_| anyhow::anyhow!("bad source name"))?,
+            None => DEVICE.to_owned(),
+        };
+        let stream = std::ffi::CString::new(stream_name).unwrap_or_else(|_| c"open-whisper".to_owned());
+        let is_mic = source.is_some();
         let stop = Arc::new(AtomicBool::new(false));
         let (ready_tx, ready_rx) = std::sync::mpsc::channel::<anyhow::Result<()>>();
         let s = stop.clone();
@@ -172,8 +195,8 @@ mod platform {
                     std::ptr::null(),
                     c"open-whisper".as_ptr(),
                     PA_STREAM_RECORD,
-                    DEVICE.as_ptr(),
-                    c"Meeting: computer sound".as_ptr(),
+                    device.as_ptr(),
+                    stream.as_ptr(),
                     &spec,
                     std::ptr::null(),
                     &attr,
@@ -181,7 +204,8 @@ mod platform {
                 )
             };
             if pa.is_null() {
-                let _ = ready_tx.send(Err(anyhow::anyhow!("could not record the computer's sound: {}", api.error(err))));
+                let what = if is_mic { "the microphone" } else { "the computer's sound" };
+                let _ = ready_tx.send(Err(anyhow::anyhow!("could not record {what}: {}", api.error(err))));
                 return;
             }
             let _ = ready_tx.send(Ok(()));
@@ -205,7 +229,7 @@ mod platform {
             Ok(Err(e)) => Err(e),
             Err(_) => {
                 stop.store(true, Ordering::SeqCst);
-                Err(anyhow::anyhow!("the computer's sound did not start"))
+                Err(anyhow::anyhow!("the recording did not start"))
             }
         }
     }
@@ -215,7 +239,11 @@ mod platform {
 mod platform {
     use super::*;
 
-    pub fn start(_on_block: BlockFn, _on_end: EndFn) -> anyhow::Result<Capture> {
+    pub fn available() -> bool {
+        false
+    }
+
+    pub fn record(_source: Option<&str>, _stream_name: &str, _on_block: BlockFn, _on_end: EndFn) -> anyhow::Result<Capture> {
         anyhow::bail!("recording the computer's sound is not built for this system yet")
     }
 }

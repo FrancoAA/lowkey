@@ -59,6 +59,8 @@ pub struct App {
     paste_os_key: Mutex<Option<String>>,
     /// Finished dictations (Settings → History), and the last one for the paste-last key.
     history: Arc<crate::history::History>,
+    /// Settings' microphone test is running.
+    mic_testing: AtomicBool,
     /// Who wants the overlay: [dictation, meeting]. It shows while either does.
     overlay_wants: [AtomicBool; 2],
     /// AI notes: one job at a time, and its cancel flag.
@@ -623,6 +625,8 @@ struct OptionsIn {
     ai_auto: Option<bool>,
     vocabulary: Option<Vec<crate::vocabulary::Term>>,
     history_keep: Option<String>,
+    microphone: Option<String>,
+    avoid_bluetooth_mic: Option<bool>,
 }
 
 #[tauri::command]
@@ -684,6 +688,12 @@ fn set_options(app: State<'_, AppRef>, options: OptionsIn) -> Result<Value, Stri
         }
         if let Some(on) = options.ai_auto {
             cfg.ai_auto = on;
+        }
+        if let Some(m) = options.microphone {
+            cfg.microphone = m.trim().to_string();
+        }
+        if let Some(on) = options.avoid_bluetooth_mic {
+            cfg.avoid_bluetooth_mic = on;
         }
         if let Some(k) = options.history_keep {
             if !crate::history::KEEP_CHOICES.contains(&k.as_str()) {
@@ -1101,6 +1111,42 @@ fn set_paste_hotkey(app: State<'_, AppRef>, key: String) -> Result<Value, String
     r
 }
 
+// ------------------------------------------------------------------ microphone
+/// Settings → General → Microphone: the inputs, and the one the app uses now (with why).
+#[tauri::command]
+fn microphones(app: State<'_, AppRef>) -> Value {
+    let cfg = app.config.lock().clone();
+    let mics = crate::microphones::list();
+    let using = crate::microphones::resolve(&cfg.microphone, cfg.avoid_bluetooth_mic, &mics);
+    json!({"mics": mics, "using": using, "saved": cfg.microphone, "avoid_bluetooth": cfg.avoid_bluetooth_mic, "bluetooth_aware": cfg!(target_os = "linux")})
+}
+
+/// Settings → General → Microphone → Test: the chosen microphone for 4 s, its level as
+/// "mic-level" events (nothing is kept).
+#[tauri::command]
+fn mic_test(app: State<'_, AppRef>) -> Result<(), String> {
+    if app.mic_testing.swap(true, Ordering::SeqCst) {
+        return Ok(());
+    }
+    let h = app.handle.clone();
+    let on_level: LevelFn = Arc::new(move |lv| {
+        let _ = h.emit_to("main", "mic-level", lv);
+    });
+    let mut rec = mic::new_tap(on_level, Arc::new(|_| {}), Arc::new(|_: &[f32], _| {}));
+    if let Err(e) = rec.start() {
+        app.mic_testing.store(false, Ordering::SeqCst);
+        return Err(format!("Could not open the microphone: {e}"));
+    }
+    let (app2, h2) = (app.inner().clone(), app.handle.clone());
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_secs(4));
+        rec.stop();
+        app2.mic_testing.store(false, Ordering::SeqCst);
+        let _ = h2.emit_to("main", "mic-level", -1.0f32); // the test ended
+    });
+    Ok(())
+}
+
 // ------------------------------------------------------------------ history
 #[tauri::command]
 fn history_list(app: State<'_, AppRef>, query: String) -> Vec<crate::history::Entry> {
@@ -1371,6 +1417,8 @@ pub fn run() {
             set_meeting_hotkey,
             set_paste_hotkey,
             history_list,
+            microphones,
+            mic_test,
             history_delete,
             history_clear,
             adopt_hotkey,
@@ -1460,6 +1508,7 @@ pub fn run() {
                 paste_hotkey_text: Mutex::new(String::new()),
                 paste_os_key: Mutex::new(None),
                 history: history.clone(),
+                mic_testing: AtomicBool::new(false),
                 overlay_wants: [AtomicBool::new(false), AtomicBool::new(false)],
                 ai_busy: Arc::new(AtomicBool::new(false)),
                 ai_cancel: Arc::new(AtomicBool::new(false)),
@@ -1467,6 +1516,16 @@ pub fn run() {
             });
             // A model runner that a crash left behind holds ~3 GB: stop it.
             std::thread::spawn(llm::stop_stale);
+            // Every microphone open (dictation, meetings, the test) asks which one, now.
+            let weak_mic = Arc::downgrade(&app);
+            mic::set_resolver(Arc::new(move || {
+                let app = weak_mic.upgrade()?;
+                let (saved, avoid) = {
+                    let c = app.config.lock();
+                    (c.microphone.clone(), c.avoid_bluetooth_mic)
+                };
+                crate::microphones::resolve(&saved, avoid, &crate::microphones::list()).id
+            }));
             let io = Arc::new(TauriIo { app: Arc::downgrade(&app), handle: handle.clone() });
             *app.dictation.lock() = Some(Dictation::new(io, jobs));
             let weak = Arc::downgrade(&app);

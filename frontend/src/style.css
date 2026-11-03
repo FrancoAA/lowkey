@@ -492,3 +492,8 @@ h1 { font-size: 20px; font-weight: 600; }
 }
 .history-item:hover .history-actions, .history-item:focus-within .history-actions { opacity: 1; }
 @media (hover: none) { .history-actions { opacity: 1; } }
+
+/* ───────────────────────────── microphone ───────────────────────────── */
+.mic-select { flex: 1 1 260px; }
+.mic-meter { height: 6px; border-radius: 6px; background: var(--muted); overflow: hidden; }
+.mic-meter > div { height: 100%; width: 0; background: var(--brand); border-radius: 6px; transition: width 0.08s linear; }
