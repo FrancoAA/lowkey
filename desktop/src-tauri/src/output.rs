@@ -4,7 +4,9 @@
 //! Linux X11: xclip/xsel and xdotool. macOS/Windows: arboard + enigo.
 //! The text is given on stdin, never argv, so other processes cannot read it.
 
+#[cfg(target_os = "linux")]
 use std::io::Write;
+#[cfg(target_os = "linux")]
 use std::process::{Command, Stdio};
 
 /// Two dictations within this many seconds (end of the new recording vs. the last typed text),
@@ -24,6 +26,8 @@ pub fn joining_space(text: &str, now: f64, last_at: Option<f64>, same_window: bo
     }
 }
 
+/// Run `cmd` with `input` on its stdin (Linux: the clipboard and typing tools).
+#[cfg(target_os = "linux")]
 fn pipe(cmd: &str, args: &[&str], input: &str) -> bool {
     let Ok(mut child) = Command::new(cmd).args(args).stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null()).spawn() else {
         return false;

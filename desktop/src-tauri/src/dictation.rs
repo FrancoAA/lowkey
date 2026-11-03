@@ -474,7 +474,6 @@ mod tests {
 
     struct FakeRec {
         secs: f64,
-        on_end: EndFn,
         on_level: LevelFn,
         log: Arc<Mutex<Vec<String>>>,
     }
@@ -535,11 +534,11 @@ mod tests {
 
     impl Io for FakeIo {
         fn recorder(&self, on_level: LevelFn, on_end: EndFn, on_audio: Option<AudioFn>) -> Box<dyn Recorder> {
-            self.ends.lock().push(on_end.clone());
+            self.ends.lock().push(on_end);
             if let Some(a) = on_audio {
                 a(&[0.0; 8_000], 16_000);
             }
-            Box::new(FakeRec { secs: *self.secs.lock(), on_end, on_level, log: self.rec_log.clone() })
+            Box::new(FakeRec { secs: *self.secs.lock(), on_level, log: self.rec_log.clone() })
         }
         fn preview(&self, on_text: TextFn) -> Option<Stream> {
             if !*self.preview_on.lock() {

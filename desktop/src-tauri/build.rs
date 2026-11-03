@@ -21,5 +21,10 @@ fn main() {
             }
         }
     }
+    // Windows (MSVC): Microsoft's static C runtime libraries point to .pdb debug files that are
+    // not shipped; the linker warns once per object (LNK4099). Nothing is missing at run time.
+    if env == "msvc" {
+        println!("cargo:rustc-link-arg=/ignore:4099");
+    }
     tauri_build::build()
 }
