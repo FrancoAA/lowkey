@@ -8,7 +8,6 @@ use std::time::{Duration, Instant};
 use parking_lot::Mutex;
 use serde::Deserialize;
 use serde_json::{json, Value};
-use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, Manager, RunEvent, State, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 
@@ -76,6 +75,13 @@ pub struct App {
     ai_cancel: Arc<AtomicBool>,
     /// The meeting whose AI notes are being written.
     ai_job: Mutex<Option<String>>,
+    /// The tray menu as last built (it is built again only when this changes).
+    tray_menu: Mutex<Vec<crate::tray::Entry>>,
+    /// The dictation's state, for the tray (kept here: the dictation reports it while it
+    /// holds its own lock).
+    tray_dictation: Mutex<String>,
+    /// The microphones, looked up now and then off the menu's thread (None: not choosable).
+    tray_mics: Mutex<Option<Vec<crate::microphones::Mic>>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -258,7 +264,7 @@ impl App {
             "default_model": current,
             "auto_model": models::auto_model(&self.engines.hw),
             "models": list,
-            "options": { "model": cfg.model, "language": cfg.language, "idle_unload_minutes": cfg.idle_unload_minutes, "live_preview": cfg.live_preview, "preview_engine": cfg.preview_engine, "vocabulary": cfg.vocabulary },
+            "options": { "model": cfg.model, "language": cfg.language, "idle_unload_minutes": cfg.idle_unload_minutes, "live_preview": cfg.live_preview, "preview_engine": cfg.preview_engine, "vocabulary": cfg.vocabulary, "microphone": cfg.microphone },
             "preview": self.preview.status(),
             "version": env!("CARGO_PKG_VERSION"),
             "hotkey": *self.hotkey_text.lock(),
@@ -291,6 +297,110 @@ impl App {
 
     fn emit_status(&self) {
         emit_logged(&self.handle, "status", self.status());
+        self.refresh_tray();
+    }
+
+    // ------------------------------------------------------------- tray menu
+    fn tray_view(&self) -> crate::tray::View {
+        use crate::tray::{Meeting, MicItem, ModelItem, View};
+        let cfg = self.config.lock().clone();
+        let meeting = if self.meeting_stopping.load(Ordering::SeqCst) {
+            Meeting::Saving
+        } else if self.meeting_starting.load(Ordering::SeqCst) {
+            Meeting::Starting
+        } else if self.meeting.lock().is_some() {
+            Meeting::Recording
+        } else {
+            Meeting::Idle
+        };
+        let auto = models::auto_model(&self.engines.hw);
+        View {
+            dictation: self.tray_dictation.lock().clone(),
+            meeting,
+            models: models::catalog()
+                .map(|m| {
+                    let st = self.engines.state(m.id);
+                    ModelItem {
+                        id: m.id.into(),
+                        label: m.label.into(),
+                        downloaded: matches!(st.state.as_str(), "downloaded" | "ready" | "loading"),
+                        downloading: st.state == "downloading",
+                        download_mb: m.download_mb,
+                    }
+                })
+                .collect(),
+            // A saved name this build does not know counts as automatic (as current_model does).
+            model_choice: if models::spec(&cfg.model).is_some() { cfg.model.clone() } else { String::new() },
+            auto_model: models::spec(auto).map(|m| m.label).unwrap_or(auto).to_string(),
+            mics: self.tray_mics.lock().as_ref().map(|l| {
+                l.iter().map(|m| MicItem { id: m.id.clone(), name: m.name.clone(), bluetooth: m.bluetooth, default: m.default }).collect()
+            }),
+            mic_choice: cfg.microphone.clone(),
+        }
+    }
+
+    /// Build the tray menu again when what it shows has changed.
+    fn refresh_tray(&self) {
+        let entries = crate::tray::entries(&self.tray_view());
+        {
+            let mut last = self.tray_menu.lock();
+            if *last == entries {
+                return;
+            }
+            *last = entries.clone();
+        }
+        let Some(tray) = self.handle.tray_by_id("main") else { return };
+        match crate::tray::build(&self.handle, &entries) {
+            Ok(menu) => {
+                let _ = tray.set_menu(Some(menu));
+            }
+            Err(e) => eprintln!("  tray menu: {e}"),
+        }
+    }
+
+    /// The microphones for the tray (pactl can take a moment: never on the menu's thread).
+    fn refresh_tray_mics(&self) {
+        let mics = crate::microphones::selectable().then(crate::microphones::list);
+        *self.tray_mics.lock() = mics;
+        self.refresh_tray();
+    }
+
+    fn on_tray(self: &Arc<Self>, id: &str) {
+        use crate::tray::Action;
+        let Some(action) = crate::tray::action(id) else { return };
+        match action {
+            Action::Dictate => {
+                let d = self.dictation.lock().clone();
+                if let Some(d) = d {
+                    d.toggle();
+                }
+            }
+            Action::Meeting => {
+                let me = self.clone();
+                std::thread::spawn(move || me.meeting_key("toggle"));
+            }
+            Action::Model(m) => {
+                let me = self.clone();
+                std::thread::spawn(move || {
+                    if let Err(e) = apply_options(&me, OptionsIn::only(json!({ "model": m }))) {
+                        output::notify(&format!("Model not changed: {e}"));
+                    }
+                });
+            }
+            Action::Mic(m) => {
+                let me = self.clone();
+                std::thread::spawn(move || {
+                    if let Err(e) = apply_options(&me, OptionsIn::only(json!({ "microphone": m }))) {
+                        output::notify(&format!("Microphone not changed: {e}"));
+                    }
+                });
+            }
+            Action::Open => self.show_main(),
+            Action::Quit => self.handle.exit(0),
+        }
+        // A click on a check item ticks it by itself: always build the menu again.
+        self.tray_menu.lock().clear();
+        self.refresh_tray();
     }
 
     /// The dictation's wish (see `want_overlay`).
@@ -654,6 +764,17 @@ impl Io for TauriIo {
     }
     fn emit(&self, snap: &Snapshot) {
         emit_logged(&self.handle, "dictation", snap.clone());
+        if let Some(app) = self.app.upgrade() {
+            let changed = {
+                let mut st = app.tray_dictation.lock();
+                let changed = *st != snap.state;
+                *st = snap.state.clone();
+                changed
+            };
+            if changed {
+                app.refresh_tray();
+            }
+        }
     }
     fn clock(&self) -> f64 {
         self.app.upgrade().map(|a| a.started.elapsed().as_secs_f64()).unwrap_or(0.0)
@@ -768,7 +889,7 @@ async fn save_export(app: tauri::AppHandle, file_name: String, content: String) 
     Ok(true)
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 struct OptionsIn {
     model: Option<String>,
     language: Option<String>,
@@ -792,6 +913,13 @@ struct OptionsIn {
     call_policy: Option<CallPolicyIn>,
 }
 
+impl OptionsIn {
+    /// Some options from JSON (the tray menu's choices); the others stay as they are.
+    fn only(v: Value) -> Self {
+        serde_json::from_value(v).unwrap_or_default()
+    }
+}
+
 #[derive(Deserialize)]
 struct CallPolicyIn {
     key: String,
@@ -800,6 +928,11 @@ struct CallPolicyIn {
 
 #[tauri::command]
 fn set_options(app: State<'_, AppRef>, options: OptionsIn) -> Result<Value, String> {
+    apply_options(app.inner(), options)
+}
+
+/// Save options from the window or the tray menu, and act on them (a new model is prepared).
+fn apply_options(app: &AppRef, options: OptionsIn) -> Result<Value, String> {
     let model_changed;
     let preview_on = options.live_preview == Some(true) || options.preview_engine.is_some();
     {
@@ -889,7 +1022,7 @@ fn set_options(app: State<'_, AppRef>, options: OptionsIn) -> Result<Value, Stri
     }
     // After the other options are valid and saved.
     if let Some(on) = options.start_at_login {
-        set_start_at_login(app.inner(), on)?;
+        set_start_at_login(app, on)?;
     }
     if preview_on && app.config.lock().live_preview {
         app.prepare_preview(); // turned on (again), or another engine: get it ready
@@ -897,7 +1030,7 @@ fn set_options(app: State<'_, AppRef>, options: OptionsIn) -> Result<Value, Stri
         app.preview.off(app.status_emitter()); // frees its engine (Parakeet: ~1.1 GB)
     }
     if model_changed {
-        let app2 = app.inner().clone();
+        let app2 = app.clone();
         let model = app.current_model();
         std::thread::spawn(move || {
             let _ = app2.engines.prepare(&model);
@@ -1752,6 +1885,9 @@ pub fn run() {
                 ai_busy: Arc::new(AtomicBool::new(false)),
                 ai_cancel: Arc::new(AtomicBool::new(false)),
                 ai_job: Mutex::new(None),
+                tray_menu: Mutex::new(Vec::new()),
+                tray_dictation: Mutex::new("idle".into()),
+                tray_mics: Mutex::new(Some(Vec::new())),
             });
             #[cfg(target_os = "linux")]
             app.watch_calls();
@@ -1819,20 +1955,35 @@ pub fn run() {
                 });
             }
 
-            let open = MenuItem::with_id(tauri_app, "open", "Open Lowkey", true, None::<&str>)?;
-            let quit = MenuItem::with_id(tauri_app, "quit", "Quit", true, None::<&str>)?;
-            let menu = Menu::with_items(tauri_app, &[&open, &quit])?;
+            // The tray menu (src/tray.rs): built now, and again whenever what it shows changes.
+            let entries = crate::tray::entries(&app.tray_view());
+            let menu = crate::tray::build(&handle, &entries)?;
+            *app.tray_menu.lock() = entries;
             let tray_app = app.clone();
             TrayIconBuilder::with_id("main")
                 .icon(tauri_app.default_window_icon().cloned().expect("app icon"))
                 .tooltip("Lowkey")
                 .menu(&menu)
-                .on_menu_event(move |h, ev| match ev.id().as_ref() {
-                    "open" => tray_app.show_main(),
-                    "quit" => h.exit(0),
-                    _ => {}
-                })
+                .on_menu_event(move |_, ev| tray_app.on_tray(ev.id().as_ref()))
                 .build(tauri_app)?;
+            // The microphones now and every 3 s (plugged in, removed); the recording states
+            // once a second (a meeting starts and stops on other threads).
+            let weak_tray = Arc::downgrade(&app);
+            std::thread::Builder::new()
+                .name("tray".into())
+                .spawn(move || {
+                    for tick in 0u64.. {
+                        let Some(app) = weak_tray.upgrade() else { return };
+                        if tick % 3 == 0 {
+                            app.refresh_tray_mics();
+                        } else {
+                            app.refresh_tray();
+                        }
+                        drop(app);
+                        std::thread::sleep(Duration::from_secs(1));
+                    }
+                })
+                .ok();
 
             // The ow-dictate shim (used by the bindings.lua block) finds us here.
             match private_runtime_dir() {

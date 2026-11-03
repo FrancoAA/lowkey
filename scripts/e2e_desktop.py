@@ -459,6 +459,115 @@ esac
         time.sleep(0.8)
         shot("29-desktop-history.png")
 
+        # ---------------------------------------------------------------- tray menu (D-Bus, as a status bar uses it)
+        cfg_file = tmp / "config" / "lowkey" / "config.toml"
+
+        def busctl(*a) -> str:
+            return run(["busctl", f"--address={bus_addr}", "--json=short", *a], env)
+
+        def tray_target():
+            """The app's connection and object path that hold the tray menu (None: not yet)."""
+            names = [x["name"] for x in json.loads(busctl("list")) if x.get("pid") == app.pid and x["name"].startswith(":")]
+            for name in names:
+                tree = run(["busctl", f"--address={bus_addr}", "tree", "--list", name], env, check=False).split()
+                path = next((p for p in tree if p.endswith("/Menu")), None)
+                if path:
+                    return name, path
+            return None
+
+        def tray_menu() -> list:
+            """The menu as nested {id, label, enabled, checked, items}."""
+            target = tray_target()
+            if not target:
+                return []
+            name, path = target
+            root = json.loads(busctl("call", name, path, "com.canonical.dbusmenu", "GetLayout", "iias", "0", "--", "-1", "0"))["data"][1]
+
+            def node(n):
+                i, props, kids = n
+                p = {k: v["data"] for k, v in props.items()}
+                return {"id": i, "label": p.get("label", "").replace("_", ""), "enabled": p.get("enabled", True),
+                        "checked": p.get("toggle-state") == 1, "sep": p.get("type") == "separator",
+                        "items": [node(k["data"]) for k in kids]}
+            return node(root)["items"]
+
+        def tray_find(items, *labels):
+            for lab in labels:
+                items = next(x for x in items if x["label"].startswith(lab))
+                if lab != labels[-1]:
+                    items = items["items"]
+            return items
+
+        def tray_click(*labels) -> None:
+            # The menu is built again after each click: an id read just before can be gone.
+            for attempt in range(5):
+                name, path = tray_target()
+                try:
+                    busctl("call", name, path, "com.canonical.dbusmenu", "Event", "isvu", str(tray_find(tray_menu(), *labels)["id"]), "clicked", "s", "", "0")
+                    return
+                except RuntimeError as e:
+                    if "does not refer to a menu item" not in str(e) or attempt == 4:
+                        raise
+                    time.sleep(0.3)
+
+        def tray_labels() -> list:
+            return [x["label"] for x in tray_menu() if not x["sep"]]
+
+        menu = wait(lambda: tray_menu() or None, 10, "the tray menu on D-Bus")
+        check(tray_labels() == ["Start dictation", "Start meeting recording", "Microphone", "Speech-to-text model", "Open Lowkey", "Quit Lowkey"],
+              f"tray menu: {tray_labels()}")
+        mics = [(m["label"], m["checked"]) for m in tray_find(menu, "Microphone")["items"]]
+        check(mics == [("System default — WH-1000XM4", True), ("WH-1000XM4 · Bluetooth", False), ("Built-in Microphone", False)],
+              f"tray microphones: {mics}")
+        models_menu = [(m["label"], m["checked"]) for m in tray_find(menu, "Speech-to-text model")["items"]]
+        check(models_menu[0] == ("Automatic — Large v3 Turbo (q5)", True) and ("Small", False) in models_menu,
+              f"tray models, Automatic chosen: {models_menu[:3]}…")
+        # Microphone and model from the tray: saved, and the window follows.
+        tray_click("Microphone", "Built-in Microphone")
+        wait(lambda: 'microphone = "alsa_input.pci.e2e"' in cfg_file.read_text(), 10, "microphone saved from the tray")
+        wait(lambda: tray_find(tray_menu(), "Microphone", "Built-in Microphone")["checked"], 10, "the tray ticks the microphone")
+        tray_click("Speech-to-text model", "Small")
+        wait(lambda: 'model = "small"' in cfg_file.read_text(), 10, "model saved from the tray")
+        wait(lambda: any(s["default_model"] == "small" for s in events("status")[-5:]), 15, "status follows the tray's model")
+        check(tray_find(tray_menu(), "Speech-to-text model", "Small")["checked"], "the tray ticks the model; the microphone and model are saved")
+        tray_click("Speech-to-text model", "Automatic")
+        tray_click("Microphone", "System default")
+        wait(lambda: 'model = ""' in cfg_file.read_text() and 'microphone = ""' in cfg_file.read_text(), 10, "back to automatic choices")
+        # A dictation from the tray: typed into the app that has the focus.
+        focus(target["address"])
+        before = typed.read_text()
+        n_t = len(events("dictation"))
+        tray_click("Start dictation")
+        wait(lambda: dict_state()["state"] == "listening", 10, "listening (tray)")
+        wait(lambda: tray_labels()[0] == "Stop dictation", 5, "the tray says Stop dictation")
+        time.sleep(2.5)
+        tray_click("Stop dictation")
+        d3 = wait(lambda: next((d for d in events("dictation")[n_t:] if d["state"] in ("done", "error")), None), 60, "tray dictation result")
+        check(d3["state"] == "done" and "hello" in d3["text"].lower(), f"the tray starts and stops a dictation: {d3['text']!r}")
+        wait(lambda: typed.read_text().startswith(before) and d3["text"] in typed.read_text()[len(before):], 10, "tray dictation typed")
+        wait(lambda: tray_labels()[0] == "Start dictation", 5, "the tray says Start dictation again")
+        # A meeting recording from the tray.
+        n_m = len(events("meeting"))
+        tray_click("Start meeting recording")
+        wait(lambda: next((m for m in events("meeting")[n_m:] if m["state"] == "recording"), None), 30, "meeting from the tray")
+        wait(lambda: tray_labels()[1] == "Stop meeting recording", 5, "the tray says Stop meeting recording")
+        time.sleep(3)
+        tray_click("Stop meeting recording")
+        saved = wait(lambda: next((m for m in events("meeting")[n_m:] if m["state"] == "done"), None), 60, "tray meeting saved")
+        check(bool(saved["meeting"]["id"]), "the tray starts and stops a meeting recording")
+        if (models / "llm").is_dir() and saved["meeting"]["lines"]:
+            # Its AI notes start by themselves: done before the next meeting asks for its own.
+            wait(lambda: next((e for e in events("ai-notes") if e["id"] == saved["meeting"]["id"] and e["state"] in ("done", "error")), None),
+                 240, "the tray meeting's AI notes")
+        wait(lambda: tray_labels()[1] == "Start meeting recording", 10, "the tray says Start meeting recording again")
+        wait(lambda: win("lowkey-overlay") is None, 15, "the strip goes after the tray's meeting")
+        # Open from the tray: the window comes back.
+        run(["hyprctl", "dispatch", f'hl.dsp.window.close({{ window = "address:{main_win["address"]}" }})'], env)
+        wait(lambda: win("Lowkey") is None, 10, "window closed")
+        tray_click("Open Lowkey")
+        main_win = wait(lambda: win("Lowkey"), 10, "window opened from the tray")
+        print("  ok  Open Lowkey in the tray shows the window again")
+
         # ---------------------------------------------------------------- Options (keyboard)
         cfg_file = tmp / "config" / "lowkey" / "config.toml"
         main_win = wait(lambda: win("Lowkey"), 10, "main window")

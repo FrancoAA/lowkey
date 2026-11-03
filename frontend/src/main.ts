@@ -186,6 +186,8 @@ function renderPreview(): void {
 let lastModelState = "";
 let history: { refresh(): void } | null = null;
 let microphone: { refresh(): void } | null = null;
+/** The saved microphone as the last status said (the tray menu can change it). */
+let savedMic = "";
 let modelErrorShown = false;
 let statusTimer = 0;
 async function refreshStatus(): Promise<void> {
@@ -226,6 +228,13 @@ function applyStatus(next: Status): void {
     // Parakeet is built on some systems only: offer it where the app has it.
     const pk = status.models.some((m) => m.name === "parakeet-v3");
     previewEngine.querySelector<HTMLOptionElement>('option[value="parakeet"]')!.hidden = !pk;
+    savedMic = status.options?.microphone ?? "";
+  } else if (document.activeElement !== modelSelect && modelSelect.value !== status.default_model) {
+    modelSelect.value = status.default_model; // chosen in the tray menu
+  }
+  if ((status.options?.microphone ?? "") !== savedMic) {
+    savedMic = status.options?.microphone ?? "";
+    microphone?.refresh(); // chosen in the tray menu
   }
   renderPreview();
   renderKey();

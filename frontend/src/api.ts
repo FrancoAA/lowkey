@@ -66,6 +66,8 @@ export interface Status {
     idle_unload_minutes: number;
     live_preview?: boolean;
     preview_engine?: string;
+    /** The saved microphone ("" = the system default). */
+    microphone?: string;
     vocabulary?: VocabTerm[];
   };
   /** Live preview: state off | preparing | ready | unavailable; engine whistle | parakeet. */

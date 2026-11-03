@@ -70,6 +70,11 @@ make desktop-bundle      # AppImage / .deb / .rpm in desktop/src-tauri/target/re
 - Files given on the command line open in the app. **Closing the window keeps the app
   running** in the tray, so the dictation key stays instant. Quit from the tray or with
   `lowkey --dictate quit`.
+- **The tray icon's menu:** Start/Stop dictation (the text goes to the app that has the
+  focus), Start/Stop meeting recording, **Microphone** (the system default or one input),
+  **Speech-to-text model** (Automatic or one model; a model that is not on disk downloads when
+  you choose it), Open Lowkey, Quit Lowkey. The menu follows the app: it says Stop while a
+  recording runs, and it shows a microphone when you plug it in.
 
 ## Dictate into any app
 
@@ -289,7 +294,8 @@ A model that is not on disk downloads the first time you use it, into
 - `meeting.rs` records a meeting: it cuts each source at pauses, sends the pieces to the model,
   drops echoes and saves the meeting; `system_audio.rs` records the computer's sound.
 - `app.rs` has the windows, the tray, the commands for the page and the single instance (a
-  second launch hands its command or file to the running app).
+  second launch hands its command or file to the running app); `tray.rs` describes the tray
+  menu from the app's state.
 
 `frontend/` (Vite + TypeScript) has the window's page (`index.html`, `src/main.ts`) and the
 overlay (`overlay.html`, `src/overlay.ts`).
