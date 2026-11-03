@@ -1,4 +1,4 @@
-.PHONY: desktop desktop-dev desktop-bundle test test-desktop e2e-desktop install-desktop bench clean
+.PHONY: desktop desktop-dev desktop-bundle desktop-windows test test-desktop e2e-desktop install-desktop bench clean
 
 CARGO ?= $(shell command -v cargo 2>/dev/null || echo $(HOME)/.cargo/bin/cargo)
 TAURI = $(CURDIR)/frontend/node_modules/.bin/tauri
@@ -21,6 +21,12 @@ desktop-bundle: ## AppImage, .deb and .rpm in desktop/src-tauri/target/release/b
 	./desktop/scripts/vulkan-sdk.sh
 	./desktop/scripts/sherpa-onnx.sh
 	cd desktop && PATH="$(dir $(CARGO)):$$PATH" $(TAURI) build
+
+desktop-windows: ## Windows x64 lowkey.exe, built here (cargo-xwin; CPU only; no installer) -> desktop/src-tauri/target/x86_64-pc-windows-msvc/release/lowkey.exe
+	cd frontend && ([ -d node_modules ] || npm ci) && npm run build
+	PATH="$(dir $(CARGO)):$$PATH" ./desktop/scripts/xwin-tools.sh
+	cd desktop/src-tauri && PATH="$(CURDIR)/desktop/.deps/xwin-tools/bin:$(dir $(CARGO)):$$PATH" \
+	  $(CARGO) xwin build --release --target x86_64-pc-windows-msvc --features custom-protocol
 
 test:           ## UI typecheck + build, Rust unit tests, key script syntax
 	sh -n scripts/ow-dictate

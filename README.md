@@ -49,7 +49,17 @@ The window shows the progress. Other builds:
 make desktop             # only build: desktop/src-tauri/target/release/lowkey
                          # (also fetches the checked sherpa-onnx libraries into desktop/.deps)
 make desktop-bundle      # AppImage / .deb / .rpm in desktop/src-tauri/target/release/bundle/
+make desktop-windows     # Windows x64 lowkey.exe, built on Linux:
+                         # desktop/src-tauri/target/x86_64-pc-windows-msvc/release/lowkey.exe
 ```
+
+`make desktop-windows` needs `cargo-xwin` (`cargo install --locked cargo-xwin`) and clang/llvm.
+The first time, it downloads the Microsoft C runtime and Windows SDK (~1.2 GB, into
+`~/.cache/cargo-xwin`; cargo-xwin accepts Microsoft's license for you). It uses the system's
+`ninja` and `lld-link`, or else puts ninja (from PyPI) and Rust's `rust-lld` into
+`desktop/.deps`. It makes the program only, with no installer, and the speech model runs on
+the CPU. Windows must have the Visual C++ runtime (`MSVCP140.dll`). The installers come from CI
+(see Download).
 
 ## Use
 
