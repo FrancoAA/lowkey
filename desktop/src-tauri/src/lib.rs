@@ -12,6 +12,7 @@ pub mod history;
 pub mod hyprland;
 pub mod jobs;
 pub mod llm;
+pub mod mcp;
 pub mod meeting;
 pub mod mic;
 pub mod microphones;

@@ -43,6 +43,8 @@ export interface Status {
   calls?: { detect: boolean; available: boolean; apps: { key: string; label: string; policy: "ask" | "always" | "never" }[] };
   /** A meeting is being recorded. */
   recording?: boolean;
+  /** Settings → AI agents: agents may start and stop recordings; the program they start. */
+  agents?: { recording: boolean; program: string };
   /** AI notes settings (the API key itself never comes to the page). */
   ai?: {
     engine: "builtin" | "server";

@@ -102,6 +102,9 @@ pub struct Config {
     pub ai_key: String,
     /// Write the AI notes when a meeting stops (the first time, the built-in model downloads).
     pub ai_auto: bool,
+    /// AI agents (the MCP server, `lowkey --mcp`) may start and stop meeting recordings. Off:
+    /// they only read meetings and dictations, and transcribe files.
+    pub mcp_recording: bool,
     /// Names and terms the speech model gets wrong (Settings → General → Vocabulary). Last:
     /// a list of tables goes after the plain values in config.toml.
     pub vocabulary: Vec<crate::vocabulary::Term>,
@@ -125,6 +128,7 @@ impl Default for Config {
             ai_model: String::new(),
             ai_key: String::new(),
             ai_auto: true,
+            mcp_recording: false,
             vocabulary: Vec::new(),
         }
     }
@@ -205,6 +209,12 @@ pub struct Cli {
     pub no_hotkey: bool,
     pub dictate: Option<String>,
     pub meeting: Option<String>,
+    /// The title of a meeting that `--meeting start` starts.
+    pub title: Option<String>,
+    /// The command comes from an AI agent (the MCP server): the app says so in a notification.
+    pub agent: bool,
+    /// Serve the Model Context Protocol on stdin/stdout, for AI agents.
+    pub mcp: bool,
     /// Type the last dictation again (the paste-last key).
     pub paste_last: bool,
     pub background: bool,
@@ -227,6 +237,8 @@ Usage: lowkey [options] [audio or video files…]
   --no-hotkey             do not add the global keys (dictation and meeting)
   --dictate <action>      press | release | toggle | cancel | quit (used by the key bind)
   --meeting <action>      toggle | start | stop a meeting recording (used by the meeting key)
+  --title <text>          with --meeting start: the meeting's title
+  --mcp                   serve AI agents (Claude Code, Codex, Gemini CLI…) over MCP on stdin/stdout
   --paste-last            type the last dictation again (used by the paste-last key)
   --background            start without opening the window
   --transcribe <file>     transcribe a file without a window and print JSON
@@ -247,6 +259,9 @@ impl Cli {
                 "--no-hotkey" => cli.no_hotkey = true,
                 "--dictate" => cli.dictate = it.next(),
                 "--meeting" => cli.meeting = it.next(),
+                "--title" => cli.title = it.next(),
+                "--agent" => cli.agent = true,
+                "--mcp" => cli.mcp = true,
                 "--paste-last" => cli.paste_last = true,
                 "--background" => cli.background = true,
                 "--transcribe" => cli.transcribe = it.next().map(PathBuf::from),
@@ -361,5 +376,8 @@ mod tests {
         assert_eq!(Cli::parse(argv("--print-snippet")).print_snippet.as_deref(), Some("lua"));
         assert_eq!(Cli::parse(argv("--meeting toggle")).meeting.as_deref(), Some("toggle"));
         assert!(Cli::parse(argv("--paste-last")).paste_last);
+        let c = Cli::parse(vec!["lowkey".into(), "--meeting".into(), "start".into(), "--title".into(), "Weekly sync".into(), "--agent".into()]);
+        assert_eq!((c.meeting.as_deref(), c.title.as_deref(), c.agent), (Some("start"), Some("Weekly sync"), true));
+        assert!(Cli::parse(argv("--mcp")).mcp);
     }
 }

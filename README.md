@@ -275,6 +275,38 @@ aborts in this binary ("free(): invalid pointer"), because the static sherpa-onn
 brings another build of libstdc++'s `std::regex` and the linker keeps one copy for both
 (confirmed: a build without Parakeet does not abort).
 
+## AI agents (MCP)
+
+Claude Code, Codex, Gemini CLI, Cursor and other agents can use Lowkey over the
+[Model Context Protocol](https://modelcontextprotocol.io): `lowkey --mcp` serves it on stdin and
+stdout. The agent starts it when it needs it; the app does not have to run. Settings → AI agents
+has the line for each agent, with your path, and a Copy button:
+
+```sh
+claude mcp add -s user lowkey -- /usr/bin/lowkey --mcp
+codex mcp add lowkey -- /usr/bin/lowkey --mcp
+gemini mcp add -s user lowkey /usr/bin/lowkey --mcp
+```
+
+Other agents: `{"mcpServers": {"lowkey": {"command": "/usr/bin/lowkey", "args": ["--mcp"]}}}`.
+
+| Tool | What it does |
+|---|---|
+| `list_meetings` | The meetings, newest first: id, title, start (UTC), length |
+| `get_meeting` | One meeting as Markdown: AI notes, your notes, transcript ("Me" is you); `parts` picks some |
+| `search` | Meetings and dictations with every word of the query; where in a meeting it was found |
+| `get_action_items` | The tasks in the AI notes (`- **Ana** sends…`), by owner and topic |
+| `last_dictation` | The last dictation in the history |
+| `transcribe_file` | An audio or video file through the local model (absolute path) |
+| `recording_status` | Whether the app runs and records a meeting now |
+| `start_meeting`, `stop_meeting` | Record a meeting; **only** with Settings → AI agents → "Let agents start and stop recordings" (`mcp_recording = true`; off by default) |
+
+Meetings are MCP resources too (`lowkey://meeting/<id>`). The server only reads the app's files
+(never writes them), never downloads a model (`transcribe_file` uses the downloaded ones) and
+opens no network port. When an agent starts or stops a recording, the
+strip shows it as always and a notification says that an agent did it. An agent sends what it
+reads to its own AI service: Lowkey itself sends nothing.
+
 ## Settings (all optional)
 
 Settings in the window save them to `~/.config/lowkey/config.toml`:
@@ -298,6 +330,7 @@ ai_engine = "builtin"           # AI notes: builtin | server
 ai_builtin_model = "qwen3.5-4b" # qwen3.5-4b (recommended) | qwen3.5-2b | gemma-4-e4b
 ai_url = "http://localhost:11434/v1"   # own server (OpenAI-compatible); ai_model, ai_key too
 ai_auto = true                  # write AI notes when a meeting stops
+mcp_recording = false           # AI agents (lowkey --mcp) may start and stop recordings
 live_preview = true             # words in the overlay while you talk
 overlay_collapsed = false       # the strip as a small pill (its corner button; a click opens it)
 # overlay_at = [0.5, 0.9]       # where you left the strip (fractions of the screen's free room)
@@ -306,7 +339,7 @@ preview_engine = "auto"         # auto (Parakeet when on disk, else Whistle) | w
 
 A model that the app no longer has (the faster-whisper `fw:` models) falls back to the
 default. Command line: `--model <id>` (overrides the file), `--language <code>`, `--hotkey "…"`,
-`--no-hotkey` (no global keys), `--background`, `--meeting toggle|start|stop`, `--paste-last`, `--transcribe <file>` (prints JSON, no window),
+`--no-hotkey` (no global keys), `--background`, `--meeting toggle|start|stop` (`--title <text>` with start), `--paste-last`, `--transcribe <file>` (prints JSON, no window), `--mcp` (AI agents),
 `--print-snippet [lua|conf]`, `--remove-hotkey`, `--dictate press|release|toggle|cancel|quit`.
 
 ## Models
@@ -367,7 +400,7 @@ Dependencies are pinned in `desktop/src-tauri/Cargo.lock` and `frontend/package-
 ## Privacy
 
 Audio and transcripts stay on your computer, unless you point AI notes to a server that is
-not on it (Settings says so). The only other network access is the one-time model
+not on it (Settings says so), or connect an AI agent (it sends what it reads to its own service). The only other network access is the one-time model
 download from Hugging Face (and the llama.cpp runner from GitHub for AI notes) (the live preview engine and model come from pinned revisions,
 checked with SHA-256; that engine has no network code).
 

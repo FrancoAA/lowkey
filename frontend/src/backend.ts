@@ -22,6 +22,7 @@ export interface Options {
   /** "" removes the key. */
   ai_key?: string;
   ai_auto?: boolean;
+  mcp_recording?: boolean;
   vocabulary?: { term: string; sounds_like: string[] }[];
   history_keep?: string;
   /** system | light | dark. */

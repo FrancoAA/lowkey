@@ -57,6 +57,8 @@ const aiModel = $<HTMLInputElement>("ai-model");
 const aiKey = $<HTMLInputElement>("ai-key");
 const aiKeyClear = $<HTMLButtonElement>("ai-key-clear");
 const aiAuto = $<HTMLInputElement>("ai-auto");
+const agentCommands = $<HTMLElement>("agent-commands");
+const agentsRecording = $<HTMLInputElement>("agents-recording");
 const aiStatus = $<HTMLDivElement>("ai-status");
 const aiStatusText = $<HTMLSpanElement>("ai-status-text");
 const aiBar = aiStatus.querySelector<HTMLDivElement>(".model-bar")!;
@@ -309,6 +311,7 @@ function applyStatus(next: Status): void {
   renderKey();
   if (backend) renderCalls(backend, status, showError);
   renderAi();
+  renderAgents();
   renderAbout();
   renderStatus();
 }
@@ -1026,6 +1029,68 @@ aiKey.addEventListener("change", () => {
 });
 aiKeyClear.addEventListener("click", () => saveAi({ ai_key: "" }));
 aiAuto.addEventListener("change", () => saveAi({ ai_auto: aiAuto.checked }));
+
+// ------------------------------------------------------------------ AI agents (MCP)
+
+/** A path as one shell word: as it is when safe; a Windows path in double quotes (cmd and
+ * PowerShell); else in single quotes, which bash and zsh never expand ($, `, \ stay as they are). */
+function shellWord(path: string): string {
+  if (/^[\w./+-]+$/.test(path)) return path;
+  if (/^[A-Za-z]:\\/.test(path)) return `"${path}"`;
+  return `'${path.replace(/'/g, `'\\''`)}'`;
+}
+
+/** The switch's save is on its way: a status from before it must not flip the switch back. */
+let agentsSaving = false;
+
+/** Settings → AI agents: the line that connects each agent, and the recording switch. */
+function renderAgents(): void {
+  const a = status?.agents;
+  if (!a) return;
+  if (!agentsSaving) agentsRecording.checked = a.recording;
+  if (agentCommands.dataset.program === a.program) return;
+  agentCommands.dataset.program = a.program;
+  const p = shellWord(a.program);
+  const config = JSON.stringify({ mcpServers: { lowkey: { command: a.program, args: ["--mcp"] } } }, null, 2);
+  const rows: [string, string][] = [
+    ["Claude Code", `claude mcp add -s user lowkey -- ${p} --mcp`],
+    ["Codex", `codex mcp add lowkey -- ${p} --mcp`],
+    ["Gemini CLI", `gemini mcp add -s user lowkey ${p} --mcp`],
+    ["Other agents (Cursor, Claude Desktop, VS Code…): add this to their MCP settings", config],
+  ];
+  agentCommands.replaceChildren(
+    ...rows.map(([name, text]) => {
+      const row = document.createElement("div");
+      row.className = "agent-command";
+      const label = document.createElement("span");
+      label.className = "label";
+      label.textContent = name;
+      const code = document.createElement("code");
+      code.textContent = text;
+      const copy = document.createElement("button");
+      copy.type = "button";
+      copy.className = "btn btn-outline btn-sm";
+      copy.textContent = "Copy";
+      copy.setAttribute("aria-label", `Copy the line for ${name.split(" (")[0].split(":")[0]}`);
+      copy.addEventListener("click", () => {
+        void backend.copy(text).then(() => {
+          copy.textContent = "Copied";
+          setTimeout(() => (copy.textContent = "Copy"), 1500);
+        }, (err) => showError(String(err)));
+      });
+      row.append(label, code, copy);
+      return row;
+    }),
+  );
+}
+
+agentsRecording.addEventListener("change", () => {
+  agentsSaving = true;
+  void backend
+    .saveOptions({ mcp_recording: agentsRecording.checked })
+    .then(refreshStatus, (err) => showError(String(err)))
+    .finally(() => (agentsSaving = false));
+});
 
 function renderAbout(): void {
   if (!status) return;

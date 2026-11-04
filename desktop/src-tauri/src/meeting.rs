@@ -519,7 +519,7 @@ pub fn local_time(unix: u64, offset_min: i32) -> String {
     format!("{y:04}-{mo:02}-{d:02} {:02}:{:02}", s / 3600, s / 60 % 60)
 }
 
-fn duration_text(seconds: f64) -> String {
+pub fn duration_text(seconds: f64) -> String {
     let min = (seconds / 60.0).round() as u64;
     match min {
         0 => "under 1 min".into(),
@@ -533,39 +533,56 @@ fn duration_text(seconds: f64) -> String {
 pub fn model_input(m: &Meeting) -> String {
     let mut plain = m.clone();
     plain.ai_notes.clear();
-    markdown(&plain, None)
+    markdown(&plain, &duration_text(m.duration), Parts::ALL)
 }
 
 /// What the chat model reads about the meeting: the title, your notes, the AI notes and the
 /// transcript (no date, as in `model_input`).
 pub fn chat_input(m: &Meeting) -> String {
-    markdown(m, None)
+    markdown(m, &duration_text(m.duration), Parts::ALL)
 }
 
 pub fn to_markdown(m: &Meeting, offset_min: i32) -> String {
-    markdown(m, Some(offset_min))
+    markdown(m, &format!("{} · {}", local_time(m.started_at, offset_min), duration_text(m.duration)), Parts::ALL)
 }
 
-fn markdown(m: &Meeting, offset_min: Option<i32>) -> String {
-    let when = match offset_min {
-        Some(o) => format!("{} · {}", local_time(m.started_at, o), duration_text(m.duration)),
-        None => duration_text(m.duration),
-    };
+/// The parts of a meeting in a Markdown copy (the title and the time are always there).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Parts {
+    pub ai_notes: bool,
+    pub notes: bool,
+    pub transcript: bool,
+}
+
+impl Parts {
+    pub const ALL: Parts = Parts { ai_notes: true, notes: true, transcript: true };
+}
+
+/// For AI agents (MCP): the start in UTC (the server does not know the user's time zone), the id,
+/// and only `parts`.
+pub fn to_markdown_utc(m: &Meeting, parts: Parts) -> String {
+    let when = format!("{} UTC · {} · id {}", local_time(m.started_at, 0), duration_text(m.duration), m.id);
+    markdown(m, &when, parts)
+}
+
+fn markdown(m: &Meeting, when: &str, parts: Parts) -> String {
     let mut s = format!("# {}\n\n{when}\n\n", m.title);
-    if !m.ai_notes.trim().is_empty() {
+    if parts.ai_notes && !m.ai_notes.trim().is_empty() {
         // The model's own "## …" headings go one level down, under this one.
         let body: String = m.ai_notes.trim().lines().map(|l| if l.starts_with('#') { format!("#{l}\n") } else { format!("{l}\n") }).collect();
         s += &format!("## AI notes ({}, a draft)\n\n{}\n\n", m.ai_model, body.trim_end());
     }
-    if !m.notes.trim().is_empty() {
+    if parts.notes && !m.notes.trim().is_empty() {
         s += &format!("## Notes\n\n{}\n\n", m.notes.trim());
     }
-    s += "## Transcript\n\n";
-    if m.lines.is_empty() {
-        s += "No speech was found.\n";
-    }
-    for p in paragraphs(&m.lines) {
-        s += &format!("**{}** ({}): {}\n\n", p.speaker.label(), clock(p.start), p.text);
+    if parts.transcript {
+        s += "## Transcript\n\n";
+        if m.lines.is_empty() {
+            s += "No speech was found.\n";
+        }
+        for p in paragraphs(&m.lines) {
+            s += &format!("**{}** ({}): {}\n\n", p.speaker.label(), clock(p.start), p.text);
+        }
     }
     s.trim_end().to_string() + "\n"
 }

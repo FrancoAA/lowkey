@@ -641,3 +641,14 @@ dialog.confirm::backdrop { background: rgb(0 0 0 / 0.5); }
 dialog.confirm h2 { font-size: 17px; font-weight: 600; }
 dialog.confirm p { margin: 8px 0 0; color: var(--muted-foreground); font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; }
 .confirm-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+
+/* Settings → AI agents: one line per agent, with a Copy button. */
+.agent-commands { display: flex; flex-direction: column; gap: 10px; }
+.agent-command { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 8px; align-items: center; }
+.agent-command .label { grid-column: 1 / -1; font-size: 13px; color: var(--muted-foreground); }
+.agent-command code {
+  display: block; padding: 8px 10px; border-radius: calc(var(--radius) - 2px); background: var(--muted);
+  font: 12px/1.5 ui-monospace, "SF Mono", monospace; white-space: pre-wrap; overflow-wrap: anywhere; user-select: all;
+}
+.agent-tools { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.agent-tools b { font-weight: 500; }

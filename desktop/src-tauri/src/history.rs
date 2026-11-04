@@ -171,6 +171,24 @@ impl History {
     }
 }
 
+/// The entries in `file` that `keep` still keeps and that have every word of `query` (any order,
+/// any case), newest first. Only reads: another process (the MCP server) never writes the file
+/// the app writes.
+pub fn read(file: &Path, keep: &str, query: &str, now: u64) -> Vec<Entry> {
+    let max_age = keep_seconds(keep);
+    let words: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
+    let entries: Vec<Entry> = std::fs::read_to_string(file).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
+    entries
+        .into_iter()
+        .rev()
+        .filter(|x| max_age.map_or(true, |m| now.saturating_sub(x.at) < m))
+        .filter(|x| {
+            let t = x.text.to_lowercase();
+            words.iter().all(|w| t.contains(w.as_str()))
+        })
+        .collect()
+}
+
 fn write_private(file: &Path, body: &[u8]) -> std::io::Result<()> {
     use std::io::Write;
     if let Some(dir) = file.parent() {

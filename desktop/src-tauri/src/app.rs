@@ -297,6 +297,8 @@ impl App {
                 "builtin_model": llm::model(&cfg.ai_builtin_model).id,
                 "builtin": llm::builtin_status(&cfg.ai_builtin_model),
             },
+            // Settings → AI agents: the command an agent starts (`lowkey --mcp`).
+            "agents": { "recording": cfg.mcp_recording, "program": crate::autostart::launcher() },
         })
     }
 
@@ -383,7 +385,7 @@ impl App {
             }
             Action::Meeting => {
                 let me = self.clone();
-                std::thread::spawn(move || me.meeting_key("toggle"));
+                std::thread::spawn(move || me.meeting_key("toggle", "", false));
             }
             Action::Model(m) => {
                 let me = self.clone();
@@ -602,7 +604,8 @@ impl App {
         if let Some(action) = cli.meeting.clone() {
             // Opening the devices or finishing takes a moment: not on this thread.
             let me = self.clone();
-            std::thread::spawn(move || me.meeting_key(&action));
+            let (title, agent) = (cli.title.clone().unwrap_or_default(), cli.agent);
+            std::thread::spawn(move || me.meeting_key(&action, &title, agent));
             return;
         }
         if let Some(action) = cli.dictate.as_deref() {
@@ -641,8 +644,14 @@ impl App {
         }
     }
 
-    /// The meeting key (or `--meeting`): start, stop or toggle the recording.
-    fn meeting_key(self: &Arc<Self>, action: &str) {
+    /// The meeting key (or `--meeting`): start, stop or toggle the recording. `title`: for a
+    /// start that is not an offered call. `agent`: an AI agent asks (the MCP server); only with
+    /// Settings → AI agents → "Let agents start and stop recordings", and the user is told.
+    fn meeting_key(self: &Arc<Self>, action: &str, title: &str, agent: bool) {
+        if agent && !self.config.lock().mcp_recording {
+            output::notify("An AI agent asked to start or stop a meeting recording; that is off in Settings → AI agents.");
+            return;
+        }
         if self.meeting_starting.load(Ordering::SeqCst) {
             // A tap to stop while the devices open: remembered, done right after the start.
             if matches!(action, "toggle" | "stop") {
@@ -658,13 +667,16 @@ impl App {
             ("toggle" | "start", false) => {
                 // A call is offered: the recording is that call (its name, and "ended" later).
                 let offered = self.call_offer.lock().take().map(|(c, _)| c);
-                let title = offered.as_ref().map(|c| format!("{} call", c.label)).unwrap_or_default();
+                let title = offered.as_ref().map(|c| format!("{} call", c.label)).unwrap_or_else(|| title.to_string());
                 match meeting_start_inner(self, &title) {
                 Ok(live) => {
                     if let Some(c) = offered {
                         *self.call_session.lock() = Some((live.meeting.id.clone(), c, false));
                     }
                     emit_logged(&self.handle, "meeting-start", json!({"result": {"Ok": live.meeting.id}}));
+                    if agent {
+                        output::notify("An AI agent started a meeting recording. Stop it on the strip or with the meeting key.");
+                    }
                 }
                 Err(e) if e == ALREADY_RECORDING => {} // another tap won the start
                 Err(e) => {
@@ -681,7 +693,9 @@ impl App {
                 }
             }
             ("toggle" | "stop", true) => {
-                let _ = stop_meeting(self);
+                if stop_meeting(self).is_ok() && agent {
+                    output::notify("An AI agent stopped the meeting recording; it is saved.");
+                }
             }
             ("start" | "stop", _) => {} // already as asked
             other => eprintln!("  unknown --meeting action {other:?}"),
@@ -1064,6 +1078,7 @@ struct OptionsIn {
     /// Some("") removes the key.
     ai_key: Option<String>,
     ai_auto: Option<bool>,
+    mcp_recording: Option<bool>,
     vocabulary: Option<Vec<crate::vocabulary::Term>>,
     history_keep: Option<String>,
     /// system | light | dark.
@@ -1152,6 +1167,9 @@ fn apply_options(app: &AppRef, options: OptionsIn) -> Result<Value, String> {
         }
         if let Some(on) = options.ai_auto {
             cfg.ai_auto = on;
+        }
+        if let Some(on) = options.mcp_recording {
+            cfg.mcp_recording = on;
         }
         if let Some(on) = options.call_detection {
             cfg.call_detection = on;
@@ -2010,7 +2028,7 @@ fn register_global_shortcut(app: &AppRef, key: &str, kind: KeyKind) -> String {
         let Some(app) = weak.upgrade() else { return };
         if kind == KeyKind::Meeting {
             if ev.state == ShortcutState::Pressed {
-                std::thread::spawn(move || app.meeting_key("toggle"));
+                std::thread::spawn(move || app.meeting_key("toggle", "", false));
             }
             return;
         }
@@ -2065,31 +2083,19 @@ pub fn headless(cli: &Cli) -> bool {
         println!("removed: {}", if removed.is_empty() { "nothing".into() } else { removed.join(", ") });
         return true;
     }
+    if cli.mcp {
+        crate::rename::migrate();
+        crate::mcp::stdio();
+        return true;
+    }
     if let Some(path) = &cli.transcribe {
         crate::rename::migrate();
         let cfg = Config::load();
         let engines = Engines::new(cfg.idle_unload_minutes);
         engines.set_vocabulary(&cfg.vocabulary);
-        let model = cli
-            .model
-            .clone()
-            .filter(|m| models::spec(m).is_some())
-            .or_else(|| models::spec(&cfg.model).map(|m| m.id.to_string()))
-            .unwrap_or_else(|| models::auto_model(&engines.hw).to_string());
-        // Load first, so "seconds" is the transcription alone (what the app does with a loaded model).
-        let t_load = Instant::now();
-        let _ = engines.prepare(&model);
-        let load_seconds = t_load.elapsed().as_secs_f64();
-        let t0 = Instant::now();
-        let input = Input { path: Some(path.clone()), pcm: None, language: cli.language.clone() };
-        let out = engines.transcribe(&model, input, Arc::new(|_| {}));
-        match out {
-            Ok(o) => println!(
-                "{}",
-                json!({"model": model, "device": engines.hw.gpu, "load_seconds": load_seconds, "seconds": t0.elapsed().as_secs_f64(), "language": o.language,
-                       "duration": o.duration, "text": crate::formats::to_txt(&o.segments).trim(), "segments": o.segments})
-            ),
-            Err(e) => {
+        match transcribe_json(&engines, &cfg, path, cli.model.as_deref(), cli.language.clone(), true) {
+            (_, Ok(out)) => println!("{out}"),
+            (model, Err(e)) => {
                 println!("{}", json!({"model": model, "error": format!("{e:#}")}));
                 std::process::exit(1);
             }
@@ -2097,6 +2103,70 @@ pub fn headless(cli: &Cli) -> bool {
         return true;
     }
     false
+}
+
+/// One file → its text as JSON (`--transcribe` and the agents' transcribe_file). The model: the
+/// one asked for, else the saved one, else the automatic one. Loaded first, so "seconds" is the
+/// transcription alone (what the app does with a loaded model). `download`: a model that is not
+/// on disk downloads first (else it is an error: an agent never starts a download). Returns the
+/// model used too.
+pub fn transcribe_json(engines: &Engines, cfg: &Config, path: &std::path::Path, model: Option<&str>, language: Option<String>, download: bool) -> (String, anyhow::Result<Value>) {
+    let model = model
+        .filter(|m| models::spec(m).is_some())
+        .map(String::from)
+        .or_else(|| models::spec(&cfg.model).map(|m| m.id.to_string()))
+        .unwrap_or_else(|| models::auto_model(&engines.hw).to_string());
+    if !download && !models::spec(&model).is_some_and(models::present) {
+        return (model.clone(), Err(anyhow::anyhow!("The model {model} is not on this computer. Download it in Lowkey (Settings → Models), or name a downloaded one.")));
+    }
+    let t_load = Instant::now();
+    let _ = engines.prepare(&model);
+    let load_seconds = t_load.elapsed().as_secs_f64();
+    let t0 = Instant::now();
+    let input = Input { path: Some(path.to_path_buf()), pcm: None, language };
+    let out = engines.transcribe(&model, input, Arc::new(|_| {})).map(|o| {
+        json!({"model": model, "device": engines.hw.gpu, "load_seconds": load_seconds, "seconds": t0.elapsed().as_secs_f64(), "language": o.language,
+               "duration": o.duration, "text": crate::formats::to_txt(&o.segments).trim(), "segments": o.segments})
+    });
+    (model, out)
+}
+
+/// The app touches `desktop.json` this often while it runs; older than `ALIVE_S`: it does not run
+/// (a crash leaves the file).
+const HEARTBEAT_S: u64 = 10;
+const ALIVE_S: u64 = 3 * HEARTBEAT_S;
+
+/// Since when (unix seconds) the desktop app runs, from the file it writes at start and touches
+/// every `HEARTBEAT_S` (`desktop.json`, removed when it ends); None when it does not run.
+pub fn running_since() -> Option<u64> {
+    let mut dirs = vec![runtime_dir()];
+    // A process without the session's XDG_RUNTIME_DIR (a service, a bare shell) looks where the
+    // session keeps it.
+    #[cfg(target_os = "linux")]
+    if std::env::var_os("XDG_RUNTIME_DIR").is_none() {
+        dirs.push(PathBuf::from(format!("/run/user/{}", unsafe { libc_getuid() })).join(crate::rename::NAME));
+    }
+    dirs.iter().find_map(|d| alive_since(&d.join("desktop.json")))
+}
+
+fn alive_since(f: &std::path::Path) -> Option<u64> {
+    let v: Value = serde_json::from_str(&std::fs::read_to_string(f).ok()?).ok()?;
+    let touched = std::fs::metadata(f).ok()?.modified().ok()?.elapsed().map(|d| d.as_secs()).unwrap_or(0);
+    if touched > ALIVE_S {
+        return None;
+    }
+    // Linux: also the process itself (its number may be another program's after a crash).
+    #[cfg(target_os = "linux")]
+    {
+        let pid = v["pid"].as_u64()?;
+        let comm = std::fs::read_to_string(format!("/proc/{pid}/comm")).ok()?;
+        let exe = v["exe"].as_str().and_then(|e| std::path::Path::new(e).file_name()?.to_str().map(String::from)).unwrap_or_default();
+        // The kernel keeps 15 bytes of the name.
+        if exe.is_empty() || !exe.starts_with(comm.trim()) {
+            return None;
+        }
+    }
+    v["started"].as_u64()
 }
 
 pub fn run() {
@@ -2340,6 +2410,13 @@ pub fn run() {
                 .spawn(move || {
                     for tick in 0u64.. {
                         let Some(app) = weak_tray.upgrade() else { return };
+                        if tick % HEARTBEAT_S == 0 {
+                            // "The app runs" for the MCP server (`running_since`).
+                            let f = runtime_dir().join("desktop.json");
+                            if let Ok(file) = std::fs::File::options().write(true).open(&f) {
+                                let _ = file.set_modified(std::time::SystemTime::now());
+                            }
+                        }
                         if tick % 3 == 0 {
                             app.refresh_tray_mics();
                         } else {
@@ -2355,7 +2432,8 @@ pub fn run() {
             match private_runtime_dir() {
                 Ok(dir) => {
                     let exe = std::env::current_exe().unwrap_or_default();
-                    let _ = std::fs::write(dir.join("desktop.json"), json!({"exe": exe, "pid": std::process::id()}).to_string());
+                    let started = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+                    let _ = std::fs::write(dir.join("desktop.json"), json!({"exe": exe, "pid": std::process::id(), "started": started}).to_string());
                 }
                 Err(e) => eprintln!("  Global dictation: cannot use {} ({e})", runtime_dir().display()),
             }
