@@ -266,7 +266,7 @@ impl App {
             "default_model": current,
             "auto_model": models::auto_model(&self.engines.hw),
             "models": list,
-            "options": { "model": cfg.model, "language": cfg.language, "idle_unload_minutes": cfg.idle_unload_minutes, "live_preview": cfg.live_preview, "preview_engine": cfg.preview_engine, "vocabulary": cfg.vocabulary, "microphone": cfg.microphone },
+            "options": { "model": cfg.model, "language": cfg.language, "idle_unload_minutes": cfg.idle_unload_minutes, "live_preview": cfg.live_preview, "preview_engine": cfg.preview_engine, "vocabulary": cfg.vocabulary, "microphone": cfg.microphone, "theme": cfg.theme },
             "preview": self.preview.status(),
             "version": env!("CARGO_PKG_VERSION"),
             "hotkey": *self.hotkey_text.lock(),
@@ -908,6 +908,8 @@ struct OptionsIn {
     ai_auto: Option<bool>,
     vocabulary: Option<Vec<crate::vocabulary::Term>>,
     history_keep: Option<String>,
+    /// system | light | dark.
+    theme: Option<String>,
     microphone: Option<String>,
     avoid_bluetooth_mic: Option<bool>,
     call_detection: Option<bool>,
@@ -1014,6 +1016,13 @@ fn apply_options(app: &AppRef, options: OptionsIn) -> Result<Value, String> {
             }
             app.history.set_keep(&k);
             cfg.history_keep = k;
+        }
+        if let Some(t) = options.theme {
+            if !THEMES.contains(&t.as_str()) {
+                return Err(format!("Unknown appearance {t:?}"));
+            }
+            set_window_theme(&app.handle, &t);
+            cfg.theme = t;
         }
         if let Some(v) = options.vocabulary {
             cfg.vocabulary = crate::vocabulary::normalize(&v);
@@ -1227,6 +1236,27 @@ fn stop_meeting(app: &AppRef) -> Result<meeting::Meeting, String> {
         session.abandon(); // keep what is transcribed; the next meeting can start
         "Stopping failed; the meeting is saved as it was.".to_string()
     })
+}
+
+/// The sidebar's Quit: the same as the tray menu's (a meeting is stopped and saved by the page
+/// first; `shutdown` keeps what a meeting left running has).
+#[tauri::command]
+fn app_quit(app: State<'_, AppRef>) {
+    app.handle.exit(0);
+}
+
+const THEMES: &[&str] = &["system", "light", "dark"];
+
+/// The window's own parts (Windows' and macOS' title bar) in the chosen colours; the page sets
+/// its colours itself (frontend/public/theme.js).
+fn set_window_theme(handle: &AppHandle, theme: &str) {
+    if let Some(w) = handle.get_webview_window("main") {
+        let _ = w.set_theme(match theme {
+            "light" => Some(tauri::Theme::Light),
+            "dark" => Some(tauri::Theme::Dark),
+            _ => None,
+        });
+    }
 }
 
 #[tauri::command]
@@ -1910,7 +1940,8 @@ pub fn run() {
             meeting_ai_notes,
             ai_notes_cancel,
             meeting_chat,
-            meeting_chat_clear
+            meeting_chat_clear,
+            app_quit
         ])
         .setup(move |tauri_app| {
             let cli = first_cli.clone();
@@ -1931,6 +1962,7 @@ pub fn run() {
             }
             let handle = tauri_app.handle().clone();
             let config = Config::load();
+            set_window_theme(&handle, &config.theme);
             let engines = Engines::new(config.idle_unload_minutes);
             engines.set_vocabulary(&config.vocabulary);
             let h_jobs = handle.clone();

@@ -7,6 +7,7 @@ import { initHistory } from "./history";
 import { initMeetings } from "./meetings";
 import { initMicrophone } from "./microphone";
 import { initVocabulary } from "./vocabulary";
+import { confirmDialog } from "./confirm";
 import { Waveform } from "./waveform";
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -204,6 +205,43 @@ async function refreshStatus(): Promise<void> {
   statusTimer = window.setTimeout(refreshStatus, settling ? 1000 : 10000);
 }
 
+// ------------------------------------------------------------------ appearance and quit
+declare global {
+  interface Window {
+    /** public/theme.js: paint the page light or dark ("system" follows the desktop). */
+    lowkeyTheme?: (choice: string) => void;
+  }
+}
+const themeSelect = $<HTMLSelectElement>("theme-select");
+themeSelect.value = localStorage.getItem("lowkey-theme") ?? "system";
+themeSelect.addEventListener("change", () => {
+  window.lowkeyTheme?.(themeSelect.value); // at once; then saved
+  void backend.saveOptions({ theme: themeSelect.value }).then(refreshStatus, (err) => showError(String(err)));
+});
+
+const quitButton = $<HTMLButtonElement>("app-quit");
+quitButton.addEventListener("click", async () => {
+  if (status?.recording) {
+    // Stopped and saved first (as Stop does); quitting alone would lose its last seconds.
+    const yes = await confirmDialog({
+      title: "Stop the recording and quit?",
+      body: "The meeting is saved first. Its AI notes are not written now: open the meeting later and use Write notes.",
+      action: "Stop and quit",
+      danger: true,
+    });
+    if (!yes) return;
+    quitButton.disabled = true;
+    try {
+      await backend.meetings.stop();
+    } catch (err) {
+      quitButton.disabled = false;
+      showError(`The meeting was not stopped, so Lowkey did not quit: ${String(err)}`);
+      return;
+    }
+  }
+  await backend.quit();
+});
+
 function applyStatus(next: Status): void {
   status = next;
   // Desktop: model download progress arrives as status events, not job events.
@@ -231,6 +269,12 @@ function applyStatus(next: Status): void {
     savedMic = status.options?.microphone ?? "";
   } else if (document.activeElement !== modelSelect && modelSelect.value !== status.default_model) {
     modelSelect.value = status.default_model; // chosen in the tray menu
+  }
+  // Appearance: the saved choice (also from config.toml edited by hand) wins over the boot copy.
+  const theme = status.options?.theme ?? "system";
+  if (document.activeElement !== themeSelect && themeSelect.value !== theme) {
+    themeSelect.value = theme;
+    window.lowkeyTheme?.(theme);
   }
   if ((status.options?.microphone ?? "") !== savedMic) {
     savedMic = status.options?.microphone ?? "";

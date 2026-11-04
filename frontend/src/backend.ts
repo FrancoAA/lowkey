@@ -24,6 +24,8 @@ export interface Options {
   ai_auto?: boolean;
   vocabulary?: { term: string; sounds_like: string[] }[];
   history_keep?: string;
+  /** system | light | dark. */
+  theme?: string;
   microphone?: string;
   avoid_bluetooth_mic?: boolean;
   call_detection?: boolean;
@@ -50,6 +52,8 @@ export interface Backend {
   /** Returns false when the user cancelled. */
   save(fileName: string, body: string, mime: string): Promise<boolean>;
   saveOptions(o: Options): Promise<void>;
+  /** Quit the app (as the tray menu's Quit). */
+  quit(): Promise<void>;
   /** Move the dictation key now (Hyprland syntax, "SUPER + ALT + D"). */
   setHotkey(key: string): Promise<Status>;
   /** Move the meeting key now. */
@@ -140,6 +144,7 @@ async function desktopBackend(): Promise<Backend> {
       };
     },
     copy: (text) => invoke("copy_text", { text }),
+    quit: () => invoke("app_quit"),
     // The app opens the save dialog and writes the file; the page never names a path.
     save: (fileName, body) => invoke<boolean>("save_export", { fileName, content: body }),
     async saveOptions(o) {

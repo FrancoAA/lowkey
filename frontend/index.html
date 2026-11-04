@@ -5,6 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" href="/icon.png" type="image/png" />
     <title>Lowkey · local speech to text</title>
+    <!-- Light or dark before the first paint (Settings → General → Appearance). -->
+    <script src="/theme.js"></script>
   </head>
   <body>
     <div id="announcer" class="sr-only" aria-live="polite"></div>
@@ -316,6 +318,18 @@
               <span id="vocab-note" class="field-desc" aria-live="polite"></span>
             </div>
           </div>
+          <div class="separator"></div>
+          <div class="field">
+            <div class="field-text">
+              <label for="theme-select">Appearance</label>
+              <p class="field-desc">Light or dark. System follows your desktop's setting.</p>
+            </div>
+            <select id="theme-select" class="select">
+              <option value="system">System</option>
+              <option value="light">Light</option>
+              <option value="dark">Dark</option>
+            </select>
+          </div>
         </section>
 
         <!-- Models: speech to text, AI notes -->
@@ -499,6 +513,14 @@
             <dd><kbd>Space</kbd> dictate in this window · <kbd>Esc</kbd> cancel · <kbd>Ctrl</kbd> <kbd>,</kbd> settings</dd>
           </dl>
         </section>
+      </div>
+      <!-- At the bottom of the side menu (CSS), but after the page in the Tab order: Tab from the
+           section list goes to the section, never to Quit. -->
+      <div class="nav-foot">
+        <button id="app-quit" type="button" class="nav-item" title="Quit Lowkey: the dictation key and the tray icon stop too">
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2v10" /><path d="M18.4 6.6a9 9 0 1 1-12.77.04" /></svg>
+          Quit Lowkey
+        </button>
       </div>
     </div>
     <script type="module" src="/src/main.ts"></script>

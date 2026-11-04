@@ -76,6 +76,8 @@ pub struct Config {
     pub paste_hotkey: String,
     /// How long the dictation history keeps entries: off | day | week | month | forever.
     pub history_keep: String,
+    /// The window's colours: system (follow the desktop) | light | dark.
+    pub theme: String,
     /// The microphone (a PipeWire source name on Linux, a device name elsewhere); "" = system default.
     pub microphone: String,
     /// With the system default: a Bluetooth headset's microphone gives way to another one.
@@ -105,6 +107,7 @@ impl Default for Config {
         Self { model: String::new(), language: "auto".into(), idle_unload_minutes: 15, hotkey: DEFAULT_HOTKEY.into(), live_preview: true, preview_engine: "auto".into(), meeting_hotkey: DEFAULT_MEETING_HOTKEY.into(),
             paste_hotkey: DEFAULT_PASTE_HOTKEY.into(),
             history_keep: crate::history::DEFAULT_KEEP.into(),
+            theme: "system".into(),
             microphone: String::new(),
             avoid_bluetooth_mic: true,
             call_detection: true,

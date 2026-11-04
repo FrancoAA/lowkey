@@ -946,8 +946,25 @@ esac
         d3 = wait(lambda: (s := dict_state())["state"] in ("done", "error") and s, 60, "cold-start result")
         check(d3["state"] == "done" and "typed" in d3["delivered"], f"typed after a cold start: {d3['text']!r}")
         check(len(app_pids()) == 1, "one app process")
-        key("quit")
-        wait(lambda: not app_pids(), 20, "quit")
+        # Quit Lowkey at the bottom of the side menu: a second launch opens the window; Ctrl+,
+        # puts the focus on the section list, End goes to About; Quit comes after the page in
+        # the Tab order (after About's 4 links), never right after the section list.
+        run(["hyprctl", "dispatch", f'hl.dsp.exec_cmd("{APP}")'], env)
+        qwin = wait(lambda: win("Lowkey"), 20, "the window from a second launch")
+        focus(qwin["address"])
+        time.sleep(0.5)
+        for st in ("down", "up"):
+            run(["hyprctl", "dispatch", f'hl.dsp.send_key_state({{ mods = "CTRL", key = "comma", state = "{st}" }})'], env)
+            time.sleep(0.05)
+        time.sleep(0.4)
+        press_key("End")  # About
+        for _ in range(5):
+            press_key("Tab")
+        time.sleep(0.3)
+        shot("35-desktop-quit-button.png")
+        press_key("Return")
+        wait(lambda: not app_pids(), 20, "quit from the side menu")
+        check(not (runtime / "lowkey" / "desktop.json").exists(), "Quit Lowkey in the side menu quits the app (runtime file removed)")
 
         # ---------------------------------------------------------------- --model flag
         out = json.loads(run([APP, "--transcribe", SPEECH, "--model", "small"], env).strip().splitlines()[-1])

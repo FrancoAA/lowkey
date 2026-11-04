@@ -23,7 +23,7 @@
   --them: #4f6d8a;
   --them-soft: #eef2f6;
   --rec: #dc2626;
-  color-scheme: light dark;
+  color-scheme: light;
   font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Inter", sans-serif;
   font-size: 14px;
   color: var(--foreground);
@@ -31,28 +31,29 @@
   -webkit-font-smoothing: antialiased;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #09090b;
-    --foreground: #fafafa;
-    --card: #0c0c0f;
-    --muted: #27272a;
-    --muted-foreground: #a1a1aa;
-    --accent: #27272a;
-    --border: #27272a;
-    --input: #3f3f46;
-    --ring: #71717a;
-    --primary: #fafafa;
-    --primary-foreground: #18181b;
-    --destructive: #f87171;
-    --success: #4ade80;
-    --brand: #e4e4e7;
-    --brand-soft: #1c1c1f;
-    --me: #e4e4e7;
-    --them: #8aa4bf;
-    --them-soft: #141b22;
-    --rec: #f87171;
-  }
+/* Dark: chosen in Settings → General → Appearance, or the desktop's when it is "System"
+   (public/theme.js sets data-theme before the first paint). */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --background: #09090b;
+  --foreground: #fafafa;
+  --card: #0c0c0f;
+  --muted: #27272a;
+  --muted-foreground: #a1a1aa;
+  --accent: #27272a;
+  --border: #27272a;
+  --input: #3f3f46;
+  --ring: #71717a;
+  --primary: #fafafa;
+  --primary-foreground: #18181b;
+  --destructive: #f87171;
+  --success: #4ade80;
+  --brand: #e4e4e7;
+  --brand-soft: #1c1c1f;
+  --me: #e4e4e7;
+  --them: #8aa4bf;
+  --them-soft: #141b22;
+  --rec: #f87171;
 }
 
 * { box-sizing: border-box; }
@@ -112,7 +113,8 @@ h1, h2, h3, h4 { margin: 0; letter-spacing: -0.015em; }
 }
 .switch:checked { background: var(--primary); }
 .switch:checked::before { transform: translateX(14px); }
-@media (prefers-color-scheme: dark) { .switch::before { background: var(--foreground); } .switch:checked::before { background: var(--primary-foreground); } }
+[data-theme="dark"] .switch::before { background: var(--foreground); }
+[data-theme="dark"] .switch:checked::before { background: var(--primary-foreground); }
 
 /* Card, separator, kbd */
 .card {
@@ -208,6 +210,16 @@ h1 { font-size: 20px; font-weight: 600; }
 .side-brand .tagline { font-size: 12px; line-height: 1.35; }
 .settings-title { font-size: 12px; font-weight: 500; color: var(--muted-foreground); padding: 14px 8px 4px; }
 #settings-tabs { display: flex; flex-direction: column; gap: 2px; }
+/* Quit, at the bottom of the side menu (outside the sections' tab list). */
+/* Fixed places: Quit (after the page in the HTML) shares the side menu's cell. */
+.settings-nav { grid-column: 1; grid-row: 1; padding-bottom: 72px; } /* room for Quit */
+.settings-content { grid-column: 2; grid-row: 1; }
+.nav-foot {
+  grid-column: 1; grid-row: 1; align-self: end; z-index: 1; margin: 0 12px; padding: 12px 0 16px;
+  border-top: 1px solid var(--border); background: color-mix(in srgb, var(--muted) 45%, var(--background));
+}
+.nav-foot .nav-item { width: 100%; color: var(--muted-foreground); }
+.nav-foot .nav-item:hover { color: var(--foreground); }
 .nav-item {
   display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 8px; border: 0; border-radius: calc(var(--radius) - 2px);
   background: transparent; color: var(--foreground); font: inherit; font-size: 14px; text-align: left; cursor: pointer;
@@ -280,7 +292,7 @@ h1 { font-size: 20px; font-weight: 600; }
 }
 .chip-live { background: color-mix(in srgb, var(--rec) 14%, transparent); color: var(--rec); }
 .chip-warn { background: color-mix(in srgb, #d97706 14%, transparent); color: #b45309; }
-@media (prefers-color-scheme: dark) { .chip-warn { color: #fbbf24; } }
+[data-theme="dark"] .chip-warn { color: #fbbf24; }
 
 /* The list */
 .meetings-home { display: flex; flex-direction: column; gap: 18px; }
