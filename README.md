@@ -180,8 +180,9 @@ Record a call or a talk, as text next to your notes (Linux for now). No bot join
   starts a recording from any app, and stops it. On Hyprland (or with your own desktop bind)
   it also starts the app when it is closed; on X11, macOS and Windows the app must run. A
   strip at the bottom of the screen shows the time, a two-colour wave (Me light grey, Them steel blue) and the newest line,
-  and "saved" at the end. It never keeps the keyboard focus; drag it to move it, or collapse it
-  to a pill (see above).
+  and "saved" at the end, with **Open the notes**: a click opens the window on that meeting's
+  notes. The saved strip stays 8 s, and longer while the pointer is on it. It never keeps the
+  keyboard focus; drag it to move it, or collapse it to a pill (see above).
 - **Record** (in the window, next to the search field) does the same, and so does the tray menu. It records two sources: your microphone (**Me**) and the computer's sound
   (**Them**: the others in Zoom, Meet, Teams…, through PipeWire or PulseAudio).
 - The text comes a few seconds after someone speaks: each source is cut at pauses (4–20 s

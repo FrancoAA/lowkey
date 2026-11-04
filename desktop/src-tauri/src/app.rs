@@ -34,6 +34,8 @@ pub struct App {
     os_key: Mutex<Option<String>>,
     window_rec: Mutex<Option<Box<dyn Recorder>>>,
     open_files: Mutex<Vec<PathBuf>>,
+    /// The pointer is on the strip: a finished meeting's strip stays (its link can be clicked).
+    overlay_hovered: AtomicBool,
     started: Instant,
     /// The overlay page has loaded and rendered (shown only then: no blank first frame).
     overlay_ready: AtomicBool,
@@ -857,6 +859,13 @@ impl App {
         let me = self.clone();
         std::thread::spawn(move || {
             std::thread::sleep(Duration::from_secs(secs));
+            // Not under the pointer (someone reads it, or goes for its link); at most a minute more.
+            for _ in 0..120 {
+                if !me.overlay_hovered.load(Ordering::SeqCst) {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(500));
+            }
             let slot = me.meeting.lock();
             if slot.is_none() && !me.meeting_starting.load(Ordering::SeqCst) {
                 me.want_overlay(1, false);
@@ -1394,8 +1403,9 @@ fn stop_meeting(app: &AppRef) -> Result<meeting::Meeting, String> {
     *app.call_session.lock() = None;
     app.meeting_stopping.store(false, Ordering::SeqCst);
     app.emit_status();
-    // The strip says "saved" for a moment, then goes (unless a new meeting started).
-    app.hide_meeting_strip_later(3);
+    // The strip says "saved" with a link to the meeting for a while, then goes (unless a new
+    // meeting started, or the pointer is on it).
+    app.hide_meeting_strip_later(8);
     // AI notes right away. The built-in model downloads first when it is not there yet
     // (progress in the meeting; Cancel stops it).
     if let Ok(m) = &r {
@@ -1431,6 +1441,28 @@ fn overlay_unfocus() {
 }
 
 /// The strip's microphone button: mute or unmute your microphone in the meeting being recorded.
+/// The pointer came onto the strip, or left it.
+#[tauri::command]
+fn overlay_hover(app: State<'_, AppRef>, on: bool) {
+    app.overlay_hovered.store(on, Ordering::SeqCst);
+}
+
+/// The strip's "Open the notes" (a saved meeting): the window opens on that meeting, and the
+/// strip goes (unless a meeting records).
+#[tauri::command]
+fn open_meeting(app: State<'_, AppRef>, id: String) -> Result<(), String> {
+    if !meeting::valid_id(&id) {
+        return Err(format!("Unknown meeting {id:?}"));
+    }
+    app.show_main();
+    app.handle.emit_to("main", "open-meeting", &id).map_err(|e| e.to_string())?;
+    app.overlay_hovered.store(false, Ordering::SeqCst);
+    if app.meeting.lock().is_none() && !app.meeting_starting.load(Ordering::SeqCst) {
+        app.want_overlay(1, false);
+    }
+    Ok(())
+}
+
 #[tauri::command]
 fn meeting_mute(app: State<'_, AppRef>, muted: bool) -> Result<(), String> {
     let session = app.meeting.lock().clone().ok_or("No meeting is being recorded.")?;
@@ -2052,9 +2084,9 @@ fn register_global_shortcut(app: &AppRef, key: &str, kind: KeyKind) -> String {
         Ok(()) => {
             *app.slot(kind).os_key.lock() = Some(key.to_string());
             match kind {
-                KeyKind::Meeting => format!("{key} — tap to start or stop a meeting recording (while Lowkey runs)"),
-                KeyKind::PasteLast => format!("{key} — types the last dictation again (while Lowkey runs)"),
-                KeyKind::Dictation => format!("{key} — hold to talk, tap to start/stop (while Lowkey runs)"),
+                KeyKind::Meeting => format!("{key} — tap to start or stop a meeting recording (while the app runs)"),
+                KeyKind::PasteLast => format!("{key} — types the last dictation again (while the app runs)"),
+                KeyKind::Dictation => format!("{key} — hold to talk, tap to start/stop (while the app runs)"),
             }
         }
         Err(e) => format!("not added: {key} ({e}); it may be taken by another app. Choose another key in Options."),
@@ -2212,6 +2244,8 @@ pub fn run() {
             overlay_collapse,
             overlay_unfocus,
             meeting_mute,
+            overlay_hover,
+            open_meeting,
             overlay_drag_start,
             overlay_drag_end,
             window_dictation,
@@ -2282,6 +2316,7 @@ pub fn run() {
                 os_key: Mutex::new(None),
                 window_rec: Mutex::new(None),
                 open_files: Mutex::new(vec![]),
+                overlay_hovered: AtomicBool::new(false),
                 started: Instant::now(),
                 overlay_ready: AtomicBool::new(false),
                 overlay_pending: AtomicBool::new(false),
@@ -2455,7 +2490,7 @@ pub fn run() {
                     t += &format!("; removed {}", removed.join(", "));
                 }
                 if hyprland::key_owners(crate::config::DEFAULT_HOTKEY).iter().any(|o| o == hyprland::CONFIG_DESC) {
-                    t += ". The key in your Hyprland config (Lowkey block) still works; delete that block to turn it off";
+                    t += ". The key in your Hyprland config (the block the app added) still works; delete that block to turn it off";
                 }
                 t
             } else {
@@ -2503,7 +2538,7 @@ pub fn run() {
             } else if wayland_other {
                 "this Wayland desktop does not let apps add keys: bind `lowkey --paste-last` in your desktop's keyboard settings".to_string()
             } else if same_key(&pkey, &app.hotkey_key()) || same_key(&pkey, &app.key_of(KeyKind::Meeting)) {
-                format!("not added: {pkey} is already another Lowkey key. Choose another key in Settings → Shortcuts.")
+                format!("not added: {pkey} is already used by another key here. Choose another key in Settings → Shortcuts.")
             } else if !hyprland::running() {
                 register_global_shortcut(&app, &pkey, KeyKind::PasteLast)
             } else {

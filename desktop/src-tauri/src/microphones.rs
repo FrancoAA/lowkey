@@ -51,7 +51,7 @@ pub fn resolve(saved: &str, avoid_bluetooth: bool, mics: &[Mic]) -> Choice {
     if avoid_bluetooth && default.bluetooth {
         // A real device only: a virtual source is never chosen for you.
         if let Some(other) = mics.iter().find(|m| !m.bluetooth && m.hardware) {
-            let why = format!("{} is Bluetooth, so Lowkey listens to {}.", default.name, other.name);
+            let why = format!("{} is Bluetooth, so {} is used instead.", default.name, other.name);
             return Choice { id: Some(other.id.clone()), name: other.name.clone(), note: Some(note.map_or(why.clone(), |n| format!("{n} {why}"))) };
         }
     }
@@ -183,7 +183,7 @@ mod tests {
         // System default is Bluetooth: the first other microphone, and the reason.
         let c = resolve("", true, &all);
         assert_eq!(c.id.as_deref(), Some("usb"));
-        assert_eq!(c.note.as_deref(), Some("bt name is Bluetooth, so Lowkey listens to usb name."));
+        assert_eq!(c.note.as_deref(), Some("bt name is Bluetooth, so usb name is used instead."));
         // The switch off: the default as it is.
         assert_eq!(resolve("", false, &all).id.as_deref(), Some("bt"));
         // A virtual source is never the stand-in.

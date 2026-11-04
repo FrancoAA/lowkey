@@ -96,11 +96,15 @@ function callNoteNow(now: number) {
   return callNote && now - callNote.at < CALL_NOTE_MS[callNote.state] ? callNote : null;
 }
 
+/** How long a saved meeting (and its link) shows; longer while the pointer is on the strip. */
+const SAVED_MS = 8500;
+let hovered = false;
+
 function meetingShows(now: number): boolean {
   if (meetError && now - meetError.at < 4000) return true;
   if (callNoteNow(now)?.state === "offer") return true;
   if (!meet) return false;
-  return meet.state !== "done" || now - meetAt < 3500;
+  return meet.state !== "done" || now - meetAt < SAVED_MS || hovered;
 }
 
 function show(): void {
@@ -161,6 +165,31 @@ muteBtn.addEventListener("click", (e) => {
   void call("overlay_unfocus"); // after the click (see the collapse button)
 });
 
+// "Open the notes" on a saved meeting: the Lowkey window opens on it (the app hides the strip).
+const openLink = document.createElement("a");
+openLink.className = "open-link";
+openLink.href = "#";
+openLink.textContent = "Open the notes";
+openLink.addEventListener("click", (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  const id = openLink.dataset.id;
+  if (id) void call("open_meeting", { id });
+});
+
+// The pointer on the strip keeps a saved meeting there (the app waits too before it hides it).
+root.addEventListener("pointerenter", () => {
+  hovered = true;
+  void call("overlay_hover", { on: true });
+});
+root.addEventListener("pointerleave", () => {
+  hovered = false;
+  // A saved meeting stays a moment more, then goes (meetAt is the recording's clock otherwise).
+  if (meet?.state === "done") meetAt = Math.max(meetAt, performance.now() - SAVED_MS + 1500);
+  void call("overlay_hover", { on: false });
+  show();
+});
+
 collapseBtn.addEventListener("click", (e) => {
   e.stopPropagation();
   void askCollapse(true);
@@ -180,7 +209,7 @@ async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> 
 }
 root.addEventListener("pointerdown", (e) => {
   if (e.button !== 0) return;
-  if ((e.target as Element).closest("#collapse, #mute")) return; // their clicks (above)
+  if ((e.target as Element).closest("#collapse, #mute, .open-link")) return; // their clicks (above)
   press = { x: e.screenX, y: e.screenY, appDrag: call<boolean>("overlay_drag_start").catch(() => false) };
 });
 root.addEventListener("pointermove", (e) => {
@@ -231,7 +260,7 @@ function renderMeeting(now: number): void {
   if (note?.state === "offer" && (!meet || meet.state === "done")) {
     root.dataset.state = "offer";
     label.textContent = `${note.label} call detected`;
-    detail.textContent = note.key ? `${prettyKey(note.key)} records it` : "Record it in Lowkey → Meetings";
+    detail.textContent = note.key ? `${prettyKey(note.key)} records it` : "Record it in Meetings";
     return;
   }
   const m = meet!;
@@ -257,7 +286,12 @@ function renderMeeting(now: number): void {
     detail.textContent = m.pending ? `${m.pending} part${m.pending > 1 ? "s" : ""} to transcribe` : "One moment";
   } else {
     label.textContent = "Meeting saved";
-    detail.textContent = `${clock(m.meeting.duration * 1000)} · open it in Lowkey → Meetings`;
+    // A link to the meeting: Lowkey opens on its notes.
+    const id = m.meeting.id;
+    if (openLink.dataset.id !== id || openLink.parentElement !== detail) {
+      openLink.dataset.id = id;
+      detail.replaceChildren(`${clock(m.meeting.duration * 1000)} · `, openLink);
+    }
   }
 }
 

@@ -136,3 +136,8 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: transparent;
 /* The pill keeps the mute button while a meeting records. */
 .overlay[data-collapsed="1"][data-collapsed][data-mode="meeting"][data-state="recording"] { padding: 0 8px 0 12px; gap: 8px; }
 .overlay[data-collapsed="1"][data-collapsed][data-mode="meeting"][data-state="recording"] .mute { display: grid; width: 26px; height: 26px; }
+
+/* A saved meeting: "Open the notes" opens Lowkey on it. */
+.open-link { color: #93c5fd; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; border-radius: 3px; }
+.open-link:hover { color: #bfdbfe; }
+.open-link:focus-visible { outline: 2px solid #93c5fd; outline-offset: 1px; }

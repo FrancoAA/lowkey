@@ -104,6 +104,8 @@ export interface MeetingsBackend {
   chat(id: string, question: string): Promise<void>;
   chatClear(id: string): Promise<void>;
   onAiChat(cb: (e: AiNotesEvent) => void): void;
+  /** The strip's "Open the notes": the app asks the window to open this meeting. */
+  onOpen(cb: (id: string) => void): void;
 }
 
 const baseName = (p: string) => p.split(/[\\/]/).pop() || p;
@@ -221,6 +223,9 @@ async function desktopBackend(): Promise<Backend> {
       chatClear: (id) => invoke("meeting_chat_clear", { id }),
       onAiChat(cb) {
         void listen<AiNotesEvent>("ai-chat", (e) => cb(e.payload));
+      },
+      onOpen(cb) {
+        void listen<string>("open-meeting", (e) => cb(e.payload));
       },
     },
   };

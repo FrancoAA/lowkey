@@ -547,12 +547,12 @@ pub fn find_config_block() -> anyhow::Result<PathBuf> {
             0 => continue,
             1 => return Ok(found.into_iter().next().unwrap()),
             _ => anyhow::bail!(
-                "the Lowkey block is in several files ({}); remove the extra copies first",
+                "the app's block is in several files ({}); remove the extra copies first",
                 found.iter().map(|f| f.display().to_string()).collect::<Vec<_>>().join(", ")
             ),
         }
     }
-    anyhow::bail!("could not find the Lowkey block in your Hyprland config")
+    anyhow::bail!("could not find the app's block in your Hyprland config")
 }
 
 /// A `.lua` config file, not a backup or a copy ("bindings.lua.bak.…", "bindings copy.lua").
@@ -592,7 +592,7 @@ pub fn without_block(text: &str) -> Option<String> {
 pub fn remove_config_block(file: &Path) -> anyhow::Result<PathBuf> {
     let file = std::fs::canonicalize(file)?;
     let text = std::fs::read_to_string(&file)?;
-    let new = without_block(&text).ok_or_else(|| anyhow::anyhow!("no complete Lowkey block in {}", file.display()))?;
+    let new = without_block(&text).ok_or_else(|| anyhow::anyhow!("no complete block of the app in {}", file.display()))?;
     let name = file.file_name().unwrap_or_default().to_string_lossy().into_owned();
     let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
     let backup = file.with_file_name(format!("{name}.bak.lowkey.{stamp}"));
@@ -852,9 +852,9 @@ impl Hotkey {
 
     fn active_text(&self) -> String {
         match self.desc {
-            RUNTIME_DESC => format!("{} — hold to talk, tap to start/stop (also starts Lowkey when it is closed)", self.key()),
+            RUNTIME_DESC => format!("{} — hold to talk, tap to start/stop (also starts the app when it is closed)", self.key()),
             PASTE_DESC => format!("{} — types the last dictation again", self.key()),
-            _ => format!("{} — tap to start or stop a meeting recording (also starts Lowkey when it is closed)", self.key()),
+            _ => format!("{} — tap to start or stop a meeting recording (also starts the app when it is closed)", self.key()),
         }
     }
 

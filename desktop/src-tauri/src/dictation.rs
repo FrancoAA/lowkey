@@ -215,7 +215,7 @@ impl Dictation {
             }
             i.epoch += 1;
             i.pressed_at = self.io.clock();
-            i.detail = "Starting Lowkey…".into();
+            i.detail = "Starting up…".into();
             i.text.clear();
             i.error = None;
             i.delivered.clear();

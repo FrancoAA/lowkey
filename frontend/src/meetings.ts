@@ -46,6 +46,8 @@ export interface MeetingsUi {
   onRecording(recording: boolean): void;
   /** The meeting key ("SUPER + CTRL + M"; "" = none), for the hints. */
   meetingKey(): string;
+  /** Go to the Meetings section (the strip's "Open the notes"). */
+  showMeetings(): void;
 }
 
 /** Lines of one speaker with short gaps form one paragraph (as in the Markdown export). */
@@ -625,6 +627,12 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): void {
       showError(String(err));
     }
   }
+
+  // The strip's "Open the notes" on a saved meeting: this meeting, on its notes.
+  api.onOpen((id) => {
+    ui.showMeetings();
+    void flush().then(() => openById(id));
+  });
 
   async function showHome(): Promise<void> {
     await flush();

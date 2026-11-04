@@ -262,7 +262,7 @@ quitButton.addEventListener("click", async () => {
     } catch (err) {
       quitButton.disabled = false;
       quitButton.replaceChildren(...idle);
-      showError(`The meeting was not stopped, so Lowkey did not exit: ${String(err)}`);
+      showError(`The meeting was not stopped, so Exit was cancelled: ${String(err)}`);
       return;
     }
   }
@@ -600,7 +600,7 @@ function renderDictationKey(): void {
   loginCheck.checked = !!status.start_at_login;
   const explain =
     source === "config"
-      ? "This key comes from your Hyprland config (the Lowkey block in bindings.lua). To change it here, let the app manage it: the block is removed from your config, and a backup is kept next to it."
+      ? "This key comes from your Hyprland config (a block in bindings.lua). To change it here, let the app manage it: the block is removed from your config, and a backup is kept next to it."
       : source === "manual"
         ? "This desktop does not let apps add keys: bind `lowkey --dictate toggle` in its keyboard settings."
         : inactive
@@ -1119,7 +1119,12 @@ void getBackend().then((b) => {
   };
   b.meetings.onAiNotes(onAi("notes"));
   b.meetings.onAiChat(onAi("chat"));
-  initMeetings(b, { announce, onRecording: (on) => (liveDot.hidden = !on), meetingKey: () => (status?.meeting_key_source === "app" ? status.meeting_key ?? "" : "") });
+  initMeetings(b, {
+    announce,
+    onRecording: (on) => (liveDot.hidden = !on),
+    meetingKey: () => (status?.meeting_key_source === "app" ? status.meeting_key ?? "" : ""),
+    showMeetings: () => showSection("meetings"),
+  });
   void loadLanguages();
   void refreshStatus();
 });
