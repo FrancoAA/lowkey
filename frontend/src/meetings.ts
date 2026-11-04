@@ -12,6 +12,32 @@ import type { Backend } from "./backend";
 import { renderMarkdown } from "./markdown";
 import { DualWaveform } from "./waveform";
 
+/** A small spinner (style.css "loading"): the app is at work, with no measure of how far. */
+function spinner(): HTMLElement {
+  const s = document.createElement("span");
+  s.className = "spinner";
+  s.setAttribute("aria-hidden", "true");
+  return s;
+}
+
+/** Gray lines in the place of text that is being written; `label` is for screen readers. */
+function skeleton(label: string): HTMLElement {
+  const box = document.createElement("div");
+  box.className = "skeleton";
+  const sr = document.createElement("span");
+  sr.className = "sr-only";
+  sr.textContent = label;
+  box.append(sr);
+  for (const [cls, width] of [["head", ""], ["", "92%"], ["", "78%"], ["", "85%"], ["head", ""], ["", "88%"], ["", "64%"]]) {
+    const line = document.createElement("div");
+    line.className = `skeleton-line ${cls}`.trim();
+    if (width) line.style.width = width;
+    line.setAttribute("aria-hidden", "true");
+    box.append(line);
+  }
+  return box;
+}
+
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
 export interface MeetingsUi {
@@ -219,7 +245,8 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): void {
     const square = document.createElement("span");
     square.className = "stop-square";
     square.setAttribute("aria-hidden", "true");
-    stopBtn.replaceChildren(square, live?.state === "finishing" ? "Saving…" : "Stop");
+    if (live?.state === "finishing") stopBtn.replaceChildren(spinner(), "Saving…");
+    else stopBtn.replaceChildren(square, "Stop");
     copyBtn.hidden = exportBtn.hidden = deleteBtn.hidden = recording;
     livePanel.hidden = !recording;
     livePanel.dataset.state = live?.state ?? "";
@@ -312,18 +339,19 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): void {
     aiError.hidden = !(mine && mine.state === "error");
     aiError.textContent = mine && mine.state === "error" ? mine.detail : "";
     const text = running && mine!.text ? mine!.text : shown.ai_notes ?? "";
+    aiBody.classList.toggle("streaming", running && !!mine!.text);
     if (text) {
       renderMarkdown(aiBody, text);
       aiBody.classList.remove("ai-empty");
+    } else if (running) {
+      aiBody.replaceChildren(skeleton("The AI notes are being written."));
+      aiBody.classList.remove("ai-empty");
     } else {
-      aiBody.replaceChildren(running ? "Writing…" : "No AI notes yet. Write notes makes one section for each topic of the meeting, with its decisions and tasks, from the transcript.");
+      aiBody.replaceChildren("No AI notes yet. Write notes makes one section for each topic of the meeting, with its decisions and tasks, from the transcript.");
       aiBody.classList.add("ai-empty");
     }
-    aiMeta.textContent = running
-      ? mine!.state === "writing" ? "Writing…" : ""
-      : shown.ai_notes
-        ? `${shown.ai_model || "AI"} · a draft: check it against the transcript`
-        : "";
+    if (running && mine!.state === "writing") aiMeta.replaceChildren(spinner(), "Writing the notes…");
+    else aiMeta.textContent = running ? "" : shown.ai_notes ? `${shown.ai_model || "AI"} · a draft: check it against the transcript` : "";
   }
 
   aiWrite.addEventListener("click", async () => {
@@ -373,7 +401,7 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): void {
 
   function answer(text: string, done: boolean): HTMLElement {
     const box = el("div", "chat-a");
-    const body = el("div", "ai-body");
+    const body = el("div", done ? "ai-body" : "ai-body streaming");
     renderMarkdown(body, text);
     box.append(body);
     if (done) {
@@ -428,7 +456,15 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): void {
       nodes.push(question(mine.question));
       const ev = chatJob?.id === shown.id ? chatJob : null;
       if (ev?.text) nodes.push(answer(ev.text, false));
-      else nodes.push(el("p", "chat-wait", ev && ev.state !== "writing" && ev.detail ? ev.detail : "Thinking…"));
+      else {
+        // Before the first words: three dots, and what the model does (getting ready, downloading).
+        const wait = el("p", "chat-wait");
+        const dots = el("span", "typing");
+        dots.setAttribute("aria-hidden", "true");
+        dots.append(document.createElement("i"), document.createElement("i"), document.createElement("i"));
+        wait.append(dots, ev && ev.state !== "writing" && ev.detail ? ev.detail : "Thinking…");
+        nodes.push(wait);
+      }
     }
     if (chatError?.id === shown.id) nodes.push(el("p", "chat-error", chatError.text));
     if (!nodes.length) {
@@ -755,6 +791,8 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): void {
   startBtn.addEventListener("click", async () => {
     showError(null);
     startBtn.disabled = true;
+    const idle = [...startBtn.childNodes];
+    startBtn.replaceChildren(spinner(), "Starting…"); // the microphone (and the model) can take a moment
     try {
       live = await api.start(defaultTitle());
       liveAt = performance.now();
@@ -765,13 +803,15 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): void {
     } catch (err) {
       showError(String(err));
       startBtn.disabled = false;
+    } finally {
+      startBtn.replaceChildren(...idle);
     }
   });
 
   stopBtn.addEventListener("click", async () => {
     stopping = true;
     stopBtn.disabled = true;
-    stopBtn.textContent = "Finishing…";
+    stopBtn.replaceChildren(spinner(), "Saving…");
     await flush();
     try {
       const saved = await api.stop();

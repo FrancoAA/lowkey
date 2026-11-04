@@ -83,10 +83,10 @@ the CPU. Windows must have the Visual C++ runtime (`MSVCP140.dll`). The installe
   Exit asks first, then stops and saves the meeting before it quits.
 - **Appearance** (Settings → General): System (follows the desktop's light or dark setting),
   Light or Dark. The recording strip stays dark.
-- **The tray icon's menu:** Start/Stop dictation (the text goes to the app that has the
+- **The tray icon's menu:** Open, Start/Stop dictation (the text goes to the app that has the
   focus), Start/Stop meeting recording, **Microphone** (the system default or one input),
   **Speech-to-text model** (Automatic or one model; a model that is not on disk downloads when
-  you choose it), Open Lowkey, Quit Lowkey. The menu follows the app: it says Stop while a
+  you choose it), Exit. The menu follows the app: it says Stop while a
   recording runs, and it shows a microphone when you plug it in.
 
 ## Dictate into any app

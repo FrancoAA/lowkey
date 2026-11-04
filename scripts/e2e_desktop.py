@@ -20,6 +20,7 @@ Usage: python3 scripts/e2e_desktop.py [--first-run] [--config-bind]   (standard 
 from __future__ import annotations
 
 import json
+import re
 import os
 import shutil
 import signal
@@ -514,8 +515,8 @@ esac
             return [x["label"] for x in tray_menu() if not x["sep"]]
 
         menu = wait(lambda: tray_menu() or None, 10, "the tray menu on D-Bus")
-        check(tray_labels() == ["Start dictation", "Start meeting recording", "Microphone", "Speech-to-text model", "Open Lowkey", "Quit Lowkey"],
-              f"tray menu: {tray_labels()}")
+        check(tray_labels() == ["Open", "Start dictation", "Start meeting recording", "Microphone", "Speech-to-text model", "Exit"]
+              and menu[1]["sep"], f"tray menu: Open first, a divider under it, Exit last: {tray_labels()}")
         mics = [(m["label"], m["checked"]) for m in tray_find(menu, "Microphone")["items"]]
         check(mics == [("System default — WH-1000XM4", True), ("WH-1000XM4 · Bluetooth", False), ("Built-in Microphone", False)],
               f"tray microphones: {mics}")
@@ -539,18 +540,18 @@ esac
         n_t = len(events("dictation"))
         tray_click("Start dictation")
         wait(lambda: dict_state()["state"] == "listening", 10, "listening (tray)")
-        wait(lambda: tray_labels()[0] == "Stop dictation", 5, "the tray says Stop dictation")
+        wait(lambda: tray_labels()[1] == "Stop dictation", 5, "the tray says Stop dictation")
         time.sleep(2.5)
         tray_click("Stop dictation")
         d3 = wait(lambda: next((d for d in events("dictation")[n_t:] if d["state"] in ("done", "error")), None), 60, "tray dictation result")
         check(d3["state"] == "done" and "hello" in d3["text"].lower(), f"the tray starts and stops a dictation: {d3['text']!r}")
         wait(lambda: typed.read_text().startswith(before) and d3["text"] in typed.read_text()[len(before):], 10, "tray dictation typed")
-        wait(lambda: tray_labels()[0] == "Start dictation", 5, "the tray says Start dictation again")
+        wait(lambda: tray_labels()[1] == "Start dictation", 5, "the tray says Start dictation again")
         # A meeting recording from the tray.
         n_m = len(events("meeting"))
         tray_click("Start meeting recording")
         wait(lambda: next((m for m in events("meeting")[n_m:] if m["state"] == "recording"), None), 30, "meeting from the tray")
-        wait(lambda: tray_labels()[1] == "Stop meeting recording", 5, "the tray says Stop meeting recording")
+        wait(lambda: tray_labels()[2] == "Stop meeting recording", 5, "the tray says Stop meeting recording")
         time.sleep(3)
         tray_click("Stop meeting recording")
         saved = wait(lambda: next((m for m in events("meeting")[n_m:] if m["state"] == "done"), None), 60, "tray meeting saved")
@@ -559,14 +560,14 @@ esac
             # Its AI notes start by themselves: done before the next meeting asks for its own.
             wait(lambda: next((e for e in events("ai-notes") if e["id"] == saved["meeting"]["id"] and e["state"] in ("done", "error")), None),
                  240, "the tray meeting's AI notes")
-        wait(lambda: tray_labels()[1] == "Start meeting recording", 10, "the tray says Start meeting recording again")
+        wait(lambda: tray_labels()[2] == "Start meeting recording", 10, "the tray says Start meeting recording again")
         wait(lambda: win("lowkey-overlay") is None, 15, "the strip goes after the tray's meeting")
         # Open from the tray: the window comes back.
         run(["hyprctl", "dispatch", f'hl.dsp.window.close({{ window = "address:{main_win["address"]}" }})'], env)
         wait(lambda: win("Lowkey") is None, 10, "window closed")
-        tray_click("Open Lowkey")
+        tray_click("Open")
         main_win = wait(lambda: win("Lowkey"), 10, "window opened from the tray")
-        print("  ok  Open Lowkey in the tray shows the window again")
+        print("  ok  Open in the tray shows the window again")
 
         # ---------------------------------------------------------------- Options (keyboard)
         cfg_file = tmp / "config" / "lowkey" / "config.toml"
@@ -950,9 +951,10 @@ esac
         d3 = wait(lambda: (s := dict_state())["state"] in ("done", "error") and s, 60, "cold-start result")
         check(d3["state"] == "done" and "typed" in d3["delivered"], f"typed after a cold start: {d3['text']!r}")
         check(len(app_pids()) == 1, "one app process")
-        # Exit at the bottom of the side menu: a second launch opens the window; Ctrl+,
-        # puts the focus on the section list, End goes to About; Exit comes after the page in
-        # the Tab order (after About's 4 links), never right after the section list.
+        # The theme switch and Exit at the bottom of the side menu: a second launch opens the
+        # window; Ctrl+, puts the focus on the section list, End goes to About; the switch and
+        # Exit come after the page in the Tab order (after About's 4 links), never right after
+        # the section list.
         run(["hyprctl", "dispatch", f'hl.dsp.exec_cmd("{APP}")'], env)
         qwin = wait(lambda: win("Lowkey"), 20, "the window from a second launch")
         focus(qwin["address"])
@@ -964,6 +966,15 @@ esac
         press_key("End")  # About
         for _ in range(5):
             press_key("Tab")
+        theme_before = re.search(r'^theme = "(\w+)"', cfg_file.read_text(), re.M)
+        press_key("Return")  # the theme switch: light <-> dark, saved
+        flipped = wait(lambda: (m := re.search(r'^theme = "(light|dark)"', cfg_file.read_text(), re.M)) and m.group(1), 10, "theme saved from the switch")
+        check(theme_before is None or theme_before.group(1) != flipped, f"the side menu's switch changes the theme ({theme_before and theme_before.group(1)} -> {flipped})")
+        time.sleep(0.5)
+        shot("36-desktop-theme-switch.png")
+        press_key("Return")  # and back
+        wait(lambda: re.search(r'^theme = "(light|dark)"', cfg_file.read_text(), re.M).group(1) != flipped, 10, "theme switched back")
+        press_key("Tab")
         time.sleep(0.3)
         shot("35-desktop-exit-button.png")
         press_key("Return")

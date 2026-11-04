@@ -30,8 +30,16 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: transparent;
 .overlay[data-state="listening"] .detail { display: none; }
 .timer { display: none; font-variant-numeric: tabular-nums; color: #a1a1aa; font-size: 0.8rem; }
 .overlay[data-state="listening"] .timer { display: block; }
-.overlay[data-state="transcribing"] .dot,
-.overlay[data-state="starting"] .dot { animation: pulse 1s ease-in-out infinite; }
+/* At work (getting ready, transcribing, saving a meeting): a ring spins around the dot. */
+.dot { position: relative; }
+.overlay[data-state="transcribing"] .dot::before,
+.overlay[data-state="starting"] .dot::before {
+  content: ""; position: absolute; inset: -3px; border-radius: 50%;
+  border: 2px solid transparent; border-top-color: #f4f4f5; border-right-color: #f4f4f5;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.overlay[data-mode="meeting"][data-state="transcribing"] .dot::after { background: #a1a1aa; }
 /* Live preview: a second row with the newest words (the strip keeps its 380×76 size). */
 .preview { display: none; }
 .overlay[data-preview="1"] {

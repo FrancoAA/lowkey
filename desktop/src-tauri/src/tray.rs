@@ -1,5 +1,5 @@
-//! The tray icon's menu: start or stop a dictation or a meeting recording, choose the
-//! microphone and the speech-to-text model, open the window, quit.
+//! The tray icon's menu: open the window, start or stop a dictation or a meeting recording,
+//! choose the microphone and the speech-to-text model, exit.
 //!
 //! The menu is a pure description (`entries`) of the app's state (`View`); the app builds it
 //! again only when that description changes (a recording starts, a model is chosen, a
@@ -24,6 +24,8 @@ pub struct View {
     pub mics: Option<Vec<MicItem>>,
     /// The saved choice ("" = the system default).
     pub mic_choice: String,
+    /// The tray is drawn by Omarchy's shell, which hides a divider in the first two rows.
+    pub omarchy_shell: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -72,7 +74,7 @@ pub enum Action {
     /// "" = the system default.
     Mic(String),
     Open,
-    Quit,
+    Exit,
 }
 
 pub fn action(id: &str) -> Option<Action> {
@@ -80,7 +82,7 @@ pub fn action(id: &str) -> Option<Action> {
         "dictate" => Action::Dictate,
         "meeting" => Action::Meeting,
         "open" => Action::Open,
-        "quit" => Action::Quit,
+        "exit" => Action::Exit,
         _ => {
             if let Some(m) = id.strip_prefix("model:") {
                 Action::Model(m.into())
@@ -104,7 +106,7 @@ fn check(id: String, label: String, checked: bool) -> Entry {
 pub fn entries(v: &View) -> Vec<Entry> {
     let dictate = match v.dictation.as_str() {
         "listening" => item("dictate", "Stop dictation", true),
-        "starting" => item("dictate", "Cancel dictation (getting ready…)", true),
+        "starting" => item("dictate", "Cancel dictation", true),
         "transcribing" => item("dictate", "Transcribing…", false),
         _ => item("dictate", "Start dictation", true),
     };
@@ -144,16 +146,27 @@ pub fn entries(v: &View) -> Vec<Entry> {
         models.push(check(format!("model:{}", m.id), label, v.model_choice == m.id));
     }
 
-    vec![
+    let mut out = vec![item("open", "Open", true), Entry::Separator];
+    if v.omarchy_shell {
+        // Omarchy's shell hides a divider in row 1 or 2 (it takes it for the line under a
+        // menu title): a second one, in row 3, is the one it shows.
+        out.push(Entry::Separator);
+    }
+    out.extend([
         dictate,
         meeting,
         Entry::Separator,
         Entry::Sub { label: "Microphone".into(), entries: mics },
         Entry::Sub { label: "Speech-to-text model".into(), entries: models },
         Entry::Separator,
-        item("open", "Open Lowkey", true),
-        item("quit", "Quit Lowkey", true),
-    ]
+        item("exit", "Exit", true),
+    ]);
+    out
+}
+
+/// Omarchy's shell (Quickshell) draws the tray menus on this computer.
+pub fn omarchy_shell() -> bool {
+    cfg!(target_os = "linux") && std::path::Path::new("/usr/share/omarchy/shell").is_dir()
 }
 
 fn size(mb: u32) -> String {
@@ -207,6 +220,7 @@ mod tests {
                 MicItem { id: "bluez.g733".into(), name: "G733".into(), bluetooth: true, default: false },
             ]),
             mic_choice: String::new(),
+            omarchy_shell: false,
         }
     }
 
@@ -237,7 +251,7 @@ mod tests {
         let e = entries(&view());
         assert_eq!(
             labels(&e),
-            vec!["Start dictation", "Start meeting recording", "--", "Microphone >", "Speech-to-text model >", "--", "Open Lowkey", "Quit Lowkey"]
+            vec!["Open", "--", "Start dictation", "Start meeting recording", "--", "Microphone >", "Speech-to-text model >", "--", "Exit"]
         );
         assert_eq!(sub(&e, "Microphone"), vec!["[x] System default — USB mic", "[ ] USB mic", "[ ] G733 · Bluetooth"]);
         assert_eq!(sub(&e, "Speech-to-text model"), vec!["[x] Automatic — Large v3 Turbo (q5)", "[ ] Large v3 Turbo (q5)", "[ ] Medium · 1.5 GB download"]);
@@ -252,19 +266,27 @@ mod tests {
         v.models[1].downloading = true;
         v.mic_choice = "bluez.old".into();
         let e = entries(&v);
-        assert_eq!(labels(&e)[..2], ["Stop dictation", "Stop meeting recording"]);
+        assert_eq!(labels(&e)[2..4], ["Stop dictation", "Stop meeting recording"]);
         assert_eq!(sub(&e, "Speech-to-text model")[2], "[x] Medium · downloading…");
         assert_eq!(sub(&e, "Microphone").last().unwrap(), "[x] bluez.old · not connected");
         v.dictation = "transcribing".into();
         v.meeting = Meeting::Saving;
-        assert_eq!(labels(&entries(&v))[..2], ["Transcribing… (off)", "Saving the recording… (off)"]);
+        assert_eq!(labels(&entries(&v))[2..4], ["Transcribing… (off)", "Saving the recording… (off)"]);
         v.mics = None;
         assert_eq!(sub(&entries(&v), "Microphone"), vec!["System default (choosing one needs PipeWire or PulseAudio) (off)"]);
     }
 
     #[test]
+    fn omarchy_shell_gets_a_divider_it_shows_under_open() {
+        let mut v = view();
+        v.omarchy_shell = true;
+        assert_eq!(labels(&entries(&v))[..3], ["Open", "--", "--"]);
+    }
+
+    #[test]
     fn clicks_are_read_back() {
         assert_eq!(action("dictate"), Some(Action::Dictate));
+        assert_eq!(action("exit"), Some(Action::Exit));
         assert_eq!(action("model:"), Some(Action::Model(String::new())));
         assert_eq!(action("model:small"), Some(Action::Model("small".into())));
         assert_eq!(action("mic:alsa_input.usb-x:y"), Some(Action::Mic("alsa_input.usb-x:y".into())));

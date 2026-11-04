@@ -173,14 +173,14 @@ function renderPreview(): void {
     p.engine === "parakeet"
       ? "Parakeet (CPU, 25 languages, finds the language itself). Preview only: the model above writes the text."
       : "Whistle (17 MB, CPU). Preview only: the model above writes the text. EN, DE, FR, ES, IT, NL, PL.";
-  const state = !previewCheck.checked
-    ? ""
-    : p.state === "preparing"
-      ? " Getting it ready…"
-      : p.state === "unavailable"
-        ? ` Not available: ${p.error ?? "unknown error"}`
-        : "";
-  previewNote.textContent = base + state;
+  if (previewCheck.checked && p.state === "preparing") {
+    const spin = document.createElement("span");
+    spin.className = "spinner spinner-inline";
+    spin.setAttribute("aria-hidden", "true");
+    previewNote.replaceChildren(`${base} `, spin, "Getting it ready…");
+  } else {
+    previewNote.textContent = base + (previewCheck.checked && p.state === "unavailable" ? ` Not available: ${p.error ?? "unknown error"}` : "");
+  }
   previewEngine.disabled = !previewCheck.checked;
 }
 
@@ -214,10 +214,29 @@ declare global {
 }
 const themeSelect = $<HTMLSelectElement>("theme-select");
 themeSelect.value = localStorage.getItem("lowkey-theme") ?? "system";
-themeSelect.addEventListener("change", () => {
-  window.lowkeyTheme?.(themeSelect.value); // at once; then saved
-  void backend.saveOptions({ theme: themeSelect.value }).then(refreshStatus, (err) => showError(String(err)));
+function setTheme(choice: string): void {
+  window.lowkeyTheme?.(choice); // at once; then saved
+  void backend.saveOptions({ theme: choice }).then(refreshStatus, (err) => showError(String(err)));
+}
+themeSelect.addEventListener("change", () => setTheme(themeSelect.value));
+
+// The side menu's switch: light ⇄ dark (from "System", the opposite of what shows now).
+const themeToggle = $<HTMLButtonElement>("theme-toggle");
+const themeToggleText = $<HTMLElement>("theme-toggle-text");
+function renderThemeToggle(): void {
+  const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+  themeToggleText.textContent = next === "dark" ? "Dark mode" : "Light mode";
+  themeToggle.title = `Switch to ${next} mode`;
+  themeToggle.dataset.next = next;
+}
+themeToggle.addEventListener("click", () => {
+  const next = themeToggle.dataset.next ?? "dark";
+  themeSelect.value = next;
+  setTheme(next);
+  announce(`${next === "dark" ? "Dark" : "Light"} mode.`);
 });
+document.addEventListener("lowkey-theme", renderThemeToggle);
+renderThemeToggle();
 
 const quitButton = $<HTMLButtonElement>("app-quit");
 quitButton.addEventListener("click", async () => {
@@ -231,10 +250,16 @@ quitButton.addEventListener("click", async () => {
     });
     if (!yes) return;
     quitButton.disabled = true;
+    const spin = document.createElement("span");
+    spin.className = "spinner";
+    spin.setAttribute("aria-hidden", "true");
+    const idle = [...quitButton.childNodes];
+    quitButton.replaceChildren(spin, "Saving the meeting…");
     try {
       await backend.meetings.stop();
     } catch (err) {
       quitButton.disabled = false;
+      quitButton.replaceChildren(...idle);
       showError(`The meeting was not stopped, so Lowkey did not exit: ${String(err)}`);
       return;
     }

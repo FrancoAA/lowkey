@@ -7,6 +7,7 @@
   function paint() {
     var dark = choice === "dark" || (choice === "system" && media.matches);
     document.documentElement.dataset.theme = dark ? "dark" : "light";
+    document.dispatchEvent(new Event("lowkey-theme")); // the side menu's switch follows
   }
   window.lowkeyTheme = function (c) {
     choice = c === "light" || c === "dark" ? c : "system";

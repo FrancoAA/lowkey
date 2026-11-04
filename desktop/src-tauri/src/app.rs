@@ -338,6 +338,7 @@ impl App {
                 l.iter().map(|m| MicItem { id: m.id.clone(), name: m.name.clone(), bluetooth: m.bluetooth, default: m.default }).collect()
             }),
             mic_choice: cfg.microphone.clone(),
+            omarchy_shell: crate::tray::omarchy_shell(),
         }
     }
 
@@ -398,7 +399,7 @@ impl App {
                 });
             }
             Action::Open => self.show_main(),
-            Action::Quit => self.handle.exit(0),
+            Action::Exit => self.handle.exit(0),
         }
         // A click on a check item ticks it by itself: always build the menu again.
         self.tray_menu.lock().clear();
@@ -1238,7 +1239,7 @@ fn stop_meeting(app: &AppRef) -> Result<meeting::Meeting, String> {
     })
 }
 
-/// The sidebar's Quit: the same as the tray menu's (a meeting is stopped and saved by the page
+/// The side menu's Exit: the same as the tray menu's (a meeting is stopped and saved by the page
 /// first; `shutdown` keeps what a meeting left running has).
 #[tauri::command]
 fn app_quit(app: State<'_, AppRef>) {

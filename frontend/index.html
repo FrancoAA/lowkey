@@ -110,7 +110,7 @@
             </div>
             <div id="progress" class="progress" hidden>
               <div class="progress-track"><div id="progress-fill" class="progress-fill"></div></div>
-              <span id="progress-text" class="progress-text"></span>
+              <div class="progress-label"><span class="spinner" aria-hidden="true"></span><span id="progress-text" class="progress-text"></span></div>
             </div>
             <div id="transcript" class="transcript"></div>
           </section>
@@ -190,7 +190,7 @@
                 <!-- The notes job's progress and error: seen from both tabs (Cancel is in the head). -->
                 <div id="ai-progress" class="progress" hidden>
                   <div class="progress-track"><div id="ai-progress-fill" class="progress-fill"></div></div>
-                  <span id="ai-progress-text" class="progress-text"></span>
+                  <div class="progress-label"><span class="spinner" aria-hidden="true"></span><span id="ai-progress-text" class="progress-text"></span></div>
                 </div>
                 <p id="ai-error" class="ai-error" role="alert" hidden></p>
                 <div id="notes-panel" class="notes-panel" role="tabpanel" aria-labelledby="tab-notes" tabindex="0">
@@ -342,7 +342,7 @@
           <div class="model-group">
             <div class="group-head">
               <h3>Speech to text</h3>
-              <div id="model-status" class="model-status" aria-live="off">
+              <div id="model-status" class="model-status" data-state="loading" aria-live="off">
                 <span class="dot"></span><span id="model-status-text">Starting…</span>
                 <div class="model-bar" hidden><div id="model-bar-fill"></div></div>
               </div>
@@ -371,8 +371,8 @@
           <div class="model-group">
             <div class="group-head">
               <h3>AI notes</h3>
-              <div id="ai-status" class="model-status" aria-live="off">
-                <span class="dot"></span><span id="ai-status-text">…</span>
+              <div id="ai-status" class="model-status" data-state="loading" aria-live="off">
+                <span class="dot"></span><span id="ai-status-text">Checking…</span>
                 <div class="model-bar" hidden><div id="ai-bar-fill"></div></div>
               </div>
             </div>
@@ -514,9 +514,16 @@
           </dl>
         </section>
       </div>
-      <!-- Exit: at the bottom of the side menu (CSS), but after the page in the Tab order: Tab
-           from the section list goes to the section, never to Exit. -->
+      <!-- The theme switch and Exit: at the bottom of the side menu (CSS), but after the page in
+           the Tab order: Tab from the section list goes to the section, never to them. -->
       <div class="nav-foot">
+        <!-- Shows the theme that a click gives: the moon in light mode, the sun in dark mode. -->
+        <button id="theme-toggle" type="button" class="nav-item" title="Switch to dark mode">
+          <svg class="icon theme-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401" /></svg>
+          <svg class="icon theme-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" /></svg>
+          <span id="theme-toggle-text">Dark mode</span>
+        </button>
+        <hr class="nav-divider" />
         <button id="app-quit" type="button" class="nav-item" title="Exit Lowkey: the dictation key and the tray icon stop too">
           <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><path d="m16 17 5-5-5-5M21 12H9" /></svg>
           Exit
