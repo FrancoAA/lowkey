@@ -224,9 +224,9 @@ quitButton.addEventListener("click", async () => {
   if (status?.recording) {
     // Stopped and saved first (as Stop does); quitting alone would lose its last seconds.
     const yes = await confirmDialog({
-      title: "Stop the recording and quit?",
+      title: "Stop the recording and exit?",
       body: "The meeting is saved first. Its AI notes are not written now: open the meeting later and use Write notes.",
-      action: "Stop and quit",
+      action: "Stop and exit",
       danger: true,
     });
     if (!yes) return;
@@ -235,7 +235,7 @@ quitButton.addEventListener("click", async () => {
       await backend.meetings.stop();
     } catch (err) {
       quitButton.disabled = false;
-      showError(`The meeting was not stopped, so Lowkey did not quit: ${String(err)}`);
+      showError(`The meeting was not stopped, so Lowkey did not exit: ${String(err)}`);
       return;
     }
   }

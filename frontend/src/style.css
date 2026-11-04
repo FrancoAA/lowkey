@@ -210,9 +210,9 @@ h1 { font-size: 20px; font-weight: 600; }
 .side-brand .tagline { font-size: 12px; line-height: 1.35; }
 .settings-title { font-size: 12px; font-weight: 500; color: var(--muted-foreground); padding: 14px 8px 4px; }
 #settings-tabs { display: flex; flex-direction: column; gap: 2px; }
-/* Quit, at the bottom of the side menu (outside the sections' tab list). */
-/* Fixed places: Quit (after the page in the HTML) shares the side menu's cell. */
-.settings-nav { grid-column: 1; grid-row: 1; padding-bottom: 72px; } /* room for Quit */
+/* Exit, at the bottom of the side menu (outside the sections' tab list). */
+/* Fixed places: Exit (after the page in the HTML) shares the side menu's cell. */
+.settings-nav { grid-column: 1; grid-row: 1; padding-bottom: 72px; } /* room for Exit */
 .settings-content { grid-column: 2; grid-row: 1; }
 .nav-foot {
   grid-column: 1; grid-row: 1; align-self: end; z-index: 1; margin: 0 12px; padding: 12px 0 16px;

@@ -78,9 +78,9 @@ the CPU. Windows must have the Visual C++ runtime (`MSVCP140.dll`). The installe
   at login), Live preview (on/off, engine), About.
   <kbd>Ctrl</kbd>+<kbd>,</kbd> jumps to the settings, <kbd>Esc</kbd> back to Transcribe.
 - Files given on the command line open in the app. **Closing the window keeps the app
-  running** in the tray, so the dictation key stays instant. Quit with **Quit Lowkey** at the
-  bottom of the side menu, from the tray, or with `lowkey --dictate quit`. While a meeting
-  records, Quit Lowkey asks first, then stops and saves the meeting before it quits.
+  running** in the tray, so the dictation key stays instant. Quit with **Exit** at the bottom
+  of the side menu, from the tray, or with `lowkey --dictate quit`. While a meeting records,
+  Exit asks first, then stops and saves the meeting before it quits.
 - **Appearance** (Settings → General): System (follows the desktop's light or dark setting),
   Light or Dark. The recording strip stays dark.
 - **The tray icon's menu:** Start/Stop dictation (the text goes to the app that has the
