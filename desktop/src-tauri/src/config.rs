@@ -78,6 +78,11 @@ pub struct Config {
     pub history_keep: String,
     /// The window's colours: system (follow the desktop) | light | dark.
     pub theme: String,
+    /// The floating strip (dictation, meeting recording): collapsed to a small pill.
+    pub overlay_collapsed: bool,
+    /// Where the user left the strip: [x, y] as fractions (0..1) of the room the monitor leaves
+    /// around it. Missing: bottom centre.
+    pub overlay_at: Option<[f32; 2]>,
     /// The microphone (a PipeWire source name on Linux, a device name elsewhere); "" = system default.
     pub microphone: String,
     /// With the system default: a Bluetooth headset's microphone gives way to another one.
@@ -108,6 +113,8 @@ impl Default for Config {
             paste_hotkey: DEFAULT_PASTE_HOTKEY.into(),
             history_keep: crate::history::DEFAULT_KEEP.into(),
             theme: "system".into(),
+            overlay_collapsed: false,
+            overlay_at: None,
             microphone: String::new(),
             avoid_bluetooth_mic: true,
             call_detection: true,

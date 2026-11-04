@@ -68,6 +68,8 @@ pub struct App {
     call_session: Mutex<Option<(String, crate::calls::Call, bool)>>,
     /// Calls seen while the app runs (Settings lists them with their policy).
     calls_seen: Mutex<Vec<crate::calls::Call>>,
+    /// Hyprland: the strip's drag while the mouse button is down.
+    overlay_drag: Mutex<Option<hyprland::OverlayDrag>>,
     /// Who wants the overlay: [dictation, meeting]. It shows while either does.
     overlay_wants: [AtomicBool; 2],
     /// AI notes and questions: one job at a time, and its cancel flag.
@@ -276,6 +278,7 @@ impl App {
             "hotkey_problem": if self.hotkey_source() == "none" && !self.hotkey_key().is_empty() { self.hotkey_text.lock().clone() } else { String::new() },
             "start_at_login": self.start_at_login(),
             "meeting_key": self.key_of(KeyKind::Meeting),
+            "overlay_collapsed": self.config.lock().overlay_collapsed,
             "meeting_key_source": self.source_of(KeyKind::Meeting),
             "meeting_key_problem": if self.source_of(KeyKind::Meeting) == "none" && !self.key_of(KeyKind::Meeting).is_empty() { self.meeting_hotkey_text.lock().clone() } else { String::new() },
             "paste_key": self.key_of(KeyKind::PasteLast),
@@ -430,13 +433,164 @@ impl App {
         }
         if let Some(w) = self.handle.get_webview_window("overlay") {
             if visible && usable {
+                if !w.is_visible().unwrap_or(false) {
+                    self.place_overlay_os(&w);
+                }
                 let _ = w.show();
                 emit_logged(&self.handle, "overlay", true);
             } else if !visible {
+                if w.is_visible().unwrap_or(false) {
+                    self.remember_overlay_place();
+                }
                 let _ = w.hide();
                 emit_logged(&self.handle, "overlay", false);
             }
         }
+    }
+
+    // ------------------------------------------------------------- the strip's place
+    fn overlay_place(&self) -> hyprland::OverlayPlace {
+        let c = self.config.lock();
+        hyprland::OverlayPlace { collapsed: c.overlay_collapsed, at: c.overlay_at }
+    }
+
+    /// Save a new place (only when it changed): the config, and the Hyprland rule.
+    fn save_overlay_place(&self, place: hyprland::OverlayPlace) {
+        let round = |a: [f32; 2]| [(a[0] * 1000.0).round() / 1000.0, (a[1] * 1000.0).round() / 1000.0];
+        let place = hyprland::OverlayPlace { at: place.at.map(round), ..place };
+        {
+            let mut c = self.config.lock();
+            if c.overlay_collapsed == place.collapsed && c.overlay_at == place.at {
+                return;
+            }
+            c.overlay_collapsed = place.collapsed;
+            c.overlay_at = place.at;
+            if let Err(e) = c.save() {
+                eprintln!("  strip place not saved: {e}");
+            }
+        }
+        hyprland::set_overlay_place(place);
+        emit_logged(&self.handle, "overlay-place", json!({ "collapsed": place.collapsed, "at": place.at }));
+    }
+
+    /// Where the strip is now, as fractions of the room around it (None: not on screen, or the
+    /// system does not say: e.g. Wayland without Hyprland).
+    fn overlay_fractions_now(&self) -> Option<[f32; 2]> {
+        if hyprland::running() {
+            return hyprland::overlay_geometry().map(|g| g.fractions());
+        }
+        let w = self.handle.get_webview_window("overlay")?;
+        let pos = w.outer_position().ok()?;
+        let size = w.outer_size().ok()?;
+        let area = *w.current_monitor().ok()??.work_area();
+        let f = |p: i32, a: i32, s: u32, room: u32| {
+            let room = room as f64 - s as f64;
+            if room <= 0.0 { 0.5 } else { ((p - a) as f64 / room).clamp(0.0, 1.0) as f32 }
+        };
+        Some([f(pos.x, area.position.x, size.width, area.size.width), f(pos.y, area.position.y, size.height, area.size.height)])
+    }
+
+    /// The user may have moved the strip: keep where it is now (if it is not where the app put it).
+    fn remember_overlay_place(&self) {
+        let Some(now) = self.overlay_fractions_now() else { return };
+        let place = self.overlay_place();
+        let expected = place.at.unwrap_or_else(|| self.default_fractions());
+        if (now[0] - expected[0]).abs() < 0.004 && (now[1] - expected[1]).abs() < 0.004 {
+            return; // where the app put it (a pixel or two off): nothing to save
+        }
+        self.save_overlay_place(hyprland::OverlayPlace { at: Some(now), ..place });
+    }
+
+    /// Bottom centre, as fractions (for comparing: the rule says it in pixels).
+    fn default_fractions(&self) -> [f32; 2] {
+        if let Some(g) = hyprland::overlay_geometry() {
+            let (_, h) = self.overlay_place().size();
+            let room = g.monitor_size.1 - h as f64;
+            let y = g.monitor_size.1 - 74.0 - h as f64;
+            return [0.5, if room > 0.0 { (y / room).clamp(0.0, 1.0) as f32 } else { 1.0 }];
+        }
+        [0.5, 0.92]
+    }
+
+    /// Not Hyprland: put the strip where the user left it (or bottom centre) on the monitor
+    /// that has the mouse pointer. Hyprland: its window rule does this.
+    fn place_overlay_os(&self, w: &tauri::WebviewWindow) {
+        if hyprland::running() {
+            return;
+        }
+        let monitor = self
+            .handle
+            .cursor_position()
+            .ok()
+            .and_then(|p| self.handle.monitor_from_point(p.x, p.y).ok().flatten())
+            .or_else(|| self.handle.primary_monitor().ok().flatten());
+        let Some(m) = monitor else { return };
+        let area = *m.work_area();
+        let place = self.overlay_place();
+        let (lw, lh) = place.size();
+        let scale = m.scale_factor();
+        let (pw, ph) = ((lw as f64 * scale).round() as i32, (lh as f64 * scale).round() as i32);
+        let room = |total: u32, size: i32| (total as i32 - size).max(0) as f64;
+        let [fx, fy] = place.at.unwrap_or([0.5, -1.0]);
+        let x = area.position.x + (room(area.size.width, pw) * fx as f64).round() as i32;
+        let y = if fy < 0.0 {
+            area.position.y + area.size.height as i32 - ph - (74.0 * scale).round() as i32
+        } else {
+            area.position.y + (room(area.size.height, ph) * fy as f64).round() as i32
+        };
+        let _ = w.set_position(tauri::PhysicalPosition::new(x, y));
+    }
+
+    /// Open ⇄ collapsed: the window's size now, and for the next times. The centre stays.
+    fn set_overlay_collapsed(&self, collapsed: bool) {
+        let old = self.overlay_place();
+        if old.collapsed == collapsed {
+            return;
+        }
+        let new = hyprland::OverlayPlace { collapsed, ..old };
+        let (w, h) = new.size();
+        let Some(win) = self.handle.get_webview_window("overlay") else { return };
+        // Not Hyprland: where it is before (to keep its centre).
+        let before = (win.outer_position().ok(), win.outer_size().ok());
+        // The size limits first: the window refuses a size outside them.
+        let size = tauri::LogicalSize::new(w as f64, h as f64);
+        // Growing: the max size first; shrinking: the min size first (never min > max).
+        if collapsed {
+            let _ = win.set_min_size(Some(size));
+            let _ = win.set_max_size(Some(size));
+        } else {
+            let _ = win.set_max_size(Some(size));
+            let _ = win.set_min_size(Some(size));
+        }
+        #[cfg(target_os = "linux")]
+        {
+            let _ = win.with_webview(move |wv| {
+                use gtk::prelude::WidgetExt;
+                wv.inner().set_size_request(w as i32, h as i32);
+            });
+        }
+        let _ = win.set_size(size);
+        let mut at = old.at;
+        if hyprland::running() {
+            // Give GTK a moment to send the new size limits, else Hyprland keeps the old size.
+            std::thread::sleep(std::time::Duration::from_millis(120));
+            if let Some(g) = hyprland::overlay_geometry() {
+                if let Some((x, y)) = hyprland::resize_overlay(&g, (w, h)) {
+                    let moved = hyprland::OverlayGeometry { at: (x, y), size: (w as f64, h as f64), ..g };
+                    at = Some(moved.fractions());
+                }
+            }
+        } else {
+            // Keep the centre (Windows, macOS, X11).
+            let scale = win.scale_factor().unwrap_or(1.0);
+            if let (Some(p), Some(b)) = before {
+                let (pw, ph) = ((w as f64 * scale) as i32, (h as f64 * scale) as i32);
+                let _ = win.set_position(tauri::PhysicalPosition::new(p.x + (b.width as i32 - pw) / 2, p.y + (b.height as i32 - ph) / 2));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(120));
+            at = self.overlay_fractions_now().or(at);
+        }
+        self.save_overlay_place(hyprland::OverlayPlace { collapsed, at });
     }
 
     fn handle_cli(self: &Arc<Self>, cli: &Cli, first: bool) {
@@ -706,6 +860,9 @@ impl App {
     }
 
     fn shutdown(&self) {
+        if self.handle.get_webview_window("overlay").and_then(|w| w.is_visible().ok()).unwrap_or(false) {
+            self.remember_overlay_place();
+        }
         if let Some(m) = self.meeting.lock().take() {
             m.abandon(); // keep what is transcribed
         }
@@ -1241,6 +1398,59 @@ fn stop_meeting(app: &AppRef) -> Result<meeting::Meeting, String> {
 
 /// The side menu's Exit: the same as the tray menu's (a meeting is stopped and saved by the page
 /// first; `shutdown` keeps what a meeting left running has).
+/// The strip's collapse button and its pill (a click opens it again).
+#[tauri::command]
+fn overlay_collapse(app: State<'_, AppRef>, collapsed: bool) {
+    let app = app.inner().clone();
+    // Not on the main thread: the window's new size limits must reach GTK first.
+    std::thread::spawn(move || app.set_overlay_collapsed(collapsed));
+}
+
+/// A press on the strip: on Hyprland it took the focus; give it back at once.
+#[tauri::command]
+fn overlay_unfocus() {
+    std::thread::spawn(hyprland::focus_back_from_overlay);
+}
+
+/// The strip's microphone button: mute or unmute your microphone in the meeting being recorded.
+#[tauri::command]
+fn meeting_mute(app: State<'_, AppRef>, muted: bool) -> Result<(), String> {
+    let session = app.meeting.lock().clone().ok_or("No meeting is being recorded.")?;
+    session.set_muted(muted);
+    Ok(())
+}
+
+/// The mouse button went down on the strip. Hyprland: the app moves the strip with the pointer
+/// (true). Elsewhere: false, and the page asks the system to drag the window.
+#[tauri::command]
+async fn overlay_drag_start(app: State<'_, AppRef>) -> Result<bool, String> {
+    if !hyprland::running() {
+        return Ok(false);
+    }
+    // The focus goes back on the release: given back now, the page would lose the button
+    // (WebKit cancels the press) and never hear the release.
+    let drag = hyprland::OverlayDrag::start();
+    let started = drag.is_some();
+    if let Some(old) = std::mem::replace(&mut *app.overlay_drag.lock(), drag) {
+        old.end();
+    }
+    Ok(started)
+}
+
+/// The mouse button went up: true when the strip moved (its new place is saved), false for a
+/// click.
+#[tauri::command]
+async fn overlay_drag_end(app: State<'_, AppRef>) -> Result<bool, String> {
+    let Some(drag) = app.overlay_drag.lock().take() else { return Ok(false) };
+    let moved = drag.end();
+    hyprland::focus_back_from_overlay();
+    if moved {
+        std::thread::sleep(std::time::Duration::from_millis(30)); // the last move is applied
+        app.remember_overlay_place();
+    }
+    Ok(moved)
+}
+
 #[tauri::command]
 fn app_quit(app: State<'_, AppRef>) {
     app.handle.exit(0);
@@ -1929,6 +2139,11 @@ pub fn run() {
             adopt_hotkey,
             dictation_state,
             overlay_ready,
+            overlay_collapse,
+            overlay_unfocus,
+            meeting_mute,
+            overlay_drag_start,
+            overlay_drag_end,
             window_dictation,
             meeting_start,
             meeting_stop,
@@ -1964,6 +2179,9 @@ pub fn run() {
             let handle = tauri_app.handle().clone();
             let config = Config::load();
             set_window_theme(&handle, &config.theme);
+            // The strip opens where the user left it (the rule that keys add uses this place).
+            let place = hyprland::OverlayPlace { collapsed: config.overlay_collapsed, at: config.overlay_at };
+            hyprland::set_overlay_place(place);
             let engines = Engines::new(config.idle_unload_minutes);
             engines.set_vocabulary(&config.vocabulary);
             let h_jobs = handle.clone();
@@ -2023,6 +2241,7 @@ pub fn run() {
                 call_session: Mutex::new(None),
                 calls_seen: Mutex::new(Vec::new()),
                 overlay_wants: [AtomicBool::new(false), AtomicBool::new(false)],
+                overlay_drag: Mutex::new(None),
                 ai_busy: Arc::new(AtomicBool::new(false)),
                 ai_cancel: Arc::new(AtomicBool::new(false)),
                 ai_job: Mutex::new(None),
@@ -2073,27 +2292,32 @@ pub fn run() {
                     let _ = main_for_close.hide();
                 }
             });
+            let (ow, oh) = place.size();
             WebviewWindowBuilder::new(tauri_app, "overlay", WebviewUrl::App("overlay.html".into()))
                 .title(hyprland::OVERLAY_TITLE)
-                .inner_size(380.0, 76.0)
-                .min_inner_size(380.0, 76.0)
-                .max_inner_size(380.0, 76.0)
+                .inner_size(ow as f64, oh as f64)
+                .min_inner_size(ow as f64, oh as f64)
+                .max_inner_size(ow as f64, oh as f64)
                 .decorations(false)
                 // Transparent: the page draws the rounded strip, the corners show what is below.
                 .transparent(true)
                 .always_on_top(true)
                 .skip_taskbar(true)
-                .resizable(false)
+                // Resizable, but its min = max size holds it: a window that is not resizable
+                // keeps its first size in GTK, and the strip collapses to a pill.
+                .resizable(true)
                 .focused(false)
+                // A click on it (drag, collapse) never takes the focus from the app you type in.
+                .focusable(false)
                 .visible(false)
                 .build()?;
             // WebKitGTK asks for at least 200 px of height; the overlay is a 76 px strip.
             #[cfg(target_os = "linux")]
             {
                 let overlay = tauri_app.get_webview_window("overlay").expect("overlay");
-                let _ = overlay.with_webview(|wv| {
+                let _ = overlay.with_webview(move |wv| {
                     use gtk::prelude::WidgetExt;
-                    wv.inner().set_size_request(380, 76);
+                    wv.inner().set_size_request(ow as i32, oh as i32);
                 });
             }
 

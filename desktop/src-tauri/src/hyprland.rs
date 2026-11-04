@@ -117,19 +117,240 @@ fn shell_quote(s: &str) -> String {
     }
 }
 
-/// Floating, pinned, never focused, bottom centre. A restart replaces it (Lua global).
-/// `decorate = false` turns off every decoration, title-bar plugins too (hyprbars draws its
-/// bar on every window): no plugin-specific field, so nothing depends on a plugin being loaded.
-/// `rounding = 0` and `no_blur`: the window is transparent, the page draws the rounded strip.
+/// The strip's sizes (logical px): open, and collapsed to a small pill.
+pub const OVERLAY_SIZE: (u32, u32) = (380, 76);
+pub const OVERLAY_PILL: (u32, u32) = (150, 44);
+
+/// Where the strip shows and how: collapsed or not, and where the user left it.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct OverlayPlace {
+    pub collapsed: bool,
+    /// [x, y] as fractions (0..1) of the room the monitor leaves around the strip
+    /// (0,0 = top left, 1,1 = bottom right). None: bottom centre.
+    pub at: Option<[f32; 2]>,
+}
+
+impl OverlayPlace {
+    pub fn size(&self) -> (u32, u32) {
+        if self.collapsed { OVERLAY_PILL } else { OVERLAY_SIZE }
+    }
+}
+
+/// The place the app's rule uses now (set from the config, and when the user moves the strip).
+static PLACE: parking_lot::Mutex<OverlayPlace> = parking_lot::Mutex::new(OverlayPlace { collapsed: false, at: None });
+
+/// Floating, pinned, bottom centre (or where the user left it). A restart replaces it (Lua
+/// global; each rule gets a new name: Hyprland keeps the first rule of a name). Not `no_focus`:
+/// Hyprland sends such a window no pointer at all, and the strip is dragged and clicked. So:
+/// `no_initial_focus` and `no_follow_mouse` (the pointer over it never focuses it), and a
+/// click gives the focus straight back (`focus_back_from_overlay`). `decorate = false` turns off every decoration, title-bar plugins
+/// too (hyprbars draws its bar on every window): no plugin-specific field, so nothing depends
+/// on a plugin being loaded. `rounding = 0` and `no_blur`: the window is transparent, the page
+/// draws the rounded strip.
 pub fn overlay_rule_lua() -> String {
+    overlay_rule_lua_at(&PLACE.lock())
+}
+
+static RULE_NO: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+pub fn overlay_rule_lua_at(place: &OverlayPlace) -> String {
+    let n = RULE_NO.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let (w, h) = place.size();
+    let (x, y) = match place.at {
+        // Fractions of the free room: on any monitor size the strip stays on screen.
+        Some([fx, fy]) => (format!("((monitor_w-{w})*{:.4})", fx.clamp(0.0, 1.0)), format!("((monitor_h-{h})*{:.4})", fy.clamp(0.0, 1.0))),
+        None => (format!("(monitor_w/2-{})", w / 2), format!("(monitor_h-{})", 74 + h)),
+    };
     format!(
         "if _G.lowkey_desktop_rule then _G.lowkey_desktop_rule:set_enabled(false) end\n\
-         _G.lowkey_desktop_rule = hl.window_rule({{ name = \"lowkey-desktop-overlay\", \
-         match = {{ title = {} }}, float = true, pin = true, no_initial_focus = true, no_focus = true, \
-         size = {{ 380, 76 }}, move = {{ \"(monitor_w/2-190)\", \"(monitor_h-150)\" }}, \
+         _G.lowkey_desktop_rule = hl.window_rule({{ name = \"lowkey-desktop-overlay-{n}\", \
+         match = {{ title = {} }}, float = true, pin = true, no_initial_focus = true, no_follow_mouse = true, \
+         size = {{ {w}, {h} }}, move = {{ \"{x}\", \"{y}\" }}, \
          border_size = 0, rounding = 0, no_shadow = true, no_blur = true, decorate = false, no_anim = true }})",
         lua_str(&format!("^{OVERLAY_TITLE}$"))
     )
+}
+
+/// A new place for the strip: the app's rule follows it (if the app's rule is in use), so the
+/// strip shows there the next time it opens.
+pub fn set_overlay_place(place: OverlayPlace) {
+    let changed = {
+        let mut p = PLACE.lock();
+        let changed = *p != place;
+        *p = place;
+        changed
+    };
+    if changed && running() && lua_config() {
+        let _ = eval(&overlay_rule_lua());
+    }
+}
+
+/// The strip as it is on screen: its top-left and size, and its monitor's top-left and size
+/// (layout px). None when it is not mapped.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct OverlayGeometry {
+    pub address: u64,
+    pub at: (f64, f64),
+    pub size: (f64, f64),
+    pub monitor_at: (f64, f64),
+    pub monitor_size: (f64, f64),
+}
+
+pub fn overlay_geometry() -> Option<OverlayGeometry> {
+    if !running() {
+        return None;
+    }
+    let clients: Value = serde_json::from_str(&hyprctl(&["clients", "-j"])).ok()?;
+    let monitors: Value = serde_json::from_str(&hyprctl(&["monitors", "-j"])).ok()?;
+    geometry_from(&clients, &monitors)
+}
+
+pub fn geometry_from(clients: &Value, monitors: &Value) -> Option<OverlayGeometry> {
+    let c = clients.as_array()?.iter().find(|c| c["title"] == OVERLAY_TITLE && c["mapped"].as_bool().unwrap_or(true) && c["hidden"] != true)?;
+    let pair = |v: &Value| Some((v[0].as_f64()?, v[1].as_f64()?));
+    let m = monitors.as_array()?.iter().find(|m| m["id"] == c["monitor"])?;
+    let scale = m["scale"].as_f64().filter(|s| *s > 0.0).unwrap_or(1.0);
+    let address = u64::from_str_radix(c["address"].as_str()?.trim_start_matches("0x"), 16).ok()?;
+    // A monitor turned 90° or 270° (transform 1, 3, 5, 7) is taller than wide.
+    let (mut mw, mut mh) = (m["width"].as_f64()? / scale, m["height"].as_f64()? / scale);
+    if m["transform"].as_i64().unwrap_or(0) % 2 == 1 {
+        std::mem::swap(&mut mw, &mut mh);
+    }
+    Some(OverlayGeometry { address, at: pair(&c["at"])?, size: pair(&c["size"])?, monitor_at: (m["x"].as_f64()?, m["y"].as_f64()?), monitor_size: (mw, mh) })
+}
+
+impl OverlayGeometry {
+    /// Where it is, as fractions of the room its monitor leaves around it.
+    pub fn fractions(&self) -> [f32; 2] {
+        let f = |pos: f64, mon: f64, size: f64, mon_size: f64| {
+            let room = mon_size - size;
+            if room <= 0.0 { 0.5 } else { ((pos - mon) / room).clamp(0.0, 1.0) as f32 }
+        };
+        [f(self.at.0, self.monitor_at.0, self.size.0, self.monitor_size.0), f(self.at.1, self.monitor_at.1, self.size.1, self.monitor_size.1)]
+    }
+}
+
+/// One request on Hyprland's socket (as hyprctl sends it: "j/cursorpos", "/dispatch …").
+/// Much faster than starting hyprctl: the strip's drag asks ~60 times a second.
+#[cfg(unix)]
+fn request(msg: &str) -> Option<String> {
+    use std::io::{Read, Write};
+    let sig = std::env::var("HYPRLAND_INSTANCE_SIGNATURE").ok()?;
+    let base = std::env::var("XDG_RUNTIME_DIR").ok()?;
+    let mut s = std::os::unix::net::UnixStream::connect(PathBuf::from(base).join("hypr").join(sig).join(".socket.sock")).ok()?;
+    s.write_all(msg.as_bytes()).ok()?;
+    let mut out = String::new();
+    s.read_to_string(&mut out).ok()?;
+    Some(out)
+}
+
+#[cfg(not(unix))]
+fn request(_msg: &str) -> Option<String> {
+    None
+}
+
+/// The mouse pointer (layout px).
+pub fn cursor_pos() -> Option<(f64, f64)> {
+    let v: Value = serde_json::from_str(&request("j/cursorpos")?).ok()?;
+    Some((v["x"].as_f64()?, v["y"].as_f64()?))
+}
+
+/// Put a window's top-left at x, y (layout px).
+pub fn move_window(address: u64, x: i64, y: i64) -> bool {
+    let lua = format!("hl.dsp.window.move({{ x = {x}, y = {y}, window = {} }})", lua_str(&format!("address:0x{address:x}")));
+    request(&format!("/dispatch {lua}")).is_some_and(|r| r.trim() == "ok")
+}
+
+/// The strip's drag on Hyprland, done by the app: the window follows the pointer while the
+/// button is down (the page says when it goes up). Not Hyprland's own drag (xdg move): it
+/// ends in a strip that keeps the focus, and giving the focus back stops it.
+pub struct OverlayDrag {
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    moved: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl OverlayDrag {
+    pub fn start() -> Option<OverlayDrag> {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let g = overlay_geometry()?;
+        let start = cursor_pos()?;
+        let grab = (start.0 - g.at.0, start.1 - g.at.1);
+        let stop = std::sync::Arc::new(AtomicBool::new(false));
+        let moved = std::sync::Arc::new(AtomicBool::new(false));
+        let (stop2, moved2) = (stop.clone(), moved.clone());
+        std::thread::Builder::new()
+            .name("strip-drag".into())
+            .spawn(move || {
+                let mut last = start;
+                // At most 30 s (a lost "up": the strip never stays glued to the pointer).
+                for _ in 0..3000 {
+                    if stop2.load(Ordering::SeqCst) {
+                        break;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                    let Some(p) = cursor_pos() else { continue };
+                    if p == last {
+                        continue;
+                    }
+                    // A few pixels are still a click.
+                    if !moved2.load(Ordering::SeqCst) && (p.0 - start.0).hypot(p.1 - start.1) < 4.0 {
+                        continue;
+                    }
+                    last = p;
+                    moved2.store(true, Ordering::SeqCst);
+                    // On its monitor.
+                    let x = (p.0 - grab.0).clamp(g.monitor_at.0, (g.monitor_at.0 + g.monitor_size.0 - g.size.0).max(g.monitor_at.0));
+                    let y = (p.1 - grab.1).clamp(g.monitor_at.1, (g.monitor_at.1 + g.monitor_size.1 - g.size.1).max(g.monitor_at.1));
+                    move_window(g.address, x.round() as i64, y.round() as i64);
+                }
+            })
+            .ok()?;
+        Some(OverlayDrag { stop, moved })
+    }
+
+    /// The button is up: stop; true when the strip moved (else it was a click).
+    pub fn end(self) -> bool {
+        self.stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        self.moved.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+/// A click on the strip focused it (Hyprland focuses the window under a click): give the
+/// focus back to the window that had it, so a dictation types where the user was typing.
+pub fn focus_back_from_overlay() {
+    if !running() {
+        return;
+    }
+    let Ok(clients) = serde_json::from_str::<Value>(&hyprctl(&["clients", "-j"])) else { return };
+    let Some(active) = focused_window() else { return };
+    let list = clients.as_array().cloned().unwrap_or_default();
+    if !list.iter().any(|c| c["title"] == OVERLAY_TITLE && c["address"] == active.as_str()) {
+        return;
+    }
+    let prev = list
+        .iter()
+        .filter(|c| c["title"] != OVERLAY_TITLE && c["mapped"] != false && c["hidden"] != true && c["focusHistoryID"].as_i64().unwrap_or(-1) >= 0)
+        .min_by_key(|c| c["focusHistoryID"].as_i64().unwrap_or(i64::MAX));
+    if let Some(addr) = prev.and_then(|c| c["address"].as_str()) {
+        let _ = hyprctl(&["dispatch", &format!("hl.dsp.focus({{ window = {} }})", lua_str(&format!("address:{addr}")))]);
+    }
+}
+
+/// Resize the strip now and keep its centre where it is (open ⇄ collapsed). Returns its new
+/// top-left, or None when Hyprland did not take it.
+pub fn resize_overlay(g: &OverlayGeometry, (w, h): (u32, u32)) -> Option<(f64, f64)> {
+    let cx = g.at.0 + g.size.0 / 2.0;
+    let cy = g.at.1 + g.size.1 / 2.0;
+    let mut x = (cx - w as f64 / 2.0).round();
+    let mut y = (cy - h as f64 / 2.0).round();
+    // On its monitor.
+    x = x.clamp(g.monitor_at.0, (g.monitor_at.0 + g.monitor_size.0 - w as f64).max(g.monitor_at.0));
+    y = y.clamp(g.monitor_at.1, (g.monitor_at.1 + g.monitor_size.1 - h as f64).max(g.monitor_at.1));
+    let win = lua_str(&format!("address:0x{:x}", g.address));
+    let ok = |lua: String| hyprctl(&["dispatch", &lua]).trim() == "ok";
+    (ok(format!("hl.dsp.window.resize({{ x = {w}, y = {h}, window = {win} }})"))
+        && ok(format!("hl.dsp.window.move({{ x = {}, y = {}, window = {win} }})", x as i64, y as i64)))
+    .then_some((x, y))
 }
 
 pub fn bind_lua(key: &str, command: &str, description: &str) -> String {
@@ -176,7 +397,7 @@ pub fn permanent_snippet(key: &str, exe: &Path) -> String {
     format!(
         "-- Lowkey: global dictation (hold = talk, tap = start/stop)\n{}\n{}",
         bind_lua(key, &dictate_command(exe), CONFIG_DESC),
-        overlay_rule_lua()
+        overlay_rule_lua_at(&OverlayPlace::default())
     )
 }
 
@@ -719,12 +940,36 @@ mod tests {
     }
 
     #[test]
+    fn the_strips_place_and_size() {
+        let open = overlay_rule_lua_at(&OverlayPlace::default());
+        assert!(open.contains("size = { 380, 76 }") && open.contains(r#"move = { "(monitor_w/2-190)", "(monitor_h-150)" }"#), "{open}");
+        let pill = overlay_rule_lua_at(&OverlayPlace { collapsed: true, at: Some([0.25, 1.5]) });
+        assert!(pill.contains("size = { 150, 44 }") && pill.contains(r#"move = { "((monitor_w-150)*0.2500)", "((monitor_h-44)*1.0000)" }"#), "{pill}");
+        // Where it is on screen, read back from hyprctl's JSON (a 2x monitor at 1920,0).
+        let clients = json!([
+            { "title": "other", "address": "0x1", "at": [0, 0], "size": [10, 10], "monitor": 1 },
+            { "title": OVERLAY_TITLE, "address": "0xabc", "mapped": true, "at": [2200, 900], "size": [380, 76], "monitor": 1 }
+        ]);
+        let monitors = json!([{ "id": 0, "x": 0, "y": 0, "width": 1920, "height": 1080, "scale": 1.0 },
+                              { "id": 1, "x": 1920, "y": 0, "width": 3840, "height": 2160, "scale": 2.0 }]);
+        let g = geometry_from(&clients, &monitors).unwrap();
+        assert_eq!((g.address, g.monitor_at, g.monitor_size), (0xabc, (1920.0, 0.0), (1920.0, 1080.0)));
+        let [fx, fy] = g.fractions();
+        assert!((fx - 280.0 / 1540.0).abs() < 1e-4 && (fy - 900.0 / 1004.0).abs() < 1e-4, "{fx} {fy}");
+        assert_eq!(geometry_from(&json!([]), &monitors), None);
+    }
+
+    #[test]
     fn binds_and_snippets() {
         let exe = Path::new("/opt/low key/lowkey");
         let lua = bind_lua("SUPER + CTRL + X", &dictate_command(exe), RUNTIME_DESC);
         assert!(lua.contains("'/opt/low key/lowkey' --dictate press"));
         assert!(lua.contains("release = true") && lua.contains("added by the app"));
-        assert!(overlay_rule_lua().contains("no_focus = true") && overlay_rule_lua().contains("lowkey_desktop_rule"));
+        // Pointer yes (drag, collapse), focus no: no_focus would take the pointer away too.
+        let rule = overlay_rule_lua();
+        assert!(rule.contains("no_follow_mouse = true") && rule.contains("no_initial_focus = true") && !rule.contains("no_focus = true"));
+        assert!(rule.contains("lowkey_desktop_rule"));
+        assert_ne!(overlay_rule_lua(), overlay_rule_lua(), "a new name each time (Hyprland keeps the first rule of a name)");
         // No plugin fields (an unknown field is a config error): decorate = false covers title bars.
         assert!(overlay_rule_lua().contains("decorate = false") && !overlay_rule_lua().contains("hyprbars"));
         let conf = conf_snippet("SUPER + CTRL + X", Path::new("/usr/bin/lowkey"));

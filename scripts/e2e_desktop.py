@@ -10,7 +10,10 @@ OPENWHISPER_TEST_LOG (UI events appended to a file, because the webview has no W
 Hyprland ignores binds from virtual keyboards, so the key bind's command is run through
 Hyprland's own exec dispatcher, exactly as a key press/release would.
 
-Usage: python3 scripts/e2e_desktop.py [--first-run] [--config-bind]   (standard library only)
+Usage: python3 scripts/e2e_desktop.py [--first-run] [--config-bind] [--strip-only]   (standard library only)
+  --strip-only   only the floating strip's drag and collapse (a quick run)
+  OW_E2E_HOLD=<dir> with --strip-only: keep the nested session open (env in <dir>/env.json)
+                 until <dir>/stop exists, to try things by hand
   --first-run    empty model folder: the key-started app downloads the model (~550 MB)
   --config-bind  the nested config has Franco's bindings.lua block (it runs
                  scripts/ow-dictate): the shim must hand the key to the desktop app, and the
@@ -287,6 +290,96 @@ esac
             run(["hyprctl", "dispatch", f'hl.dsp.focus({{ window = "address:{addr}" }})'], env)
             wait(lambda: (hj("activewindow") or {}).get("address") == addr, 5, "focus")
 
+        # A test pointer (wlr virtual pointer) for the strip's drag and clicks: in the nested
+        # Hyprland only. Built from scripts/e2e_pointer (needs gcc and wayland-scanner).
+        pointer_tool = tmp / "e2e_pointer"
+        src = ROOT / "scripts" / "e2e_pointer"
+        try:
+            xml = src / "wlr-virtual-pointer-unstable-v1.xml"
+            run(["wayland-scanner", "client-header", xml, tmp / "wlr-virtual-pointer-unstable-v1-client-protocol.h"])
+            run(["wayland-scanner", "private-code", xml, tmp / "vptr-protocol.c"])
+            run(["gcc", "-O2", f"-I{tmp}", "-o", pointer_tool, src / "pointer.c", tmp / "vptr-protocol.c", "-lwayland-client"])
+        except (RuntimeError, OSError) as e:
+            print(f"  note: no test pointer ({e}); the strip's drag and collapse are not checked")
+            pointer_tool = None
+
+        def pointer(*cmds: str) -> None:
+            mon = hj("monitors")[0]
+            w, h = mon["width"], mon["height"]
+            run([pointer_tool, *[c.format(W=w, H=h) for c in cmds]], env)
+
+        def strip_step() -> None:
+            """Drag the strip, collapse it, see it come back collapsed where it was left, open it."""
+            cfg = tmp / "config" / "lowkey" / "config.toml"
+            n0 = len(events("meeting"))
+            focus_before = (hj("activewindow") or {}).get("address")
+            run(["hyprctl", "dispatch", f'hl.dsp.exec_cmd("{APP} --meeting toggle")'], env)
+            s0 = wait(lambda: win("lowkey-overlay"), 15, "the strip for the drag")
+            wait(lambda: next((m for m in events("meeting")[n0:] if m["state"] == "recording"), None), 30, "recording")
+            time.sleep(0.8)
+            check(tuple(s0["size"]) == (380, 76), f"the strip opens at 380x76: {s0['size']}")
+            (x, y), (sw, sh) = s0["at"], s0["size"]
+            if os.environ.get("OW_E2E_HOLD"):  # debugging: keep the session for commands from outside
+                (Path(os.environ["OW_E2E_HOLD"]) / "env.json").write_text(json.dumps({**env, "OW_TMP": str(tmp), "OW_PTR": str(pointer_tool)}))
+                wait(lambda: (Path(os.environ["OW_E2E_HOLD"]) / "stop").exists(), 1800, "the stop file")
+                return
+            # Drag from its left part (not the collapse button), up and to the left.
+            steps = [f"rel:{-30},{-20}"] * 10
+            pointer(f"abs:{x + 60},{y + 38},{{W}},{{H}}", "sleep:150", "down", "sleep:80", *[c for st in steps for c in (st, "sleep:20")], "sleep:150", "up")
+            s1 = wait(lambda: (w_ := win("lowkey-overlay")) and abs(w_["at"][0] - (x - 300)) <= 12 and abs(w_["at"][1] - (y - 200)) <= 12 and w_,
+                      5, "the strip moved by the drag")
+            time.sleep(0.5)
+            check((hj("activewindow") or {}).get("address") == focus_before,
+                  f"dragging the strip moves it ({s0['at']} -> {s1['at']}); the focus stays on the app")
+            # Mute: the microphone button (first row, right): silence goes in its place, the
+            # computer's sound goes on; the strip says so. Then unmute.
+            (x1, y1) = s1["at"]
+            n_m = len(events("meeting"))
+            pointer(f"abs:{x1 + 330},{y1 + 27},{{W}},{{H}}", "sleep:250", "click")
+            wait(lambda: any(m.get("muted") for m in events("meeting")[n_m:]), 5, "muted")
+            time.sleep(0.8)
+            check((hj("activewindow") or {}).get("address") == focus_before, "the mute button mutes your microphone; no focus taken")
+            run(["grim", "-g", f"{x1 - 20},{y1 - 20} 420x116", SHOTS / "38-desktop-strip-muted.png"], env)
+            print("  screenshot docs/screenshots/38-desktop-strip-muted.png")
+            n_u = len(events("meeting"))
+            pointer(f"abs:{x1 + 330},{y1 + 27},{{W}},{{H}}", "sleep:250", "click")
+            wait(lambda: any(m.get("muted") is False and m["state"] == "recording" for m in events("meeting")[n_u:]), 5, "unmuted")
+            print("  ok  a second click unmutes it")
+            # Collapse: its button in the top-right corner (it shows on hover).
+            pointer(f"abs:{x1 + sw - 17},{y1 + 17},{{W}},{{H}}", "sleep:250", "click")
+            s2 = wait(lambda: (w_ := win("lowkey-overlay")) and tuple(w_["size"]) == (150, 44) and w_, 5, "the strip collapsed")
+            centre = lambda w_: (w_["at"][0] + w_["size"][0] / 2, w_["at"][1] + w_["size"][1] / 2)
+            c1, c2 = centre(s1), centre(s2)
+            check(abs(c1[0] - c2[0]) <= 2 and abs(c1[1] - c2[1]) <= 2, f"collapsed to a 150x44 pill around the same centre ({c1} -> {c2})")
+            wait(lambda: "overlay_collapsed = true" in cfg.read_text(), 5, "collapsed state saved")
+            time.sleep(0.6)
+            run(["grim", "-g", f"{int(s2['at'][0]) - 40},{int(s2['at'][1]) - 30} 212x104", SHOTS / "37-desktop-strip-collapsed.png"], env)
+            print("  screenshot docs/screenshots/37-desktop-strip-collapsed.png")
+            # Stop: the strip goes; its place is saved; the next recording shows it there, collapsed.
+            n1 = len(events("meeting"))
+            run(["hyprctl", "dispatch", f'hl.dsp.exec_cmd("{APP} --meeting toggle")'], env)
+            wait(lambda: next((m for m in events("meeting")[n1:] if m["state"] == "done"), None), 120, "saved")
+            wait(lambda: win("lowkey-overlay") is None, 15, "the strip goes")
+            check(re.search(r"^overlay_at = \[", cfg.read_text(), re.M), "the place is saved when the strip goes")
+            n2 = len(events("meeting"))
+            run(["hyprctl", "dispatch", f'hl.dsp.exec_cmd("{APP} --meeting toggle")'], env)
+            s3 = wait(lambda: win("lowkey-overlay"), 15, "the strip again")
+            wait(lambda: next((m for m in events("meeting")[n2:] if m["state"] == "recording"), None), 30, "recording again")
+            time.sleep(0.5)
+            s3 = win("lowkey-overlay")
+            check(tuple(s3["size"]) == (150, 44) and abs(s3["at"][0] - s2["at"][0]) <= 3 and abs(s3["at"][1] - s2["at"][1]) <= 3,
+                  f"the next recording shows it collapsed where it was left ({s2['at']} / {s3['at']})")
+            # A click on the pill (no move) opens it again.
+            pointer(f"abs:{s3['at'][0] + 40},{s3['at'][1] + 22},{{W}},{{H}}", "sleep:150", "click")
+            s4 = wait(lambda: (w_ := win("lowkey-overlay")) and tuple(w_["size"]) == (380, 76) and w_, 5, "the strip opened")
+            wait(lambda: "overlay_collapsed = false" in cfg.read_text(), 5, "open state saved")
+            time.sleep(0.5)
+            check((hj("activewindow") or {}).get("address") == focus_before, f"a click on the pill opens the strip ({s4['at']}); no focus taken")
+            n3 = len(events("meeting"))
+            run(["hyprctl", "dispatch", f'hl.dsp.exec_cmd("{APP} --meeting toggle")'], env)
+            wait(lambda: next((m for m in events("meeting")[n3:] if m["state"] == "done"), None), 120, "saved again")
+            wait(lambda: win("lowkey-overlay") is None, 15, "the strip goes again")
+
         print(f"nested Hyprland {inst['wl_socket']} on {OUTPUT}; private runtime, config, data and D-Bus")
 
         # ---------------------------------------------------------------- start
@@ -336,6 +429,11 @@ esac
         else:
             check(len(b) == 2 and any(x["description"] == RUNTIME_DESC for x in b), "SUPER+CTRL+X added at runtime")
         check(win("lowkey-overlay") is None, "overlay hidden at start")
+        if "--strip-only" in sys.argv:  # a quick run: only the strip's move and collapse
+            if pointer_tool:
+                strip_step()
+            print("E2E STRIP OK")
+            return
         time.sleep(1.0)
         shot("09-desktop-main.png")
 
@@ -506,6 +604,10 @@ esac
                 try:
                     busctl("call", name, path, "com.canonical.dbusmenu", "Event", "isvu", str(tray_find(tray_menu(), *labels)["id"]), "clicked", "s", "", "0")
                     return
+                except StopIteration:  # read while the app built the menu again
+                    if attempt == 4:
+                        raise RuntimeError(f"no tray item {labels}: {tray_labels()}")
+                    time.sleep(0.3)
                 except RuntimeError as e:
                     if "does not refer to a menu item" not in str(e) or attempt == 4:
                         raise
@@ -951,6 +1053,8 @@ esac
         d3 = wait(lambda: (s := dict_state())["state"] in ("done", "error") and s, 60, "cold-start result")
         check(d3["state"] == "done" and "typed" in d3["delivered"], f"typed after a cold start: {d3['text']!r}")
         check(len(app_pids()) == 1, "one app process")
+        if pointer_tool:
+            strip_step()
         # The theme switch and Exit at the bottom of the side menu: a second launch opens the
         # window; Ctrl+, puts the focus on the section list, End goes to About; the switch and
         # Exit come after the page in the Tab order (after About's 4 links), never right after

@@ -18,6 +18,15 @@
       <span id="timer" class="timer" aria-hidden="true">0:00</span>
       <span id="preview" class="preview" aria-hidden="true"></span>
       <canvas id="mwave" class="mwave" aria-hidden="true"></canvas>
+      <!-- Collapsed: the dot and this short text (the time, or what it does) only. -->
+      <span id="mini" class="mini" aria-hidden="true"></span>
+      <!-- A meeting: mute your microphone for a while (the computer's sound goes on). -->
+      <button id="mute" class="mute" type="button" title="Mute your microphone" aria-label="Mute your microphone" aria-pressed="false">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3Zm0 0v4m-4 0h8M6 11a6 6 0 0 0 12 0" /><path class="slash" d="M4 4l16 16" /></svg>
+      </button>
+      <button id="collapse" class="collapse" type="button" title="Collapse (drag the strip to move it)" aria-label="Collapse the strip">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7" /></svg>
+      </button>
     </div>
     <script type="module" src="/src/overlay.ts"></script>
   </body>

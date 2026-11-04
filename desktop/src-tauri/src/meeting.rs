@@ -4,7 +4,7 @@
 //! leaves the computer, and no audio is kept.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc};
 use std::thread::JoinHandle;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
@@ -584,6 +584,8 @@ pub struct Live {
     pub pending: usize,
     /// Problems to show: no computer sound, the mic stopped, a piece failed.
     pub notices: Vec<String>,
+    /// Your microphone is muted (the strip's button): silence goes in its place.
+    pub muted: bool,
 }
 
 pub enum Event {
@@ -605,6 +607,8 @@ struct Inner {
     state: Mutex<&'static str>,
     notices: Mutex<Vec<String>>,
     levels: Mutex<([f32; 2], Instant)>,
+    /// The microphone is muted: its audio is replaced by silence (the clock goes on).
+    muted: AtomicBool,
     emit: EmitFn,
     saving: Mutex<()>,
 }
@@ -630,6 +634,11 @@ impl Inner {
             return;
         }
         let now = (self.clock.elapsed().as_secs_f64() * RATE as f64) as usize;
+        if who == Speaker::Me && self.muted.load(Ordering::SeqCst) {
+            // Muted: silence of the same length, so the times of later lines stay right.
+            self.feed(who, &vec![0.0; block.len()], now.saturating_sub(block.len()));
+            return;
+        }
         self.feed(who, block, now.saturating_sub(block.len()));
     }
 
@@ -645,6 +654,7 @@ impl Inner {
     }
 
     fn level(&self, who: Speaker, value: f32) {
+        let value = if who == Speaker::Me && self.muted.load(Ordering::SeqCst) { 0.0 } else { value };
         let mut lv = self.levels.lock();
         lv.0[who.index()] = value;
         if lv.1.elapsed().as_millis() >= 80 {
@@ -705,6 +715,7 @@ impl Inner {
             elapsed: self.elapsed(),
             pending: self.pending.load(Ordering::SeqCst),
             notices: self.notices.lock().clone(),
+            muted: self.muted.load(Ordering::SeqCst),
         }
     }
 
@@ -737,6 +748,7 @@ impl Session {
             state: Mutex::new("recording"),
             notices: Mutex::default(),
             levels: Mutex::new(([0.0; 2], Instant::now())),
+            muted: AtomicBool::new(false),
             emit,
             saving: Mutex::new(()),
         });
@@ -819,6 +831,13 @@ impl Session {
 
     pub fn live(&self) -> Live {
         self.inner.live()
+    }
+
+    /// Mute or unmute your microphone (the computer's sound goes on).
+    pub fn set_muted(&self, on: bool) {
+        if self.inner.muted.swap(on, Ordering::SeqCst) != on {
+            self.inner.changed();
+        }
     }
 
     pub fn meeting(&self) -> Meeting {

@@ -73,7 +73,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: transparent;
 .overlay[data-mode="meeting"][data-state="recording"] .dot { animation: rec 1.6s ease-in-out infinite; }
 .overlay[data-mode="meeting"][data-state="done"] .dot::after { background: #4ade80; }
 .overlay[data-mode="meeting"] .text { display: contents; }
-.overlay[data-mode="meeting"] .label { grid-column: 2; grid-row: 1; align-self: center; }
+.overlay[data-mode="meeting"] .label { grid-column: 2 / 5; grid-row: 1; align-self: center; }
 .overlay[data-mode="meeting"] .detail { grid-column: 2 / 5; grid-row: 2; display: block; color: #e4e4e7; }
 .overlay[data-mode="meeting"] #wave, .overlay[data-mode="meeting"] .timer, .overlay[data-mode="meeting"] .preview { display: none; }
 .overlay[data-mode="meeting"][data-state="recording"] .timer {
@@ -86,3 +86,53 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: transparent;
 .overlay[data-mode="meeting"][data-state="offer"] .dot::after { background: var(--them); }
 .overlay[data-mode="meeting"][data-state="offer"] .dot { animation: offer 1.4s ease-in-out infinite; }
 @keyframes offer { 50% { box-shadow: 0 0 0 5px rgba(34, 211, 238, 0.22); } }
+
+/* Move and collapse. The whole strip is a handle: drag it to move it (the app keeps where it
+   is). The button in the corner (on hover) collapses it to a small pill: the dot and the time,
+   or a short word. A click on the pill opens it again. */
+.overlay { position: relative; cursor: grab; user-select: none; -webkit-user-select: none; }
+.collapse {
+  position: absolute; top: 6px; right: 6px; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 6px;
+  display: grid; place-items: center; background: transparent; color: #a1a1aa; cursor: pointer;
+  opacity: 0; transition: opacity 0.12s;
+}
+.collapse svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.overlay:hover .collapse { opacity: 1; }
+.collapse:hover { background: rgba(255, 255, 255, 0.1); color: #f4f4f5; }
+.mini { display: none; }
+
+.overlay[data-collapsed="1"][data-collapsed] {
+  display: flex; align-items: center; justify-content: center; gap: 9px; padding: 0 14px; border-radius: 22px; cursor: pointer;
+}
+.overlay[data-collapsed="1"][data-collapsed] > :not(.dot):not(.mini) { display: none; }
+.overlay[data-collapsed="1"][data-collapsed] .dot { width: 24px; height: 24px; grid-row: auto; }
+.overlay[data-collapsed="1"][data-collapsed] .dot svg { width: 13px; height: 13px; }
+.overlay[data-collapsed="1"][data-collapsed][data-mode="meeting"] .dot::after { width: 10px; height: 10px; }
+.overlay[data-collapsed="1"][data-collapsed][data-state="transcribing"] .dot::before,
+.overlay[data-collapsed="1"][data-collapsed][data-state="starting"] .dot::before { inset: -2px; }
+.overlay[data-collapsed="1"][data-collapsed] .mini {
+  display: block; font-size: 0.85rem; font-weight: 600; white-space: nowrap; font-variant-numeric: tabular-nums;
+}
+
+/* Recording a meeting: no words in the first row, just the time, the wave and the mute button
+   (the collapse button keeps the top-right corner). */
+.overlay[data-mode="meeting"][data-state="recording"] { grid-template-columns: 40px auto 1fr 28px; padding-right: 36px; }
+.overlay[data-mode="meeting"][data-state="recording"] .label { display: none; }
+.overlay[data-mode="meeting"][data-state="recording"] .timer { grid-column: 2; }
+.overlay[data-mode="meeting"][data-state="recording"] .mwave { grid-column: 3; }
+.overlay[data-mode="meeting"][data-state="recording"] .detail { grid-column: 2 / 5; }
+.mute {
+  display: none; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 8px; place-items: center;
+  background: rgba(255, 255, 255, 0.06); color: #e4e4e7; cursor: pointer;
+}
+.mute svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.mute .slash { display: none; }
+.mute:hover { background: rgba(255, 255, 255, 0.12); }
+.overlay[data-mode="meeting"][data-state="recording"] .mute { display: grid; grid-column: 4; grid-row: 1; align-self: center; }
+/* Muted: the button is red with a slash; the row under it says so. */
+.overlay[data-muted="1"] .mute { background: rgba(248, 113, 113, 0.18); color: #fca5a5; }
+.overlay[data-muted="1"] .mute .slash { display: inline; }
+.muted-note { color: #fca5a5; font-weight: 600; }
+/* The pill keeps the mute button while a meeting records. */
+.overlay[data-collapsed="1"][data-collapsed][data-mode="meeting"][data-state="recording"] { padding: 0 8px 0 12px; gap: 8px; }
+.overlay[data-collapsed="1"][data-collapsed][data-mode="meeting"][data-state="recording"] .mute { display: grid; width: 26px; height: 26px; }

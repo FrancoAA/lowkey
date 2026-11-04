@@ -4,7 +4,7 @@ import { DualWaveform, Waveform } from "./waveform";
 /**
  * The strip at the bottom of the screen: what the dictation is doing, and while a meeting
  * records, the recording (time, levels, the newest line). The dictation goes first; the
- * meeting shows when no dictation runs. Display only.
+ * meeting shows when no dictation runs. Drag it to move it; its button collapses it to a pill.
  */
 interface DictationState {
   state: "idle" | "starting" | "listening" | "transcribing" | "done" | "error";
@@ -19,6 +19,9 @@ interface DictationState {
 }
 
 const root = document.getElementById("overlay")!;
+const mini = document.getElementById("mini")!;
+const collapseBtn = document.getElementById("collapse") as HTMLButtonElement;
+const muteBtn = document.getElementById("mute") as HTMLButtonElement;
 const label = document.getElementById("label")!;
 const detail = document.getElementById("detail")!;
 const timer = document.getElementById("timer")!;
@@ -32,6 +35,8 @@ interface MeetingLive {
   state: "recording" | "finishing" | "done";
   elapsed: number;
   pending: number;
+  /** Your microphone is muted (silence goes in its place). */
+  muted?: boolean;
 }
 
 /** Me above the line, Them below, in their colours (overlay.css --me / --them). */
@@ -102,7 +107,100 @@ function show(): void {
   const now = performance.now();
   if (!dictationShows(now) && meetingShows(now)) renderMeeting(now);
   else render(dict ?? { state: "idle", level: 0, text: "", error: null, detail: "", delivered: [], elapsed: 0 });
+  renderMini();
 }
+
+/** The pill's text: the time while it records, else one word for what it does. */
+function renderMini(): void {
+  const state = root.dataset.state ?? "";
+  const meeting = root.dataset.mode === "meeting";
+  const words: Record<string, string> = {
+    starting: "Starting",
+    transcribing: meeting ? "Saving" : "",
+    done: meeting ? "Saved" : label.textContent?.startsWith("Typed") ? "Typed" : "Copied",
+    error: "Error",
+    offer: "Call",
+  };
+  mini.textContent = state === "listening" || state === "recording" ? timer.textContent ?? "" : words[state] ?? "Ready";
+  mini.style.color = state === "recording" ? "#f4f4f5" : state === "error" ? "#fca5a5" : "";
+}
+
+// ------------------------------------------------------------------ move and collapse
+let collapsed = false;
+function setCollapsed(on: boolean): void {
+  collapsed = on;
+  root.dataset.collapsed = on ? "1" : "";
+  root.title = on ? "Click to open · drag to move" : "";
+}
+
+async function askCollapse(on: boolean): Promise<void> {
+  setCollapsed(on);
+  const { invoke } = await import("@tauri-apps/api/core");
+  await invoke("overlay_collapse", { collapsed: on });
+}
+
+/** The mute button: its look and its words follow the meeting (the app says when it changed). */
+function renderMute(muted: boolean): void {
+  root.dataset.muted = muted ? "1" : "";
+  muteBtn.setAttribute("aria-pressed", String(muted));
+  const what = muted ? "Unmute your microphone" : "Mute your microphone";
+  muteBtn.title = what;
+  muteBtn.setAttribute("aria-label", what);
+}
+
+muteBtn.addEventListener("click", (e) => {
+  e.stopPropagation();
+  const on = !meet?.muted;
+  if (meet) meet.muted = on;
+  renderMute(on);
+  show();
+  void call("meeting_mute", { muted: on }).catch(() => {
+    if (meet) meet.muted = !on;
+    show();
+  });
+  void call("overlay_unfocus"); // after the click (see the collapse button)
+});
+
+collapseBtn.addEventListener("click", (e) => {
+  e.stopPropagation();
+  void askCollapse(true);
+  // Hyprland focused the strip on the press: back to the app you type in (only now: given
+  // back on the press, the click would be cancelled).
+  void call("overlay_unfocus");
+});
+
+// Drag: on Hyprland the app moves the strip with the pointer while the button is down (and
+// gives the focus straight back to the app you type in: Hyprland focuses a clicked window).
+// Elsewhere the system drags it (the window never takes the focus). A press that does not
+// move is a click: on the pill, it opens the strip again.
+let press: { x: number; y: number; appDrag: Promise<boolean> } | null = null;
+async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke<T>(cmd, args);
+}
+root.addEventListener("pointerdown", (e) => {
+  if (e.button !== 0) return;
+  if ((e.target as Element).closest("#collapse, #mute")) return; // their clicks (above)
+  press = { x: e.screenX, y: e.screenY, appDrag: call<boolean>("overlay_drag_start").catch(() => false) };
+});
+root.addEventListener("pointermove", (e) => {
+  const p = press;
+  if (!p || !(e.buttons & 1) || Math.hypot(e.screenX - p.x, e.screenY - p.y) < 4) return;
+  void p.appDrag.then((appDrag) => {
+    if (appDrag || press !== p) return;
+    press = null; // the system drags it: no "up" comes back to the page
+    void import("@tauri-apps/api/window").then(({ getCurrentWindow }) => getCurrentWindow().startDragging());
+  });
+});
+async function release(): Promise<void> {
+  const p = press;
+  press = null;
+  if (!p) return;
+  const moved = (await p.appDrag) ? await call<boolean>("overlay_drag_end") : false;
+  if (!moved && collapsed) void askCollapse(false);
+}
+root.addEventListener("pointerup", () => void release());
+root.addEventListener("pointercancel", () => void release());
 
 /** "Them  … the newest words": the speaker always shows (in its colour), older words are cut. */
 function speakerLine(who: "me" | "them", text: string): void {
@@ -140,11 +238,17 @@ function renderMeeting(now: number): void {
   const elapsed = m.state === "recording" ? m.elapsed + (now - meetAt) / 1000 : m.elapsed;
   root.dataset.state = m.state === "recording" ? "recording" : m.state === "finishing" ? "transcribing" : "done";
   const last = m.meeting.lines[m.meeting.lines.length - 1];
+  renderMute(m.state === "recording" && !!m.muted);
   if (m.state === "recording") {
-    label.textContent = "Recording";
+    label.textContent = ""; // the time, the wave and the mute button say it (no "Recording")
     timer.textContent = clock(elapsed * 1000); // aria-hidden: no announcement every second
     const stop = meetingKey ? ` · ${prettyKey(meetingKey)} stops` : "";
-    if (note?.state === "ended") detail.textContent = `The ${note.label} call ended${note.key ? ` · ${prettyKey(note.key)} stops` : ""}`;
+    if (m.muted) {
+      const tag = document.createElement("span");
+      tag.className = "muted-note";
+      tag.textContent = "Mic muted";
+      detail.replaceChildren(tag, m.meeting.system_audio ? " · only the computer's sound is recorded" : "");
+    } else if (note?.state === "ended") detail.textContent = `The ${note.label} call ended${note.key ? ` · ${prettyKey(note.key)} stops` : ""}`;
     else if (note?.state === "auto") detail.textContent = `Started automatically · ${note.label} call`;
     else if (last) speakerLine(last.speaker, last.text);
     else detail.textContent = `${m.meeting.system_audio ? "Your mic and the computer's sound" : "Your mic only"}${stop}`;
@@ -159,6 +263,7 @@ function renderMeeting(now: number): void {
 
 function render(d: DictationState): void {
   if (root.dataset.mode === "meeting") mwave.stop();
+  renderMute(false);
   delete root.dataset.mode;
   level = d.level;
   if (d.state !== current) {
@@ -185,7 +290,7 @@ function render(d: DictationState): void {
       detail.textContent = d.detail;
       break;
     case "transcribing":
-      label.textContent = "Transcribing…";
+      label.textContent = ""; // the spinning ring says it
       detail.textContent = d.detail; // e.g. "Still transcribing the last one", download progress
       break;
     case "done":
@@ -238,11 +343,14 @@ void (async () => {
     mwave.levels = e.payload;
   });
   await listen<{ meeting_key?: string }>("status", (e) => (meetingKey = e.payload.meeting_key ?? meetingKey));
+  await listen<{ collapsed: boolean }>("overlay-place", (e) => setCollapsed(e.payload.collapsed));
   // The clock, and the moment after "done" / "saved" when the view changes.
   window.setInterval(() => {
     if (meet || dict) show();
   }, 500);
-  meetingKey = (await invoke<{ meeting_key?: string }>("get_status")).meeting_key ?? "";
+  const st = await invoke<{ meeting_key?: string; overlay_collapsed?: boolean }>("get_status");
+  meetingKey = st.meeting_key ?? "";
+  setCollapsed(!!st.overlay_collapsed);
   const live = await invoke<MeetingLive | null>("meeting_live");
   if (live) {
     meet = live;

@@ -156,6 +156,8 @@ export interface MeetingLive {
   elapsed: number;
   pending: number;
   notices: string[];
+  /** Your microphone is muted (the strip's button): silence goes in its place. */
+  muted?: boolean;
 }
 
 export interface MeetingSummary {

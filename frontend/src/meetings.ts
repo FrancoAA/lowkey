@@ -226,7 +226,8 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): void {
     if (!shown) return;
     if (isLive() && live) {
       const elapsed = live.state === "recording" ? live.elapsed + (performance.now() - liveAt) / 1000 : live.elapsed;
-      const sources = live.meeting.system_audio ? "your microphone and the computer's sound" : "your microphone only";
+      const mic = live.muted ? "your microphone (muted)" : "your microphone";
+      const sources = live.meeting.system_audio ? `${mic} and the computer's sound` : `${mic} only`;
       meta.dataset.live = live.state;
       meta.textContent = live.state === "finishing" ? "Saving: transcribing the last seconds…" : `${when(live.meeting.started_at)} · ${sources}`;
       liveClock.textContent = clock(elapsed);

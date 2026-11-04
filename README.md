@@ -108,6 +108,15 @@ The global key is **<kbd>Super</kbd>+<kbd>Ctrl</kbd>+<kbd>X</kbd>** on Linux and
   ready. Keep holding the key for push-to-talk, or let go and tap it again to finish.
 - While a dictation is still being transcribed, a new press shows "Still transcribing".
   Dictation goes ahead of files in the queue.
+- **Move or collapse the strip** (the dictation and the meeting recording use the same one):
+  drag it anywhere on the screen. The button in its top-right corner (it shows when the
+  pointer is on the strip) makes it a small pill with the dot and the time. A click on the pill
+  opens it again. The app keeps the place and the size for the next time
+  (`overlay_at`, `overlay_collapsed` in the settings). While a meeting records, the strip
+  shows the time, the wave and a **microphone button**: it mutes your microphone (silence is
+  recorded in its place; the computer's sound goes on) until you click it again. The strip never keeps the keyboard focus:
+  on Hyprland a click focuses a window, so the app gives the focus back to your app at once
+  (during a drag, when you let go).
 
 ![Overlay with live preview](docs/screenshots/18-desktop-overlay-live-preview.png)
 ![Text typed into the focused app](docs/screenshots/14-desktop-text-typed.png)
@@ -171,7 +180,8 @@ Record a call or a talk, as text next to your notes (Linux for now). No bot join
   starts a recording from any app, and stops it. On Hyprland (or with your own desktop bind)
   it also starts the app when it is closed; on X11, macOS and Windows the app must run. A
   strip at the bottom of the screen shows the time, a two-colour wave (Me light grey, Them steel blue) and the newest line,
-  and "saved" at the end. It never takes the keyboard focus.
+  and "saved" at the end. It never keeps the keyboard focus; drag it to move it, or collapse it
+  to a pill (see above).
 - **Record** (in the window, next to the search field) does the same, and so does the tray menu. It records two sources: your microphone (**Me**) and the computer's sound
   (**Them**: the others in Zoom, Meet, Teams…, through PipeWire or PulseAudio).
 - The text comes a few seconds after someone speaks: each source is cut at pauses (4–20 s
@@ -289,6 +299,8 @@ ai_builtin_model = "qwen3.5-4b" # qwen3.5-4b (recommended) | qwen3.5-2b | gemma-
 ai_url = "http://localhost:11434/v1"   # own server (OpenAI-compatible); ai_model, ai_key too
 ai_auto = true                  # write AI notes when a meeting stops
 live_preview = true             # words in the overlay while you talk
+overlay_collapsed = false       # the strip as a small pill (its corner button; a click opens it)
+# overlay_at = [0.5, 0.9]       # where you left the strip (fractions of the screen's free room)
 preview_engine = "auto"         # auto (Parakeet when on disk, else Whistle) | whistle | parakeet
 ```
 
