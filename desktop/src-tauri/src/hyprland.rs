@@ -1,9 +1,12 @@
 //! Hyprland integration (Lua config, Hyprland 0.56+): the global key and the overlay window rule.
 //!
 //! Only API calls verified safe on a live session are used here: `hl.bind`, `hl.unbind`,
-//! `hl.window_rule` + `set_enabled`, `hyprctl reload`. (`Keybind:remove()` aborts Hyprland
-//! 0.56.2.) Binds are added to the running Hyprland and re-added after a config reload. One
-//! config edit exists, and only on the user's click in Options: removing the marked
+//! `hl.window_rule` + `set_enabled`, `hyprctl reload`; for the strip, `hl.dispatch` with
+//! `hl.dsp.focus` / `hl.dsp.window.move` / `hl.dsp.window.resize`, and `hl.config` for one
+//! runtime option (cursor.no_warps, on for the moment of a focus change and set back at once;
+//! tested in a nested Hyprland). (`Keybind:remove()` aborts Hyprland 0.56.2.) Binds are added to
+//! the running Hyprland and re-added after a config reload. One config file edit exists, and
+//! only on the user's click in Options: removing the marked
 //! `lowkey.dictation` block (or the older `open-whisper.dictation` one), with a backup, so the app can manage the key.
 
 #[cfg(unix)]
@@ -255,6 +258,17 @@ pub fn cursor_pos() -> Option<(f64, f64)> {
     Some((v["x"].as_f64()?, v["y"].as_f64()?))
 }
 
+/// The cursor is on the strip (None: not Hyprland, or no strip). The app asks Hyprland: the
+/// strip's page gets no "pointer left" when the pointer leaves its window (WebKitGTK).
+pub fn cursor_on_overlay() -> Option<bool> {
+    let g = overlay_geometry()?;
+    Some(inside(&g, cursor_pos()?))
+}
+
+pub fn inside(g: &OverlayGeometry, (x, y): (f64, f64)) -> bool {
+    x >= g.at.0 && x < g.at.0 + g.size.0 && y >= g.at.1 && y < g.at.1 + g.size.1
+}
+
 /// Put a window's top-left at x, y (layout px).
 pub fn move_window(address: u64, x: i64, y: i64) -> bool {
     let lua = format!("hl.dsp.window.move({{ x = {x}, y = {y}, window = {} }})", lua_str(&format!("address:0x{address:x}")));
@@ -332,7 +346,40 @@ pub fn focus_back_from_overlay() {
         .filter(|c| c["title"] != OVERLAY_TITLE && c["mapped"] != false && c["hidden"] != true && c["focusHistoryID"].as_i64().unwrap_or(-1) >= 0)
         .min_by_key(|c| c["focusHistoryID"].as_i64().unwrap_or(i64::MAX));
     if let Some(addr) = prev.and_then(|c| c["address"].as_str()) {
-        let _ = hyprctl(&["dispatch", &format!("hl.dsp.focus({{ window = {} }})", lua_str(&format!("address:{addr}")))]);
+        focus_without_warp(addr);
+    }
+}
+
+fn focus_without_warp(addr: &str) {
+    let no_warps = serde_json::from_str::<Value>(&hyprctl(&["getoption", "cursor:no_warps", "-j"])).ok().and_then(|v| v["bool"].as_bool());
+    let _ = eval(&focus_back_lua(addr, no_warps.unwrap_or(true)));
+}
+
+/// Focus this app's window titled `title` (an activation request is ignored unless
+/// misc:focus_on_activate). Returns false when there is no such window.
+pub fn focus_own_window(title: &str) -> bool {
+    if !running() {
+        return false;
+    }
+    let Ok(clients) = serde_json::from_str::<Value>(&hyprctl(&["clients", "-j"])) else { return false };
+    let me = std::process::id() as u64;
+    let Some(addr) = clients.as_array().into_iter().flatten().find(|c| c["pid"].as_u64() == Some(me) && c["title"] == title).and_then(|c| c["address"].as_str()) else {
+        return false;
+    };
+    focus_without_warp(addr);
+    true
+}
+
+/// Focus `addr`. Hyprland moves the cursor to the middle of a window that a dispatcher focuses
+/// (unless cursor:no_warps): off for that moment, in one request, so the cursor stays on the
+/// strip where the user left it.
+fn focus_back_lua(addr: &str, no_warps: bool) -> String {
+    let focus = format!("hl.dispatch(hl.dsp.focus({{ window = {} }}))", lua_str(&format!("address:{addr}")));
+    if no_warps {
+        focus
+    } else {
+        // pcall: a window gone meanwhile never leaves no_warps on in the user's session.
+        format!("hl.config({{ cursor = {{ no_warps = true }} }}) pcall(function() {focus} end) hl.config({{ cursor = {{ no_warps = false }} }})")
     }
 }
 
@@ -937,6 +984,22 @@ mod tests {
         assert_eq!(lua_str("a\"b\\c"), "\"a\\\"b\\\\c\"");
         assert_eq!(lua_str("Año/ñ"), "\"Año/ñ\"");
         assert_eq!(lua_str("x\ny"), "\"x\\010y\"");
+    }
+
+    #[test]
+    fn focus_back_never_moves_the_cursor() {
+        assert_eq!(
+            focus_back_lua("0x55", false),
+            "hl.config({ cursor = { no_warps = true } }) pcall(function() hl.dispatch(hl.dsp.focus({ window = \"address:0x55\" })) end) hl.config({ cursor = { no_warps = false } })"
+        );
+        assert_eq!(focus_back_lua("0x55", true), "hl.dispatch(hl.dsp.focus({ window = \"address:0x55\" }))");
+    }
+
+    #[test]
+    fn the_cursor_is_on_the_strip_inside_its_rectangle() {
+        let g = OverlayGeometry { address: 1, at: (450.0, 650.0), size: (380.0, 76.0), monitor_at: (0.0, 0.0), monitor_size: (1280.0, 800.0) };
+        assert!(inside(&g, (450.0, 650.0)) && inside(&g, (829.0, 725.0)));
+        assert!(!inside(&g, (830.0, 700.0)) && !inside(&g, (500.0, 726.0)) && !inside(&g, (5.0, 5.0)));
     }
 
     #[test]

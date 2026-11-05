@@ -69,6 +69,16 @@ pub struct Meeting {
     pub ai_at: u64,
     /// Questions about the meeting and the model's answers (Ask about this meeting), oldest first.
     pub chat: Vec<ChatMessage>,
+    /// Settings → Note apps: the file it was saved as (in the chosen folder), and the hash of
+    /// what was written (a file that differs from it was edited outside: never overwritten).
+    pub export_file: String,
+    pub export_hash: String,
+    /// The folder it was saved in (another folder chosen later: a new note there).
+    pub export_dir: String,
+    /// One more for each fix of the transcript by the user; `ai_version`: the version the AI
+    /// notes were written from (lower: they can be written again for the fixed text).
+    pub transcript_version: u64,
+    pub ai_version: u64,
 }
 
 /// One chat message: a question by "user" or an answer by "assistant".
@@ -528,6 +538,27 @@ pub fn duration_text(seconds: f64) -> String {
     }
 }
 
+/// A paragraph fixed by the user: lines `from..=to` (one paragraph as the page shows it, see
+/// `paragraphs`) become one line with `text`, said by `speaker`; its start and end stay. Empty
+/// text removes the paragraph. `before`: its text as the page showed it (the meeting changed
+/// meanwhile: nothing is changed).
+pub fn edit_paragraph(m: &mut Meeting, from: usize, to: usize, before: &str, text: &str, speaker: Speaker) -> anyhow::Result<()> {
+    let stale = "The transcript changed meanwhile: open the meeting again.";
+    anyhow::ensure!(from <= to && to < m.lines.len(), stale);
+    let shown = m.lines[from..=to].iter().map(|l| l.text.as_str()).collect::<Vec<_>>().join(" ");
+    anyhow::ensure!(shown == before, stale);
+    let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let end = m.lines[from..=to].iter().map(|l| l.end).fold(m.lines[from].end, f64::max);
+    if text.is_empty() {
+        m.lines.drain(from..=to);
+    } else {
+        m.lines[from] = Line { speaker, start: m.lines[from].start, end, text };
+        m.lines.drain(from + 1..=to);
+    }
+    m.transcript_version += 1;
+    Ok(())
+}
+
 /// What the language model reads: the title, your notes and the transcript (no AI notes).
 /// No date: the app may not know the time zone here, and a wrong date would end up in the notes.
 pub fn model_input(m: &Meeting) -> String {
@@ -544,6 +575,11 @@ pub fn chat_input(m: &Meeting) -> String {
 
 pub fn to_markdown(m: &Meeting, offset_min: i32) -> String {
     markdown(m, &format!("{} · {}", local_time(m.started_at, offset_min), duration_text(m.duration)), Parts::ALL)
+}
+
+/// The chosen parts, with the start in local time (`offset_min` east of UTC): a note app's file.
+pub fn to_markdown_parts(m: &Meeting, offset_min: i32, parts: Parts) -> String {
+    markdown(m, &format!("{} · {}", local_time(m.started_at, offset_min), duration_text(m.duration)), parts)
 }
 
 /// The parts of a meeting in a Markdown copy (the title and the time are always there).
@@ -929,6 +965,25 @@ impl Session {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_paragraph_is_fixed_in_place() {
+        let l = |speaker, start: f64, text: &str| Line { speaker, start, end: start + 1.5, text: text.into() };
+        let mut m = Meeting {
+            lines: vec![l(Speaker::Me, 0.0, "Hello"), l(Speaker::Me, 1.6, "from Lisando."), l(Speaker::Them, 5.0, "Hi.")],
+            ..Default::default()
+        };
+        assert!(edit_paragraph(&mut m, 0, 1, "Hello from Lisando!", "x", Speaker::Me).is_err(), "changed meanwhile");
+        assert!(edit_paragraph(&mut m, 0, 5, "", "x", Speaker::Me).is_err());
+        edit_paragraph(&mut m, 0, 1, "Hello from Lisando.", "Hello  from\nLisandro.", Speaker::Me).unwrap();
+        assert_eq!(m.lines[0], Line { speaker: Speaker::Me, start: 0.0, end: 3.1, text: "Hello from Lisandro.".into() });
+        assert_eq!(m.lines.len(), 2);
+        edit_paragraph(&mut m, 1, 1, "Hi.", "Hi.", Speaker::Me).unwrap();
+        assert_eq!(m.lines[1].speaker, Speaker::Me, "an echo moved to the right side");
+        edit_paragraph(&mut m, 1, 1, "Hi.", "  ", Speaker::Me).unwrap();
+        assert_eq!(m.lines.len(), 1, "an empty paragraph is removed");
+        assert_eq!(m.transcript_version, 3, "one more for each fix");
+    }
 
     const R: usize = RATE as usize;
 

@@ -2,7 +2,8 @@
 
 The nested Hyprland sits on a temporary headless output of your session; it and the app get
 their own XDG_RUNTIME_DIR, XDG_STATE_HOME, XDG_CONFIG_HOME, XDG_DATA_HOME and a private D-Bus
-session bus, so nothing reaches your desktop, your config or your notifications.
+session bus that starts no services (no portals), so nothing reaches your desktop, your config
+or your notifications.
 
 The app runs with three test seams: OPENWHISPER_FAKE_MIC (a speech file instead of the mic),
 OPENWHISPER_FAKE_SYSTEM (another speech file instead of the computer's sound, for Meetings) and
@@ -48,6 +49,21 @@ SPEECH = ROOT / "tests" / "fixtures" / "hello.ogg"
 # JFK's inaugural address (1961, public domain), 11 s.
 THEM_SPEECH = ROOT / "tests" / "fixtures" / "jfk.ogg"
 OUTPUT = "OWDESK"
+# The test's private D-Bus: no service files, so nothing starts on demand. With the usual session
+# config, every run started xdg-desktop-portal-hyprland, which crashed when the nested Hyprland
+# ended, and each crash was announced in your session.
+BUS_CONFIG = """<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
+<busconfig>
+  <type>session</type>
+  <listen>unix:path={path}</listen>
+  <policy context="default">
+    <allow send_destination="*" eavesdrop="true"/>
+    <allow eavesdrop="true"/>
+    <allow own="*"/>
+  </policy>
+</busconfig>
+"""
 BENCH_MODELS = ROOT / "bench" / ".work" / "ggml"
 # Live preview engine + model. Filled after the first run that downloads them (17 MB);
 # later runs link them, so they work offline like the ggml models above.
@@ -66,7 +82,9 @@ NESTED_CONFIG = """
 hl.monitor({ output = "", mode = "preferred", position = "auto", scale = 1 })
 -- A taken key: Options must refuse it for the dictation key.
 hl.bind("SUPER + ALT + Q", hl.dsp.exec_cmd("true"), { description = "e2e: a taken key" })
-hl.config({ misc = { disable_hyprland_logo = true, disable_splash_rendering = true, disable_watchdog_warning = true },
+-- No "not responding" dialog: hyprland-dialog crashed in a run, and that was announced too.
+hl.config({ misc = { disable_hyprland_logo = true, disable_splash_rendering = true, disable_watchdog_warning = true,
+                     enable_anr_dialog = false },
             ecosystem = { no_donation_nag = true }, decoration = { rounding = 12 },
             -- The focus stays where the test puts it, wherever the pointer is.
             input = { follow_mouse = 0 } })
@@ -181,7 +199,8 @@ esac
     pactl.chmod(0o755)
     log = tmp / "events.jsonl"
     typed = tmp / "typed.txt"
-    bus = subprocess.Popen(["dbus-daemon", "--session", "--nofork", "--print-address=1", f"--address=unix:path={runtime}/bus"],
+    (tmp / "bus.conf").write_text(BUS_CONFIG.format(path=runtime / "bus"))
+    bus = subprocess.Popen(["dbus-daemon", f"--config-file={tmp / 'bus.conf'}", "--nofork", "--print-address=1"],
                            stdout=subprocess.PIPE, text=True)
     bus_addr = bus.stdout.readline().strip()
 
@@ -193,6 +212,9 @@ esac
         "XDG_DATA_HOME": str(tmp / "data"),
         "WAYLAND_DISPLAY": str(Path(outer_runtime) / outer_display),
         "DBUS_SESSION_BUS_ADDRESS": bus_addr,
+        # The nested Hyprland tries the real screens first: libseat may only try seatd (there is
+        # none), never logind, which it asked for control of your seat in every run (refused).
+        "LIBSEAT_BACKEND": "seatd",
         "OPENWHISPER_FAKE_MIC": str(mic),
         "OPENWHISPER_FAKE_SYSTEM": str(them),  # never your real sound
         "OPENWHISPER_PACTL": str(pactl),
@@ -331,12 +353,23 @@ esac
             time.sleep(0.5)
             check((hj("activewindow") or {}).get("address") == focus_before,
                   f"dragging the strip moves it ({s0['at']} -> {s1['at']}); the focus stays on the app")
+            # The focus goes back to the app; Hyprland would put the cursor in its middle.
+            cx, cy = (float(v) for v in run(["hyprctl", "cursorpos"], env).split(","))
+            check(abs(cx - (x + 60 - 300)) <= 3 and abs(cy - (y + 38 - 200)) <= 3,
+                  f"the cursor stays where the drag left it ({cx:.0f}, {cy:.0f})")
+            check(hj("getoption", "cursor:no_warps").get("bool") is False, "cursor:no_warps is as it was (off) after the focus went back")
             # Mute: the microphone button (first row, right): silence goes in its place, the
             # computer's sound goes on; the strip says so. Then unmute.
             (x1, y1) = s1["at"]
             n_m = len(events("meeting"))
             pointer(f"abs:{x1 + 330},{y1 + 27},{{W}},{{H}}", "sleep:250", "click")
-            wait(lambda: any(m.get("muted") for m in events("meeting")[n_m:]), 5, "muted")
+            try:
+                wait(lambda: any(m.get("muted") for m in events("meeting")[n_m:]), 5, "muted")
+            except AssertionError:  # what the strip showed (for the log)
+                run(["grim", "-g", f"{x1},{y1} 380x76", tmp / "strip-not-muted.png"], env, check=False)
+                print(f"  strip at {win('lowkey-overlay')}; cursor {run(['hyprctl', 'cursorpos'], env, check=False).strip()}; "
+                      f"active {(hj('activewindow') or {}).get('title')}; screenshot {tmp / 'strip-not-muted.png'}")
+                raise
             time.sleep(0.8)
             check((hj("activewindow") or {}).get("address") == focus_before, "the mute button mutes your microphone; no focus taken")
             run(["grim", "-g", f"{x1 - 20},{y1 - 20} 420x116", SHOTS / "38-desktop-strip-muted.png"], env)
@@ -356,6 +389,8 @@ esac
             run(["grim", "-g", f"{int(s2['at'][0]) - 40},{int(s2['at'][1]) - 30} 212x104", SHOTS / "37-desktop-strip-collapsed.png"], env)
             print("  screenshot docs/screenshots/37-desktop-strip-collapsed.png")
             # Stop: the strip goes; its place is saved; the next recording shows it there, collapsed.
+            # (The pointer first leaves it: a saved strip stays while the pointer is on it.)
+            pointer(f"abs:5,5,{{W}},{{H}}")
             n1 = len(events("meeting"))
             run(["hyprctl", "dispatch", f'hl.dsp.exec_cmd("{APP} --meeting toggle")'], env)
             wait(lambda: next((m for m in events("meeting")[n1:] if m["state"] == "done"), None), 120, "saved")
@@ -376,9 +411,33 @@ esac
             time.sleep(0.5)
             check((hj("activewindow") or {}).get("address") == focus_before, f"a click on the pill opens the strip ({s4['at']}); no focus taken")
             n3 = len(events("meeting"))
+            # The pointer rests on the strip: a saved strip stays while it does.
+            pointer(f"abs:{s4['at'][0] + 60},{s4['at'][1] + 38},{{W}},{{H}}")
             run(["hyprctl", "dispatch", f'hl.dsp.exec_cmd("{APP} --meeting toggle")'], env)
-            wait(lambda: next((m for m in events("meeting")[n3:] if m["state"] == "done"), None), 120, "saved again")
-            wait(lambda: win("lowkey-overlay") is None, 15, "the strip goes again")
+            saved = wait(lambda: next((m for m in events("meeting")[n3:] if m["state"] == "done"), None), 120, "saved again")
+            time.sleep(10)
+            s5 = win("lowkey-overlay")
+            check(s5 is not None, "the saved strip stays while the pointer is on it (10 s; else 8 s)")
+            # "Open the notes" on the saved strip: found by its colour (#93c5fd), then clicked.
+            (lx, ly), (lw, lh) = s5["at"], s5["size"]
+            png = tmp / "saved.png"
+            run(["grim", "-g", f"{lx},{ly} {lw}x{lh}", png], env)
+            shutil.copy(png, SHOTS / "39-desktop-strip-open-notes.png")
+            print("  screenshot docs/screenshots/39-desktop-strip-open-notes.png")
+            raw = subprocess.run(["ffmpeg", "-loglevel", "error", "-i", str(png), "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+                                 capture_output=True, check=True).stdout
+            blue = [(i // 3 % lw, i // 3 // lw) for i in range(0, len(raw) - 2, 3)
+                    if raw[i] < 190 and raw[i + 1] > 170 and raw[i + 2] > 235 and raw[i + 2] - raw[i] > 60]
+            check(len(blue) > 30, f"the saved strip shows the link Open the notes ({len(blue)} link pixels)")
+            bx = sorted(p[0] for p in blue)[len(blue) // 2]
+            by = sorted(p[1] for p in blue)[len(blue) // 2]
+            n4 = len(events("open-meeting"))
+            pointer(f"abs:{lx + bx},{ly + by},{{W}},{{H}}", "sleep:250", "click")
+            opened = wait(lambda: events("open-meeting")[n4:], 5, "open-meeting")
+            check(opened[0] == saved["meeting"]["id"], f"a click on Open the notes opens that meeting ({opened[0]})")
+            wait(lambda: win("lowkey-overlay") is None, 5, "the strip goes after the click")
+            wait(lambda: (hj("activewindow") or {}).get("title") == "Lowkey", 5, "the window in front")
+            print("  ok  the strip closed and the window came to the front")
 
         print(f"nested Hyprland {inst['wl_socket']} on {OUTPUT}; private runtime, config, data and D-Bus")
 
@@ -395,8 +454,12 @@ esac
         # AI notes after Stop only with the cached model: the test never downloads 2.7 GB.
         ai_auto = "true" if (models / "llm").is_dir() else "false"
         # A vocabulary term: "open whisper" (as Whisper hears it) must come out as "OpenWhisper".
+        # Note apps: a folder in an Obsidian vault (a .obsidian folder makes it one).
+        vault_notes = tmp / "vault" / "Meetings"
+        vault_notes.mkdir(parents=True)
+        (tmp / "vault" / ".obsidian").mkdir()
         (tmp / "config" / "open-whisper" / "config.toml").write_text(
-            f'idle_unload_minutes = 5\npreview_engine = "{PREVIEW}"\nai_auto = {ai_auto}\n\n'
+            f'idle_unload_minutes = 5\npreview_engine = "{PREVIEW}"\nai_auto = {ai_auto}\nexport_dir = "{vault_notes}"\n\n'
             '[[vocabulary]]\nterm = "OpenWhisper"\nsounds_like = ["open whisper", "Open Wish"]\n')
         app = subprocess.Popen([APP], env=env, stdout=open(tmp / "app.log", "w"), stderr=subprocess.STDOUT)
         main_win = wait(lambda: win("Lowkey"), 30, "main window")
@@ -430,6 +493,22 @@ esac
             check(len(b) == 2 and any(x["description"] == RUNTIME_DESC for x in b), "SUPER+CTRL+X added at runtime")
         check(win("lowkey-overlay") is None, "overlay hidden at start")
         if "--strip-only" in sys.argv:  # a quick run: only the strip's move and collapse
+            # As in the full run (and in use): another app has the focus, a terminal.
+            subprocess.Popen(["foot", "--app-id=ow-e2e-target", "sh", "-c", "cat > /dev/null"], env=env,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            focus(wait(lambda: next((c for c in hj("clients") if c["class"] == "ow-e2e-target"), None), 10, "terminal")["address"])
+            # As usual in use (and in the full run): the app started in the background by a key,
+            # no window shown yet; the meeting starts right after a dictation (the strip shows
+            # the meeting, not the dictation's "Typed" message, so its mute button is there).
+            key("quit")
+            wait(lambda: not app_pids(), 20, "the app quit")
+            n = len(events("dictation"))
+            key("press")
+            wait(lambda: any(d["state"] == "listening" for d in events("dictation")[n:]), 120, "listening after a cold start")
+            time.sleep(3)
+            key("release")
+            wait(lambda: any(d["state"] in ("done", "error") for d in events("dictation")[n:]), 60, "the cold start's dictation")
+            check(win("Lowkey") is None, "a cold start by the key: no window shown")
             if pointer_tool:
                 strip_step()
             print("E2E STRIP OK")
@@ -837,6 +916,15 @@ esac
         time.sleep(0.6)
         shot("28-desktop-settings-ai-notes.png")
         press_key("Escape")
+        # Settings → Note apps (General, Models, Shortcuts, Live preview, Note apps): the folder in a vault.
+        for st in ("down", "up"):
+            run(["hyprctl", "dispatch", f'hl.dsp.send_key_state({{ mods = "CTRL", key = "comma", state = "{st}" }})'], env)
+            time.sleep(0.05)
+        for _ in range(4):
+            press_key("Down")
+        time.sleep(0.6)
+        shot("40-desktop-settings-note-apps.png")
+        press_key("Escape")
 
         # ---------------------------------------------------------------- Meetings
         def ctrl_key(k: str) -> None:
@@ -882,6 +970,12 @@ esac
         check(oct(meetings_dir.stat().st_mode & 0o777) == "0o700", "the meetings folder is private (0700)")
         time.sleep(1.0)
         shot("22-desktop-meeting-saved.png")
+        # Note apps: saved as Markdown in the vault's folder by itself.
+        ex = wait(lambda: next((e for e in events("meeting-export") if e["id"] == mid and e["state"] in ("saved", "error")), None), 20, "saved to the folder")
+        note = vault_notes / ex["file"]
+        check(ex["state"] == "saved" and note.is_file() and note.read_text().startswith("---\ntitle: ")
+              and f"lowkey_id: {mid}\n" in note.read_text() and "## Transcript" in note.read_text(),
+              f"the meeting is saved as a Markdown note in the folder: {ex['file']}")
 
         # ---------------------------------------------------------------- AI notes (written when it stops)
         if (models / "llm").is_dir():
@@ -899,6 +993,9 @@ esac
                   "the notes have topic sections and use the transcript")
             check(not any(h in saved["ai_notes"] for h in ("## Summary", "## Action items", "## Open questions")),
                   "the notes follow the topics, not fixed sections (summary, action items…)")
+            wait(lambda: "## AI notes" in note.read_text(), 20, "the note with the AI notes")
+            check([f.name for f in vault_notes.glob("*.md") if f"lowkey_id: {mid}\n" in f.read_text()] == [note.name],
+                  "the same note, written again with the AI notes")
             time.sleep(1.0)
             shot("25-desktop-meeting-ai-notes.png")
             # Ask about this meeting: Ctrl+K, a question, Enter; the answer is saved with it.
@@ -918,6 +1015,55 @@ esac
                   "the question and the answer are saved with the meeting")
             time.sleep(1.0)
             shot("34-desktop-meeting-chat.png")
+            # Fixing the transcript: the Transcript tab, a click on the first "Them" paragraph, its
+            # last word replaced by a name; saved, in the note too, and offered for the Vocabulary.
+            mw = win("Lowkey")
+            (wx, wy) = mw["at"]
+            pointer(f"abs:{wx + 372},{wy + 242},{{W}},{{H}}", "sleep:200", "click")  # the Transcript tab
+            time.sleep(0.8)
+
+            def them_label():
+                png = tmp / "transcript.png"
+                run(["grim", "-g", f"{wx},{wy} {mw['size'][0]}x{mw['size'][1]}", png], env)
+                raw = subprocess.run(["ffmpeg", "-loglevel", "error", "-i", str(png), "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+                                     capture_output=True, check=True).stdout
+                w_ = mw["size"][0]
+                hits = [(i // 3 % w_, i // 3 // w_) for i in range(0, len(raw) - 2, 3)
+                        if abs(raw[i] - 0x4F) < 12 and abs(raw[i + 1] - 0x6D) < 12 and abs(raw[i + 2] - 0x8A) < 12]
+                hits = [h for h in hits if h[0] > 240]  # the page, not the side menu
+                return min(hits, key=lambda h: (h[1], h[0])) if len(hits) > 20 else None
+
+            label = wait(them_label, 10, "a Them paragraph in the Transcript tab")
+            before_m = json.loads((meetings_dir / f"{mid}.json").read_text())
+            # The paragraphs as the page makes them (one speaker, gaps under 2 s).
+            paras = []
+            for l in before_m["lines"]:
+                if paras and paras[-1]["speaker"] == l["speaker"] and l["start"] - paras[-1]["end"] < 2 and len(paras[-1]["text"]) < 600:
+                    paras[-1]["text"] += " " + l["text"]
+                    paras[-1]["end"] = max(paras[-1]["end"], l["end"])
+                else:
+                    paras.append(dict(l))
+            first = next(p_ for p_ in paras if p_["speaker"] == "them")
+            pointer(f"abs:{wx + label[0] + 30},{wy + label[1] + 22},{{W}},{{H}}", "sleep:200", "click")
+            time.sleep(0.5)
+            press_key("End")
+            for _ in range(len(first["text"].split()[-1])):
+                press_key("BackSpace")
+            for st in ("down", "up"):
+                run(["hyprctl", "dispatch", f'hl.dsp.send_key_state({{ mods = "SHIFT", key = "l", state = "{st}" }})'], env)
+                time.sleep(0.05)
+            for ch in "isandro":
+                press_key(ch)
+            press_key("period")
+            press_key("Return")
+            fixed = wait(lambda: (m := json.loads((meetings_dir / f"{mid}.json").read_text()))["lines"] != before_m["lines"] and m, 10, "the fixed transcript saved")
+            them_now = [l["text"] for l in fixed["lines"] if l["speaker"] == "them"]
+            check(any(t.endswith("Lisandro.") for t in them_now), f"a click on a paragraph fixes it: {them_now[0][-60:]!r}")
+            time.sleep(0.6)
+            shot("41-desktop-transcript-fix.png")
+            if (vault_notes / note.name).is_file():
+                wait(lambda: "Lisandro." in (vault_notes / note.name).read_text(), 15, "the note follows the fix")
+                print("  ok  the note in the folder follows the fix")
         else:
             print(f"  SKIP AI notes: no cached Qwen3.5 4B and runner in {BENCH_LLM}")
         # A wide window: the AI notes and the chat side by side (the nested window, full screen).
@@ -1015,6 +1161,10 @@ esac
         meeting_key()
         wait(lambda: next((m for m in events("meeting")[n_z:] if m["state"] == "done"), None), 60, "the call's meeting saved")
         print("  ok  the call's meeting saved with the key")
+        zid = zrec["meeting"]["id"]
+        zex = wait(lambda: next((e for e in events("meeting-export") if e["id"] == zid and e["state"] in ("saved", "error")), None), 60, "the call's note")
+        check(zex["state"] == "saved" and zex["file"].endswith(" Zoom call.md") and (vault_notes / zex["file"]).is_file(),
+              f"the call's note is named after it: {zex['file']}")
 
         # ---------------------------------------------------------------- close, quit, key starts the app
         run(["hyprctl", "dispatch", f'hl.dsp.window.close({{ window = "address:{main_win["address"]}" }})'], env)
@@ -1090,6 +1240,10 @@ esac
         check(out["model"] == "small" and "short test" in out["text"].lower(), f"--model small: {out['text']!r}")
         print("E2E DESKTOP OK")
     finally:
+        try:  # what the nested Hyprland showed at the end (for a failed step)
+            (tmp / "clients-at-end.json").write_text(run(["hyprctl", "clients", "-j"], env, check=False))
+        except (NameError, OSError):
+            pass
         if app and app.poll() is None:
             app.terminate()
         for pid in test_pids(log):  # only processes of this test run, never yours
@@ -1097,6 +1251,25 @@ esac
                 os.kill(pid, signal.SIGTERM)
             except OSError:
                 pass
+        # Programs the app started from this run's folder (the AI notes' llama-server): a stopped
+        # app leaves them running, and they hold the GPU and 2.7 GB.
+        def run_programs() -> list[int]:
+            out = []
+            for d in Path("/proc").iterdir():
+                try:
+                    if d.name.isdigit() and (d / "cmdline").read_bytes().split(b"\0")[0].decode().startswith(f"{tmp}/"):
+                        out.append(int(d.name))
+                except (OSError, UnicodeDecodeError):
+                    pass
+            return out
+
+        for sig in (signal.SIGTERM, signal.SIGKILL):
+            for pid in run_programs():
+                try:
+                    os.kill(pid, sig)
+                except OSError:
+                    pass
+            time.sleep(1)
         if nested:
             nested.terminate()
             try:
@@ -1107,6 +1280,8 @@ esac
         subprocess.run(["hyprctl", "eval", "if _G.ow_desk_rule then _G.ow_desk_rule:set_enabled(false); _G.ow_desk_rule = nil end"],
                        capture_output=True)
         subprocess.run(["hyprctl", "output", "remove", OUTPUT], capture_output=True)
+        for f in runtime.glob("hypr/*/hyprland.log"):  # the nested Hyprland's log, with the others
+            shutil.copy(f, tmp / "nested-hyprland.log")
         shutil.rmtree(runtime, ignore_errors=True)
         print(f"  cleanup done; logs in {tmp}")
 

@@ -51,6 +51,10 @@
             <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 10v3M6 6v11M10 3v18M14 8v7M18 5v13M22 10v3" /></svg>
             Live preview
           </button>
+          <button type="button" role="tab" class="nav-item" data-section="notes-apps" aria-controls="section-notes-apps">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20" /><path d="M8 7h8M8 11h6" /></svg>
+            Note apps
+          </button>
           <button type="button" role="tab" class="nav-item" data-section="agents" aria-controls="section-agents">
             <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8V4H8" /><rect width="16" height="12" x="4" y="8" rx="2" /><path d="M2 14h2M20 14h2M15 13v2M9 13v2" /></svg>
             AI agents
@@ -160,6 +164,8 @@
               <div class="actions">
                 <button id="meeting-copy" type="button" class="btn btn-outline btn-sm">Copy</button>
                 <button id="meeting-export" type="button" class="btn btn-outline btn-sm">Export .md</button>
+                <button id="meeting-folder" type="button" class="btn btn-outline btn-sm" hidden>Save to folder</button>
+                <button id="meeting-obsidian" type="button" class="btn btn-outline btn-sm" hidden>Open in Obsidian</button>
                 <button id="meeting-delete" type="button" class="btn btn-ghost btn-sm danger">Delete</button>
               </div>
             </div>
@@ -493,6 +499,40 @@
               <option value="parakeet">Parakeet · more accurate (~1.1 GB)</option>
             </select>
           </div>
+        </section>
+
+        <!-- Note apps: each meeting as Markdown in a folder (Obsidian, Logseq, synced folders) -->
+        <section id="section-notes-apps" class="section" role="tabpanel" data-section="notes-apps" hidden>
+          <header class="section-head">
+            <h2>Note apps</h2>
+            <p>Each meeting as a Markdown note in a folder you choose. Nothing leaves this computer.</p>
+          </header>
+          <div class="field field-stacked">
+            <div class="field-text">
+              <span class="label">Folder</span>
+              <p id="export-dir-note" class="field-desc">Obsidian: your vault, or a folder in it. Logseq: its pages folder. Google Drive, Dropbox or iCloud: a folder that their app keeps in sync.</p>
+            </div>
+            <div class="key-line">
+              <code id="export-dir" class="export-dir">No folder</code>
+              <button id="export-choose" type="button" class="btn btn-outline">Choose folder…</button>
+              <button id="export-off" type="button" class="btn btn-ghost" hidden>Turn off</button>
+            </div>
+          </div>
+          <div class="separator"></div>
+          <div class="field">
+            <div class="field-text">
+              <label for="export-auto">Save each meeting there by itself</label>
+              <p class="field-desc">When it stops, and again when its AI notes are written. A note you changed in the other app is never overwritten. Off: use Save to folder in the meeting.</p>
+            </div>
+            <input id="export-auto" type="checkbox" role="switch" class="switch" />
+          </div>
+          <div class="separator"></div>
+          <fieldset class="field field-stacked export-parts">
+            <legend class="label">In the note</legend>
+            <label><input type="checkbox" value="ai_notes" /> AI notes</label>
+            <label><input type="checkbox" value="notes" /> Your notes</label>
+            <label><input type="checkbox" value="transcript" /> Transcript</label>
+          </fieldset>
         </section>
 
         <!-- AI agents: Lowkey as an MCP server (lowkey --mcp) -->

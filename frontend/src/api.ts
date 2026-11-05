@@ -45,6 +45,8 @@ export interface Status {
   recording?: boolean;
   /** Settings → AI agents: agents may start and stop recordings; the program they start. */
   agents?: { recording: boolean; program: string };
+  /** Settings → Note apps: the folder ("" = off), by itself, the parts, the Obsidian vault it is in. */
+  export?: { dir: string; auto: boolean; parts: string[]; vault: string | null };
   /** AI notes settings (the API key itself never comes to the page). */
   ai?: {
     engine: "builtin" | "server";
@@ -133,6 +135,14 @@ export interface Meeting {
   ai_at?: number;
   /** Questions about the meeting and their answers, oldest first. */
   chat?: ChatMessage[];
+  /** Settings → Note apps: the file it was saved as in the chosen folder ("" = not yet). */
+  export_file?: string;
+  /** The folder it was saved in. */
+  export_dir?: string;
+  /** One more for each fix of the transcript; `ai_version`: the version the AI notes were
+   * written from (lower: Write notes again). */
+  transcript_version?: number;
+  ai_version?: number;
 }
 
 export interface ChatMessage {
@@ -150,6 +160,8 @@ export interface AiNotesEvent {
   progress: number;
   /** The text so far (writing), or all of it (done). */
   text: string;
+  /** done: the transcript version the notes were written from. */
+  ai_version?: number;
 }
 
 export interface MeetingLive {

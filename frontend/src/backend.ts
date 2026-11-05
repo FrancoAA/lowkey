@@ -1,7 +1,7 @@
 /**
  * Everything the page needs from the app (Tauri commands and events) goes through here.
  */
-import type { AiNotesEvent, HistoryEntry, JobEvent, Meeting, MeetingLive, MeetingSummary, Status } from "./api";
+import type { AiNotesEvent, HistoryEntry, JobEvent, Meeting, MeetingLive, MeetingSummary, Status, VocabTerm } from "./api";
 
 export interface FileRef {
   name: string;
@@ -23,6 +23,10 @@ export interface Options {
   ai_key?: string;
   ai_auto?: boolean;
   mcp_recording?: boolean;
+  /** "" turns the note-app folder off. */
+  export_dir?: string;
+  export_auto?: boolean;
+  export_parts?: string[];
   vocabulary?: { term: string; sounds_like: string[] }[];
   history_keep?: string;
   /** system | light | dark. */
@@ -55,6 +59,8 @@ export interface Backend {
   saveOptions(o: Options): Promise<void>;
   /** Quit the app (as the tray menu's Quit). */
   quit(): Promise<void>;
+  /** Settings → Note apps: the system's folder dialog (saved at once); false when cancelled. */
+  chooseExportFolder(): Promise<boolean>;
   /** Move the dictation key now (Hyprland syntax, "SUPER + ALT + D"). */
   setHotkey(key: string): Promise<Status>;
   /** Move the meeting key now. */
@@ -106,6 +112,16 @@ export interface MeetingsBackend {
   onAiChat(cb: (e: AiNotesEvent) => void): void;
   /** The strip's "Open the notes": the app asks the window to open this meeting. */
   onOpen(cb: (id: string) => void): void;
+  /** A transcript paragraph fixed (lines from..to as `paragraphs` made it; `before`: its text then).
+   * The saved meeting, and a Vocabulary suggestion when the fix looks like a name or term. */
+  editParagraph(id: string, from: number, to: number, before: string, text: string, speaker: "me" | "them"): Promise<{ meeting: Meeting; suggestion: VocabTerm | null }>;
+  /** Add a term (or one more spelling of it) to the Vocabulary. */
+  addVocabulary(term: VocabTerm): Promise<void>;
+  /** Save to the note-app folder; its file and, in an Obsidian vault, its obsidian:// link. */
+  saveToFolder(id: string): Promise<{ file: string; obsidian: string | null }>;
+  openInObsidian(id: string): Promise<void>;
+  /** A save to the folder (also by itself): saved | kept (edited outside) | error. */
+  onExport(cb: (e: { id: string; state: string; file: string; detail: string }) => void): void;
 }
 
 const baseName = (p: string) => p.split(/[\\/]/).pop() || p;
@@ -153,6 +169,7 @@ async function desktopBackend(): Promise<Backend> {
     async saveOptions(o) {
       await invoke("set_options", { options: o });
     },
+    chooseExportFolder: async () => (await invoke<unknown>("choose_export_folder")) !== null,
     setHotkey: (key) => invoke<Status>("set_hotkey", { key }),
     setMeetingHotkey: (key) => invoke<Status>("set_meeting_hotkey", { key }),
     setPasteHotkey: (key) => invoke<Status>("set_paste_hotkey", { key }),
@@ -226,6 +243,16 @@ async function desktopBackend(): Promise<Backend> {
       },
       onOpen(cb) {
         void listen<string>("open-meeting", (e) => cb(e.payload));
+      },
+      editParagraph: (id, from, to, before, text, speaker) =>
+        invoke<{ meeting: Meeting; suggestion: VocabTerm | null }>("meeting_edit_paragraph", { id, from, to, before, text, speaker }),
+      addVocabulary: async (term) => {
+        await invoke("vocabulary_add", { term });
+      },
+      saveToFolder: (id) => invoke<{ file: string; obsidian: string | null }>("meeting_save_to_folder", { id }),
+      openInObsidian: (id) => invoke("meeting_open_in_obsidian", { id }),
+      onExport(cb) {
+        void listen<{ id: string; state: string; file: string; detail: string }>("meeting-export", (e) => cb(e.payload));
       },
     },
   };

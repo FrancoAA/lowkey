@@ -5,7 +5,7 @@
  * are answered by the same model, and saved with it. The app records, transcribes, writes and
  * saves (desktop/src-tauri/src/meeting.rs, llm.rs); this page shows it and sends the title.
  */
-import type { AiNotesEvent, ChatMessage, Meeting, MeetingLine, MeetingLive, MeetingSummary } from "./api";
+import type { AiNotesEvent, ChatMessage, Meeting, MeetingLine, MeetingLive, MeetingSummary, VocabTerm } from "./api";
 import { confirmDialog } from "./confirm";
 import { highlighted, searchWords } from "./highlight";
 import type { Backend } from "./backend";
@@ -48,18 +48,26 @@ export interface MeetingsUi {
   meetingKey(): string;
   /** Go to the Meetings section (the strip's "Open the notes"). */
   showMeetings(): void;
+  /** Settings → Note apps: the folder ("" = off) and the Obsidian vault it is in. */
+  exportInfo(): { dir: string; vault: string | null };
+  /** Settings changed here (a term added to the Vocabulary): read them again. */
+  refreshStatus(): void;
 }
 
+/** A paragraph and the lines it is made of (`from`..`to`, in the meeting's lines). */
+export type Paragraph = MeetingLine & { from: number; to: number };
+
 /** Lines of one speaker with short gaps form one paragraph (as in the Markdown export). */
-export function paragraphs(lines: MeetingLine[]): MeetingLine[] {
-  const out: MeetingLine[] = [];
-  for (const l of lines) {
+export function paragraphs(lines: MeetingLine[]): Paragraph[] {
+  const out: Paragraph[] = [];
+  lines.forEach((l, i) => {
     const p = out[out.length - 1];
     if (p && p.speaker === l.speaker && l.start - p.end < 2 && p.text.length < 600) {
       p.text += ` ${l.text}`;
       p.end = Math.max(p.end, l.end);
-    } else out.push({ ...l });
-  }
+      p.to = i;
+    } else out.push({ ...l, from: i, to: i });
+  });
   return out;
 }
 
@@ -93,7 +101,8 @@ function fileName(title: string): string {
   return `${base || "meeting"}.md`;
 }
 
-export function initMeetings(backend: Backend, ui: MeetingsUi): void {
+/** `refreshExport`: the meeting's note-app buttons follow a change in Settings → Note apps. */
+export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(): void } {
   const api = backend.meetings;
   const home = $<HTMLDivElement>("meetings-home");
   const startBtn = $<HTMLButtonElement>("meeting-start");
@@ -117,6 +126,8 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): void {
   const copyBtn = $<HTMLButtonElement>("meeting-copy");
   const exportBtn = $<HTMLButtonElement>("meeting-export");
   const deleteBtn = $<HTMLButtonElement>("meeting-delete");
+  const folderBtn = $<HTMLButtonElement>("meeting-folder");
+  const obsidianBtn = $<HTMLButtonElement>("meeting-obsidian");
   const notices = $<HTMLUListElement>("meeting-notices");
   const transcript = $<HTMLDivElement>("meeting-transcript");
   const pending = $<HTMLElement>("meeting-pending");
@@ -196,7 +207,13 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): void {
   });
 
   // ---------------------------------------------------------------- one meeting
+  /** The paragraph being fixed, and its meeting (that meeting's transcript is not drawn again
+   * under it; another meeting opened ends the edit). */
+  let editing: (Paragraph & { meetingId: string }) | null = null;
+
   function renderTranscript(m: Meeting, follow: boolean): void {
+    if (editing?.meetingId === m.id) return;
+    editing = null;
     const nearEnd = transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight < 60;
     transcript.replaceChildren();
     const paras = paragraphs(m.lines);
@@ -218,10 +235,158 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): void {
       at.textContent = clock(l.start);
       const text = document.createElement("p");
       text.textContent = l.text;
+      if (!isLive()) {
+        // A saved meeting: a click (or Enter) fixes the paragraph.
+        text.tabIndex = 0;
+        text.className = "fixable";
+        text.title = "Click to fix the text";
+        text.setAttribute("role", "button");
+        text.setAttribute("aria-roledescription", "paragraph, press Enter to fix it");
+        text.addEventListener("click", () => startEdit(row, l));
+        text.addEventListener("keydown", (e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            startEdit(row, l);
+          }
+        });
+      }
       row.append(who, at, text);
       transcript.append(row);
     }
     if (follow && nearEnd) transcript.scrollTop = transcript.scrollHeight;
+  }
+
+  // ---------------------------------------------------------------- fixing the transcript
+  /** The paragraph as a text field; its speaker as a switch. Enter or a click outside saves,
+   * Esc cancels. */
+  function startEdit(row: HTMLElement, para: Paragraph): void {
+    if (!shown || isLive() || editing) return;
+    const id = shown.id; // the meeting these lines belong to, whatever is shown later
+    editing = { ...para, meetingId: id };
+    let speaker = para.speaker as "me" | "them";
+    const who = row.querySelector<HTMLElement>(".who")!;
+    const swap = document.createElement("button");
+    swap.type = "button";
+    swap.className = `who who-switch who-${speaker}`;
+    const label = () => {
+      swap.textContent = speaker === "me" ? "Me" : "Them";
+      swap.className = `who who-switch who-${speaker}`;
+      swap.title = `Said by ${speaker === "me" ? "you" : "the others"}: click to switch`;
+      swap.setAttribute("aria-label", `Speaker: ${speaker === "me" ? "Me" : "Them"}. Switch`);
+      row.dataset.speaker = speaker;
+    };
+    label();
+    who.replaceWith(swap);
+    const field = document.createElement("textarea");
+    field.className = "fix-field";
+    field.value = para.text;
+    field.setAttribute("aria-label", "The paragraph's text: Enter saves, Escape cancels");
+    const fit = () => {
+      field.style.height = "auto";
+      field.style.height = `${field.scrollHeight}px`;
+    };
+    field.addEventListener("input", fit);
+    row.querySelector("p")!.replaceWith(field);
+    fit();
+    field.focus();
+    field.setSelectionRange(field.value.length, field.value.length);
+    let done = false;
+    const finish = async (save: boolean) => {
+      if (done) return;
+      done = true;
+      const text = field.value.trim();
+      const mine = () => editing?.meetingId === id;
+      if (!save || (text === para.text && speaker === para.speaker)) {
+        if (mine()) editing = null;
+        if (shown?.id === id) renderView();
+        return;
+      }
+      try {
+        const r = await api.editParagraph(id, para.from, para.to, para.text, text, speaker);
+        if (mine()) editing = null;
+        if (shown?.id !== id) return; // another meeting is open now
+        shown = r.meeting;
+        renderView();
+        ui.announce(text ? "The paragraph is fixed." : "The paragraph is removed.");
+        if (r.suggestion) offerVocabulary(r.suggestion);
+      } catch (err) {
+        if (mine()) editing = null;
+        if (shown?.id === id) {
+          // The meeting as it is now (the fix was refused: it changed meanwhile, or…).
+          shown = await api.get(id).catch(() => shown);
+          renderView();
+        }
+        showError(`${String(err)} Your text: “${text}”`);
+      }
+    };
+    swap.addEventListener("mousedown", (e) => e.preventDefault()); // the focus stays in the text
+    swap.addEventListener("click", () => {
+      speaker = speaker === "me" ? "them" : "me";
+      label();
+      field.focus();
+    });
+    field.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        void finish(true);
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation(); // not the section's Escape
+        void finish(false);
+      }
+    });
+    // A click outside saves (the speaker switch is inside).
+    row.addEventListener("focusout", (e) => {
+      // Another window (a look-up of the spelling) is not a click outside: the edit stays.
+      if (e.relatedTarget === null && !document.hasFocus()) return;
+      if (!row.contains(e.relatedTarget as Node | null)) void finish(true);
+    });
+  }
+
+  /** After a fix that looks like a name or term: add it to the Vocabulary (10 s to decide). */
+  function offerVocabulary(s: VocabTerm): void {
+    transcript.querySelector(".vocab-offer")?.remove();
+    const bar = document.createElement("div");
+    bar.className = "vocab-offer";
+    bar.setAttribute("role", "status");
+    const text = document.createElement("span");
+    text.textContent = `Add “${s.term}” to the Vocabulary (sounds like “${s.sounds_like[0]}”), so it is written right next time?`;
+    const add = document.createElement("button");
+    add.type = "button";
+    add.className = "btn btn-outline btn-sm";
+    add.textContent = "Add";
+    const close = document.createElement("button");
+    close.type = "button";
+    close.className = "btn btn-ghost btn-sm";
+    close.textContent = "No";
+    // 10 s to decide, not counting the time the pointer or the focus is on it.
+    let timer = setTimeout(() => bar.remove(), 10_000);
+    const hold = () => clearTimeout(timer);
+    const release = () => {
+      clearTimeout(timer);
+      if (!bar.matches(":hover") && !bar.contains(document.activeElement)) timer = setTimeout(() => bar.remove(), 10_000);
+    };
+    bar.addEventListener("pointerenter", hold);
+    bar.addEventListener("focusin", hold);
+    bar.addEventListener("pointerleave", release);
+    bar.addEventListener("focusout", () => setTimeout(release, 0));
+    add.addEventListener("click", () => {
+      clearTimeout(timer);
+      void api.addVocabulary(s).then(
+        () => {
+          bar.replaceChildren(`“${s.term}” is in the Vocabulary (Settings → General).`);
+          setTimeout(() => bar.remove(), 3000);
+          ui.refreshStatus();
+        },
+        (err) => showError(String(err)),
+      );
+    });
+    close.addEventListener("click", () => {
+      clearTimeout(timer);
+      bar.remove();
+    });
+    bar.append(text, add, close);
+    transcript.prepend(bar);
   }
 
   function renderMeta(): void {
@@ -251,6 +416,7 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): void {
     if (live?.state === "finishing") stopBtn.replaceChildren(spinner(), "Saving…");
     else stopBtn.replaceChildren(square, "Stop");
     copyBtn.hidden = exportBtn.hidden = deleteBtn.hidden = recording;
+    renderFolderButtons();
     livePanel.hidden = !recording;
     livePanel.dataset.state = live?.state ?? "";
     if (recording && live?.state === "recording") wave.start();
@@ -329,8 +495,12 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): void {
     }
     const mine = aiJob?.id === shown.id ? aiJob : null;
     const running = !!mine && aiRunning();
-    // Only when there are no notes yet (not written, or the writing failed).
-    aiWrite.hidden = running || !!shown.ai_notes || tab !== "notes";
+    // When there are no notes yet (not written, or the writing failed), or the transcript was
+    // fixed after they were written.
+    const stale = !!shown.ai_notes && (shown.transcript_version ?? 0) > (shown.ai_version ?? 0);
+    aiWrite.hidden = running || (!!shown.ai_notes && !stale) || tab !== "notes";
+    aiWrite.textContent = stale ? "Write notes again" : "Write notes";
+    aiWrite.title = stale ? "The transcript was fixed after these notes were written" : "";
     aiWrite.disabled = aiRunning() || chatRunning(); // the model is at work for something else
     aiCancel.hidden = !running;
     aiProgress.hidden = !running || mine!.state === "writing";
@@ -382,6 +552,7 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): void {
     if (e.state === "done" && shown?.id === e.id) {
       shown.ai_notes = e.text;
       shown.ai_model = e.detail;
+      shown.ai_version = e.ai_version ?? shown.ai_version;
       ui.announce("AI notes written.");
     }
     if (shown?.id === e.id || !aiRunning()) {
@@ -605,6 +776,7 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): void {
 
   function open(m: Meeting): void {
     if (shown?.id !== m.id) {
+      editing = null; // a fix of another meeting's paragraph ends here (its save still runs)
       chatInput.value = "";
       chatError = null;
       chatLog.scrollTop = 0;
@@ -636,6 +808,7 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): void {
 
   async function showHome(): Promise<void> {
     await flush();
+    editing = null;
     shown = null;
     view.hidden = true;
     home.hidden = false;
@@ -927,6 +1100,54 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): void {
     }
   });
 
+  // ---------------------------------------------------------------- note apps (a folder)
+  /** Save to folder: with a folder chosen. Open in Obsidian: once saved in a vault. */
+  function renderFolderButtons(): void {
+    const info = ui.exportInfo();
+    const off = !shown || isLive() || !info.dir;
+    folderBtn.hidden = off;
+    folderBtn.title = info.dir ? `Save this meeting as Markdown in ${info.dir}` : "";
+    // Saved in this folder (a note in a folder chosen before is not this vault's).
+    obsidianBtn.hidden = off || !info.vault || !shown?.export_file || shown.export_dir !== info.dir;
+    obsidianBtn.title = info.vault ? `Open its note in the ${info.vault} vault` : "";
+  }
+
+  folderBtn.addEventListener("click", async () => {
+    if (!shown) return;
+    await flush();
+    const id = shown.id;
+    folderBtn.disabled = true;
+    try {
+      const r = await api.saveToFolder(id);
+      if (shown?.id === id) {
+        shown.export_file = r.file;
+        shown.export_dir = ui.exportInfo().dir;
+      }
+      folderBtn.textContent = "Saved";
+      ui.announce(`Saved as ${r.file}`);
+      setTimeout(() => (folderBtn.textContent = "Save to folder"), 1500);
+    } catch (err) {
+      showError(String(err));
+    } finally {
+      folderBtn.disabled = false;
+      renderFolderButtons();
+    }
+  });
+
+  obsidianBtn.addEventListener("click", () => {
+    if (shown) void api.openInObsidian(shown.id).catch((err) => showError(String(err)));
+  });
+
+  // Saved by itself (after Stop, after the AI notes): the buttons follow; a problem is shown.
+  api.onExport((e) => {
+    if (shown?.id === e.id && e.file && e.state === "saved") {
+      shown.export_file = e.file;
+      shown.export_dir = ui.exportInfo().dir;
+    }
+    if (shown?.id === e.id && (e.state === "error" || e.state === "kept")) showError(e.detail);
+    renderFolderButtons();
+  });
+
   deleteBtn.addEventListener("click", () => {
     if (shown) void confirmDelete(shown.id, title.value.trim() || shown.title);
   });
@@ -952,4 +1173,6 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): void {
     }
     void renderList();
   });
+
+  return { refreshExport: renderFolderButtons };
 }

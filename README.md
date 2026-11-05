@@ -191,6 +191,12 @@ Record a call or a talk, as text next to your notes (Linux for now). No bot join
   grouped by day; open one to read it (the AI notes, or the transcript in their place with the
   **AI notes | Transcript** switch; the chat on the right), change the title, **Copy** or
   **Export .md** (AI notes, then the transcript).
+- **Fix the transcript:** in a saved meeting, click a paragraph (or Enter on it) to correct the
+  model's words; <kbd>Enter</kbd> or a click outside saves, <kbd>Esc</kbd> cancels, and the
+  **Me / Them** label switches the speaker. An empty paragraph is removed. A fix that looks
+  like a name or a term ("Lisando" → "Lisandro") offers to add it to the Vocabulary, so the
+  model writes it right next time. Copy, Export, search, the note-app file and AI agents use
+  the fixed text; the AI notes stay as written, with **Write notes again** for the fixed text.
 - **Search** (<kbd>Ctrl</kbd>+<kbd>F</kbd> on the list): the meetings that have every word you
   type, in any order and any case, also inside a word, in the title, the transcript, the AI
   notes or your notes. Each result shows where the words are and the text around them, with
@@ -276,6 +282,32 @@ aborts in this binary ("free(): invalid pointer"), because the static sherpa-onn
 brings another build of libstdc++'s `std::regex` and the linker keeps one copy for both
 (confirmed: a build without Parakeet does not abort).
 
+## Note apps
+
+Settings → Note apps: each meeting as a Markdown note in a folder you choose. Nothing leaves the
+computer; the folder decides where the notes go:
+
+- **Obsidian:** your vault, or a folder in it. The meeting then has **Open in Obsidian**.
+- **Logseq:** its `pages` folder.
+- **Google Drive, Dropbox, iCloud Drive, Syncthing:** a folder that their app keeps in sync.
+
+A note is saved by itself when a meeting stops, and again when its AI notes are written (or with
+**Save to folder** in the meeting). It is named `2026-11-04 14.05 Weekly sync.md`, follows a new
+title, and starts with front matter:
+
+```yaml
+---
+title: "Weekly sync"
+date: 2026-11-04T14:05:00-03:00
+duration_min: 32
+tags: [meeting]
+lowkey_id: m-1793800000000
+---
+```
+
+Then the parts you chose: AI notes, your notes, the transcript. A note you changed in the other
+app is never overwritten: the app keeps a hash of what it wrote, and says so instead.
+
 ## AI agents (MCP)
 
 Claude Code, Codex, Gemini CLI, Cursor and other agents can use Lowkey over the
@@ -331,6 +363,9 @@ ai_engine = "builtin"           # AI notes: builtin | server
 ai_builtin_model = "qwen3.5-4b" # qwen3.5-4b (recommended) | qwen3.5-2b | gemma-4-e4b
 ai_url = "http://localhost:11434/v1"   # own server (OpenAI-compatible); ai_model, ai_key too
 ai_auto = true                  # write AI notes when a meeting stops
+export_dir = ""                  # Note apps: the folder for each meeting's Markdown note ("" = off)
+export_auto = true              # save there when a meeting stops and when its AI notes are written
+export_parts = ["ai_notes", "notes", "transcript"]
 mcp_recording = false           # AI agents (lowkey --mcp) may start and stop recordings
 live_preview = true             # words in the overlay while you talk
 overlay_collapsed = false       # the strip as a small pill (its corner button; a click opens it)
@@ -386,10 +421,13 @@ overlay (`overlay.html`, `src/overlay.ts`).
 ```sh
 make desktop-dev   # the app with hot reload (Vite + tauri dev)
 make test          # UI typecheck + build, Rust unit tests
-make e2e-desktop   # the app in a nested Hyprland (your session is not touched): files,
-                   # errors, dictation, the global key, live preview, Settings, a meeting;
-                   # the meeting key and its strip, AI notes (with a cached
-                   # Qwen3.5 4B in bench/.work/llm); screenshots 09-25.
+make e2e-desktop   # the app in a nested Hyprland, on a temporary headless output of your
+                   # session; its own runtime folder and a D-Bus that starts no services (no
+                   # portals): files, errors, dictation, the global key, live preview, Settings,
+                   # a meeting; the meeting key and its strip (drag, mute, collapse, Open the
+                   # notes), AI notes (with a cached Qwen3.5 4B in bench/.work/llm);
+                   # screenshots 09-40. Programs it started are stopped at the end.
+                   # python3 scripts/e2e_desktop.py --strip-only: only the strip (quick)
                    # python3 scripts/e2e_desktop.py --first-run: empty model folder
                    # OW_E2E_HYPRBARS=<hyprbars.so>: also checks that title-bar plugins skip the overlay
 make bench         # research only: the model benchmark (docs/benchmark.md), Python via uv

@@ -105,6 +105,13 @@ pub struct Config {
     /// AI agents (the MCP server, `lowkey --mcp`) may start and stop meeting recordings. Off:
     /// they only read meetings and dictations, and transcribe files.
     pub mcp_recording: bool,
+    /// Note apps: each meeting as Markdown in this folder (an Obsidian vault, Logseq's pages, a
+    /// synced folder); "" = off.
+    pub export_dir: String,
+    /// Save there by itself when a meeting stops, and again when its AI notes are written.
+    pub export_auto: bool,
+    /// What the file has: ai_notes, notes, transcript.
+    pub export_parts: Vec<String>,
     /// Names and terms the speech model gets wrong (Settings → General → Vocabulary). Last:
     /// a list of tables goes after the plain values in config.toml.
     pub vocabulary: Vec<crate::vocabulary::Term>,
@@ -129,6 +136,9 @@ impl Default for Config {
             ai_key: String::new(),
             ai_auto: true,
             mcp_recording: false,
+            export_dir: String::new(),
+            export_auto: true,
+            export_parts: crate::export::PARTS.iter().map(|s| s.to_string()).collect(),
             vocabulary: Vec::new(),
         }
     }

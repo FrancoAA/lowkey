@@ -58,6 +58,12 @@ const aiKey = $<HTMLInputElement>("ai-key");
 const aiKeyClear = $<HTMLButtonElement>("ai-key-clear");
 const aiAuto = $<HTMLInputElement>("ai-auto");
 const agentCommands = $<HTMLElement>("agent-commands");
+const exportDir = $<HTMLElement>("export-dir");
+const exportDirNote = $<HTMLElement>("export-dir-note");
+const exportChoose = $<HTMLButtonElement>("export-choose");
+const exportOff = $<HTMLButtonElement>("export-off");
+const exportAuto = $<HTMLInputElement>("export-auto");
+const exportParts = [...document.querySelectorAll<HTMLInputElement>(".export-parts input")];
 const agentsRecording = $<HTMLInputElement>("agents-recording");
 const aiStatus = $<HTMLDivElement>("ai-status");
 const aiStatusText = $<HTMLSpanElement>("ai-status-text");
@@ -71,6 +77,8 @@ const langNames = new Intl.DisplayNames(["en"], { type: "language" });
 let backend!: Backend;
 let jobState = ""; // state of the job shown in the result card
 let status: Status | null = null;
+/** The Meetings section (its note-app buttons follow the status). */
+let meetingsView: { refreshExport(): void } | null = null;
 let busy = false;
 let current: { result: JobResult | null; segments: Segment[]; baseName: string } = { result: null, segments: [], baseName: "transcript" };
 
@@ -312,6 +320,8 @@ function applyStatus(next: Status): void {
   if (backend) renderCalls(backend, status, showError);
   renderAi();
   renderAgents();
+  renderExport();
+  meetingsView?.refreshExport();
   renderAbout();
   renderStatus();
 }
@@ -1030,6 +1040,39 @@ aiKey.addEventListener("change", () => {
 aiKeyClear.addEventListener("click", () => saveAi({ ai_key: "" }));
 aiAuto.addEventListener("change", () => saveAi({ ai_auto: aiAuto.checked }));
 
+// ------------------------------------------------------------------ note apps (a folder)
+/** Settings → Note apps, from the status. */
+function renderExport(): void {
+  const e = status?.export;
+  if (!e) return;
+  exportDir.textContent = e.dir || "No folder";
+  exportOff.hidden = !e.dir;
+  exportDirNote.textContent = e.vault
+    ? `In the Obsidian vault “${e.vault}”: each meeting gets an Open in Obsidian button.`
+    : "Obsidian: your vault, or a folder in it. Logseq: its pages folder. Google Drive, Dropbox or iCloud: a folder that their app keeps in sync.";
+  exportAuto.checked = e.auto;
+  exportAuto.disabled = !e.dir;
+  for (const box of exportParts) box.checked = e.parts.includes(box.value);
+}
+
+function saveExport(o: Parameters<Backend["saveOptions"]>[0]): void {
+  void backend.saveOptions(o).then(refreshStatus, (err) => showError(String(err)));
+}
+
+exportChoose.addEventListener("click", () => {
+  void backend.chooseExportFolder().then(
+    async (chosen) => {
+      if (chosen) await refreshStatus();
+    },
+    (err) => showError(String(err)),
+  );
+});
+exportOff.addEventListener("click", () => saveExport({ export_dir: "" }));
+exportAuto.addEventListener("change", () => saveExport({ export_auto: exportAuto.checked }));
+for (const box of exportParts) {
+  box.addEventListener("change", () => saveExport({ export_parts: exportParts.filter((b) => b.checked).map((b) => b.value) }));
+}
+
 // ------------------------------------------------------------------ AI agents (MCP)
 
 /** A path as one shell word: as it is when safe; a Windows path in double quotes (cmd and
@@ -1119,11 +1162,13 @@ void getBackend().then((b) => {
   };
   b.meetings.onAiNotes(onAi("notes"));
   b.meetings.onAiChat(onAi("chat"));
-  initMeetings(b, {
+  meetingsView = initMeetings(b, {
     announce,
     onRecording: (on) => (liveDot.hidden = !on),
     meetingKey: () => (status?.meeting_key_source === "app" ? status.meeting_key ?? "" : ""),
     showMeetings: () => showSection("meetings"),
+    exportInfo: () => ({ dir: status?.export?.dir ?? "", vault: status?.export?.vault ?? null }),
+    refreshStatus: () => void refreshStatus(),
   });
   void loadLanguages();
   void refreshStatus();

@@ -96,20 +96,25 @@ function callNoteNow(now: number) {
   return callNote && now - callNote.at < CALL_NOTE_MS[callNote.state] ? callNote : null;
 }
 
-/** How long a saved meeting (and its link) shows; longer while the pointer is on the strip. */
+/** How long a saved meeting (and its link) shows; longer while the app holds the strip (the
+ * pointer is on it). */
 const SAVED_MS = 8500;
-let hovered = false;
+let held = false;
 
 function meetingShows(now: number): boolean {
   if (meetError && now - meetError.at < 4000) return true;
   if (callNoteNow(now)?.state === "offer") return true;
   if (!meet) return false;
-  return meet.state !== "done" || now - meetAt < SAVED_MS || hovered;
+  return meet.state !== "done" || now - meetAt < SAVED_MS || held;
 }
 
 function show(): void {
   const now = performance.now();
-  if (!dictationShows(now) && meetingShows(now)) renderMeeting(now);
+  // A dictation at work comes first; a finished one's short message never covers a meeting
+  // that records or saves (its mute button would be under the dictation's text).
+  const dictating = !!dict && ["starting", "listening", "transcribing"].includes(dict.state);
+  const meetingActive = !!meet && meet.state !== "done";
+  if (meetingShows(now) && (!dictationShows(now) || (meetingActive && !dictating))) renderMeeting(now);
   else render(dict ?? { state: "idle", level: 0, text: "", error: null, detail: "", delivered: [], elapsed: 0 });
   renderMini();
 }
@@ -177,18 +182,10 @@ openLink.addEventListener("click", (e) => {
   if (id) void call("open_meeting", { id });
 });
 
-// The pointer on the strip keeps a saved meeting there (the app waits too before it hides it).
-root.addEventListener("pointerenter", () => {
-  hovered = true;
-  void call("overlay_hover", { on: true });
-});
-root.addEventListener("pointerleave", () => {
-  hovered = false;
-  // A saved meeting stays a moment more, then goes (meetAt is the recording's clock otherwise).
-  if (meet?.state === "done") meetAt = Math.max(meetAt, performance.now() - SAVED_MS + 1500);
-  void call("overlay_hover", { on: false });
-  show();
-});
+// Where Hyprland does not say where the cursor is, the page tells the app when the pointer is on
+// the strip (it keeps a saved meeting there while it is).
+root.addEventListener("pointerenter", () => void call("overlay_hover", { on: true }));
+root.addEventListener("pointerleave", () => void call("overlay_hover", { on: false }));
 
 collapseBtn.addEventListener("click", (e) => {
   e.stopPropagation();
@@ -378,6 +375,10 @@ void (async () => {
   });
   await listen<{ meeting_key?: string }>("status", (e) => (meetingKey = e.payload.meeting_key ?? meetingKey));
   await listen<{ collapsed: boolean }>("overlay-place", (e) => setCollapsed(e.payload.collapsed));
+  await listen<boolean>("overlay-hold", (e) => {
+    held = e.payload;
+    show();
+  });
   // The clock, and the moment after "done" / "saved" when the view changes.
   window.setInterval(() => {
     if (meet || dict) show();

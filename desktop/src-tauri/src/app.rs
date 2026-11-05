@@ -36,6 +36,8 @@ pub struct App {
     open_files: Mutex<Vec<PathBuf>>,
     /// The pointer is on the strip: a finished meeting's strip stays (its link can be clicked).
     overlay_hovered: AtomicBool,
+    /// Note apps: per meeting, the newest title/notes edit (its note is saved a moment after the last one).
+    export_edits: Mutex<std::collections::HashMap<String, u64>>,
     started: Instant,
     /// The overlay page has loaded and rendered (shown only then: no blank first frame).
     overlay_ready: AtomicBool,
@@ -301,6 +303,12 @@ impl App {
             },
             // Settings → AI agents: the command an agent starts (`lowkey --mcp`).
             "agents": { "recording": cfg.mcp_recording, "program": crate::autostart::launcher() },
+            // Settings → Note apps; `vault`: the Obsidian vault the folder is in.
+            "export": {
+                "dir": cfg.export_dir, "auto": cfg.export_auto, "parts": cfg.export_parts,
+                "vault": (!cfg.export_dir.is_empty()).then(|| crate::export::obsidian_vault(std::path::Path::new(&cfg.export_dir))).flatten()
+                    .and_then(|v| v.file_name().map(|n| n.to_string_lossy().into_owned())),
+            },
         })
     }
 
@@ -859,12 +867,21 @@ impl App {
         let me = self.clone();
         std::thread::spawn(move || {
             std::thread::sleep(Duration::from_secs(secs));
-            // Not under the pointer (someone reads it, or goes for its link); at most a minute more.
+            // Not under the pointer (someone reads it, or goes for its link); at most a minute
+            // more. The strip keeps showing "saved" while it is held.
+            let mut held = false;
             for _ in 0..120 {
-                if !me.overlay_hovered.load(Ordering::SeqCst) {
+                if !me.pointer_on_overlay() {
                     break;
                 }
+                if !held {
+                    held = true;
+                    let _ = me.handle.emit("overlay-hold", true);
+                }
                 std::thread::sleep(Duration::from_millis(500));
+            }
+            if held {
+                let _ = me.handle.emit("overlay-hold", false);
             }
             let slot = me.meeting.lock();
             if slot.is_none() && !me.meeting_starting.load(Ordering::SeqCst) {
@@ -872,6 +889,12 @@ impl App {
             }
             drop(slot);
         });
+    }
+
+    /// The pointer is on the strip: Hyprland says where the cursor is; elsewhere the strip's page
+    /// says it (its pointer enter and leave).
+    fn pointer_on_overlay(&self) -> bool {
+        hyprland::cursor_on_overlay().unwrap_or_else(|| !hyprland::running() && self.overlay_hovered.load(Ordering::SeqCst))
     }
 
     fn show_main(&self) {
@@ -1088,6 +1111,10 @@ struct OptionsIn {
     ai_key: Option<String>,
     ai_auto: Option<bool>,
     mcp_recording: Option<bool>,
+    /// Some("") turns the note-app folder off.
+    export_dir: Option<String>,
+    export_auto: Option<bool>,
+    export_parts: Option<Vec<String>>,
     vocabulary: Option<Vec<crate::vocabulary::Term>>,
     history_keep: Option<String>,
     /// system | light | dark.
@@ -1179,6 +1206,22 @@ fn apply_options(app: &AppRef, options: OptionsIn) -> Result<Value, String> {
         }
         if let Some(on) = options.mcp_recording {
             cfg.mcp_recording = on;
+        }
+        if let Some(d) = options.export_dir {
+            let d = d.trim().to_string();
+            if !d.is_empty() && !(std::path::Path::new(&d).is_absolute() && std::path::Path::new(&d).is_dir()) {
+                return Err(format!("{d} is not a folder."));
+            }
+            cfg.export_dir = d;
+        }
+        if let Some(on) = options.export_auto {
+            cfg.export_auto = on;
+        }
+        if let Some(p) = options.export_parts {
+            if p.iter().any(|x| !crate::export::PARTS.contains(&x.as_str())) {
+                return Err(format!("Unknown parts {p:?}"));
+            }
+            cfg.export_parts = p;
         }
         if let Some(on) = options.call_detection {
             cfg.call_detection = on;
@@ -1409,6 +1452,7 @@ fn stop_meeting(app: &AppRef) -> Result<meeting::Meeting, String> {
     // AI notes right away. The built-in model downloads first when it is not there yet
     // (progress in the meeting; Cancel stops it).
     if let Ok(m) = &r {
+        auto_export(app, &m.id);
         let cfg = app.config.lock().clone();
         let ready = if cfg.ai_engine == "server" { !cfg.ai_url.is_empty() } else { llm::builtin_status(&cfg.ai_builtin_model).supported };
         if cfg.ai_auto && ready && !m.lines.is_empty() {
@@ -1441,6 +1485,75 @@ fn overlay_unfocus() {
 }
 
 /// The strip's microphone button: mute or unmute your microphone in the meeting being recorded.
+// ------------------------------------------------------------------ note apps
+/// Save meeting `id` to the note-app folder. `manual`: the meeting's Save to folder (a file
+/// edited outside is an error then; by itself it is only reported).
+fn export_meeting(app: &AppRef, id: &str, manual: bool) -> Result<Value, String> {
+    let cfg = app.config.lock().clone();
+    if cfg.export_dir.is_empty() {
+        return Err("Choose a folder first: Settings → Note apps.".into());
+    }
+    if live_session(app, id).is_some() {
+        return Err("Save it when the recording stops.".into());
+    }
+    let dir = PathBuf::from(&cfg.export_dir);
+    let result = crate::export::save_meeting(&meeting::dir(), id, &dir, crate::export::parts(&cfg.export_parts), &crate::export::local_offset_at);
+    let (state, file, detail) = match &result {
+        Ok(crate::export::Outcome::Written(f)) => ("saved", f.clone(), String::new()),
+        Ok(crate::export::Outcome::KeptEdited(f)) => ("kept", f.clone(), format!("{f} was changed outside the app: it is not overwritten. Rename or delete it to save again.")),
+        Err(e) => ("error", String::new(), format!("Not saved to {}: {e:#}", cfg.export_dir)),
+    };
+    emit_logged(&app.handle, "meeting-export", json!({"id": id, "state": state, "file": file, "detail": detail}));
+    match state {
+        "saved" => Ok(json!({"file": file, "obsidian": crate::export::obsidian_link(&dir, &file)})),
+        "kept" if !manual => Ok(json!({"file": file, "obsidian": crate::export::obsidian_link(&dir, &file)})),
+        _ => Err(detail),
+    }
+}
+
+/// When a meeting stops and when its AI notes are written (Settings → Note apps → by itself).
+fn auto_export(app: &AppRef, id: &str) {
+    let cfg = app.config.lock().clone();
+    if cfg.export_dir.is_empty() || !cfg.export_auto {
+        return;
+    }
+    let (app, id) = (app.clone(), id.to_string());
+    std::thread::spawn(move || {
+        let _ = export_meeting(&app, &id, false);
+    });
+}
+
+/// The meeting's Save to folder.
+#[tauri::command]
+async fn meeting_save_to_folder(app: State<'_, AppRef>, id: String) -> Result<Value, String> {
+    let app = app.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || export_meeting(&app, &id, true)).await.map_err(|e| e.to_string())?
+}
+
+/// The meeting's Open in Obsidian (its file in the vault the folder is in).
+#[tauri::command]
+fn meeting_open_in_obsidian(app: State<'_, AppRef>, id: String) -> Result<(), String> {
+    let dir = PathBuf::from(&app.config.lock().export_dir);
+    let m = meeting::load_in(&meeting::dir(), &id).map_err(|e| format!("{e:#}"))?;
+    if m.export_file.is_empty() || !dir.join(&m.export_file).is_file() {
+        return Err("Save it to the folder first.".into());
+    }
+    let link = crate::export::obsidian_link(&dir, &m.export_file).ok_or("The folder is not in an Obsidian vault.")?;
+    crate::export::open_link(&link).map_err(|e| format!("Could not open Obsidian: {e}"))
+}
+
+/// Settings → Note apps → Choose folder: the system's folder dialog; saved at once.
+#[tauri::command]
+async fn choose_export_folder(app: State<'_, AppRef>, handle: tauri::AppHandle) -> Result<Option<Value>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let Some(folder) = handle.dialog().file().set_title("The folder for your meeting notes").blocking_pick_folder() else {
+        return Ok(None);
+    };
+    let path = folder.into_path().map_err(|e| e.to_string())?;
+    let app = app.inner().clone();
+    apply_options(&app, OptionsIn { export_dir: Some(path.to_string_lossy().into_owned()), ..Default::default() }).map(Some)
+}
+
 /// The pointer came onto the strip, or left it.
 #[tauri::command]
 fn overlay_hover(app: State<'_, AppRef>, on: bool) {
@@ -1455,7 +1568,18 @@ fn open_meeting(app: State<'_, AppRef>, id: String) -> Result<(), String> {
         return Err(format!("Unknown meeting {id:?}"));
     }
     app.show_main();
-    app.handle.emit_to("main", "open-meeting", &id).map_err(|e| e.to_string())?;
+    emit_logged(&app.handle, "open-meeting", &id); // the main page opens it (the e2e reads it too)
+    // Hyprland: in front even without misc:focus_on_activate (a moment for it to map first).
+    if hyprland::running() {
+        std::thread::spawn(|| {
+            for _ in 0..10 {
+                if hyprland::focus_own_window("Lowkey") {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        });
+    }
     app.overlay_hovered.store(false, Ordering::SeqCst);
     if app.meeting.lock().is_none() && !app.meeting_starting.load(Ordering::SeqCst) {
         app.want_overlay(1, false);
@@ -1565,8 +1689,72 @@ fn meeting_update(app: State<'_, AppRef>, id: String, title: Option<String>, not
             m.notes = n;
         }
     })
-    .map(|_| ())
-    .map_err(|e| format!("{e:#}"))
+    .map_err(|e| format!("{e:#}"))?;
+    auto_export_after_edits(app.inner(), &id);
+    Ok(())
+}
+
+/// A transcript paragraph fixed by the user (Transcript tab: a click on it). Returns the meeting
+/// and, when the fix looks like a name or term the model gets wrong, a Vocabulary suggestion.
+#[tauri::command]
+fn meeting_edit_paragraph(app: State<'_, AppRef>, id: String, from: usize, to: usize, before: String, text: String, speaker: String) -> Result<Value, String> {
+    if live_session(app.inner(), &id).is_some() {
+        return Err("Fix the transcript when the recording stops.".into());
+    }
+    let speaker = match speaker.as_str() {
+        "me" => meeting::Speaker::Me,
+        "them" => meeting::Speaker::Them,
+        other => return Err(format!("Unknown speaker {other:?}")),
+    };
+    if text.len() > meeting::MAX_NOTES {
+        return Err("The text is too long.".into());
+    }
+    let mut result = Ok(());
+    let m = meeting::edit_in(&meeting::dir(), &id, |m| result = meeting::edit_paragraph(m, from, to, &before, &text, speaker)).map_err(|e| format!("{e:#}"))?;
+    result.map_err(|e| format!("{e:#}"))?;
+    auto_export_after_edits(app.inner(), &id);
+    let suggestion = crate::vocabulary::suggestion(&before, &text, &app.config.lock().vocabulary);
+    Ok(json!({"meeting": m, "suggestion": suggestion}))
+}
+
+/// The transcript's "Add … to Vocabulary": the term, or one more spelling of it.
+#[tauri::command]
+fn vocabulary_add(app: State<'_, AppRef>, term: crate::vocabulary::Term) -> Result<Value, String> {
+    let list = crate::vocabulary::with_term(&app.config.lock().vocabulary, term.clone());
+    if !crate::vocabulary::has(&list, &term) {
+        return Err(format!(
+            "“{}” was not added: the Vocabulary is full ({} terms, {} spellings each). Remove some in Settings → General.",
+            term.term,
+            crate::vocabulary::MAX_TERMS,
+            crate::vocabulary::MAX_SPELLINGS
+        ));
+    }
+    apply_options(app.inner(), OptionsIn { vocabulary: Some(list), ..Default::default() })
+}
+
+/// The note follows title and notes edits: saved 3 s after the last one (not on every key).
+fn auto_export_after_edits(app: &AppRef, id: &str) {
+    let gen = {
+        let mut edits = app.export_edits.lock();
+        let g = edits.entry(id.to_string()).or_insert(0);
+        *g += 1;
+        *g
+    };
+    let (app, id) = (app.clone(), id.to_string());
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_secs(3));
+        let last = {
+            let mut edits = app.export_edits.lock();
+            let last = edits.get(&id) == Some(&gen);
+            if last {
+                edits.remove(&id);
+            }
+            last
+        };
+        if last {
+            auto_export(&app, &id);
+        }
+    });
 }
 
 // ------------------------------------------------------------------ AI notes
@@ -1637,8 +1825,10 @@ fn run_ai_notes(app: &AppRef, id: &str) {
         emit_logged(&h, "ai-notes", json!({"id": id, "state": state, "detail": detail, "progress": progress, "text": text}));
     };
     send("preparing", "Getting ready…", 0.0, "");
+    let mut read_version = 0;
     let result = (|| -> anyhow::Result<(String, String)> {
         let m = meeting::load_in(&meeting::dir(), id)?;
+        read_version = m.transcript_version;
         anyhow::ensure!(!m.lines.is_empty() || !m.notes.trim().is_empty(), "this meeting has no transcript and no notes");
         let input = meeting::model_input(&m);
         // The language: the one set in Settings, else found in the transcript.
@@ -1679,8 +1869,12 @@ fn run_ai_notes(app: &AppRef, id: &str) {
                 m.ai_notes = text.clone();
                 m.ai_model = label.clone();
                 m.ai_at = now;
+                m.ai_version = read_version; // a fix made meanwhile: still "write again"
             }) {
-                Ok(_) => send("done", &label, 1.0, &text),
+                Ok(_) => {
+                    emit_logged(&h, "ai-notes", json!({"id": id, "state": "done", "detail": label, "progress": 1.0, "text": text, "ai_version": read_version}));
+                    auto_export(app, id);
+                }
                 Err(e) => send("error", &format!("The notes were written but not saved: {e:#}"), 0.0, &text),
             }
         }
@@ -2246,6 +2440,11 @@ pub fn run() {
             meeting_mute,
             overlay_hover,
             open_meeting,
+            meeting_save_to_folder,
+            meeting_edit_paragraph,
+            vocabulary_add,
+            meeting_open_in_obsidian,
+            choose_export_folder,
             overlay_drag_start,
             overlay_drag_end,
             window_dictation,
@@ -2317,6 +2516,7 @@ pub fn run() {
                 window_rec: Mutex::new(None),
                 open_files: Mutex::new(vec![]),
                 overlay_hovered: AtomicBool::new(false),
+                export_edits: Mutex::new(Default::default()),
                 started: Instant::now(),
                 overlay_ready: AtomicBool::new(false),
                 overlay_pending: AtomicBool::new(false),

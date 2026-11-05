@@ -7,6 +7,7 @@ pub mod calls;
 pub mod config;
 pub mod dictation;
 pub mod engine;
+pub mod export;
 pub mod formats;
 pub mod history;
 pub mod hyprland;

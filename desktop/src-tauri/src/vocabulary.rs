@@ -21,6 +21,67 @@ pub const MAX_TERMS: usize = 200;
 pub const MAX_CHARS: usize = 64;
 pub const MAX_SPELLINGS: usize = 10;
 
+/// A fix in a transcript that looks like a name or a term the model gets wrong: the words that
+/// changed (one to three on each side), as a term and how the model wrote it. None for other
+/// fixes (a new sentence, a word removed, punctuation, a plain word such as "their" → "there":
+/// the new words need a capital letter or a digit), and for a spelling the list already has.
+pub fn suggestion(before: &str, after: &str, known: &[Term]) -> Option<Term> {
+    let b: Vec<&str> = before.split_whitespace().collect();
+    let a: Vec<&str> = after.split_whitespace().collect();
+    let pre = b.iter().zip(&a).take_while(|(x, y)| x == y).count();
+    let suf = b[pre..].iter().rev().zip(a[pre..].iter().rev()).take_while(|(x, y)| x == y).count();
+    let (old, new) = (&b[pre..b.len() - suf], &a[pre..a.len() - suf]);
+    if !(1..=3).contains(&old.len()) || !(1..=3).contains(&new.len()) {
+        return None;
+    }
+    // Sentence punctuation and quotes come off; the signs of a term (".NET", "C#", "$HOME") stay.
+    let strip = |w: &[&str]| {
+        w.join(" ")
+            .trim_start_matches(|c: char| "\"'“‘«([{¿¡".contains(c))
+            .trim_end_matches(|c: char| ".,;:!?\"'”’»)]}…".contains(c))
+            .to_string()
+    };
+    let (old, new) = (strip(old), strip(new));
+    if old.is_empty() || new.is_empty() || old.chars().count() > MAX_CHARS || new.chars().count() > MAX_CHARS {
+        return None;
+    }
+    // Only the case changed ("we" → "We" at a sentence start): never a term (it would be
+    // replaced in every transcript).
+    if key(&old) == key(&new) {
+        return None;
+    }
+    // A name or a term: a capital, a digit, or a script without case (Chinese, Arabic…).
+    if !new.chars().any(|c| c.is_alphanumeric() && !c.is_lowercase()) {
+        return None;
+    }
+    if has(known, &Term { term: new.clone(), sounds_like: vec![old.clone()] }) {
+        return None;
+    }
+    Some(Term { term: new, sounds_like: vec![old] })
+}
+
+/// `t`'s term (any case) is in the list with each of its spellings.
+pub fn has(terms: &[Term], t: &Term) -> bool {
+    terms.iter().any(|x| key(&x.term) == key(&t.term) && t.sounds_like.iter().all(|s| key(s) == key(&x.term) || x.sounds_like.iter().any(|y| key(y) == key(s))))
+}
+
+/// The list with `t` in it: its spelling added to the term when the term is there already
+/// (in any case). The list's limits apply: `has` tells whether it fit.
+pub fn with_term(terms: &[Term], t: Term) -> Vec<Term> {
+    let mut out = terms.to_vec();
+    match out.iter_mut().find(|x| key(&x.term) == key(&t.term)) {
+        Some(x) => {
+            for s in t.sounds_like {
+                if !x.sounds_like.iter().any(|y| key(y) == key(&s)) {
+                    x.sounds_like.push(s);
+                }
+            }
+        }
+        None => out.push(t),
+    }
+    normalize(&out)
+}
+
 /// The list as the app uses it: cleaned, with one matcher per term.
 #[derive(Debug, Default)]
 pub struct Vocabulary {
@@ -150,6 +211,40 @@ impl Vocabulary {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_fixed_name_is_offered_for_the_vocabulary() {
+        let t = |term: &str, s: &str| Term { term: term.into(), sounds_like: vec![s.into()] };
+        assert_eq!(suggestion("I talked to Lisando today.", "I talked to Lisandro today.", &[]), Some(t("Lisandro", "Lisando")));
+        assert_eq!(suggestion("hello from open whisper.", "hello from OpenWhisper.", &[]), Some(t("OpenWhisper", "open whisper")));
+        assert_eq!(suggestion("we use cube ernetes", "we use Kubernetes", &[]), Some(t("Kubernetes", "cube ernetes")));
+        assert_eq!(suggestion("put it their", "put it there", &[]), None, "a plain word");
+        assert_eq!(suggestion("a b c", "a b c d e f g h", &[]), None, "new words, not a fix");
+        assert_eq!(suggestion("ask Lisando now", "ask now", &[]), None, "a word removed");
+        assert_eq!(suggestion("ok, Lisandro", "ok. Lisandro", &[]), None, "punctuation only");
+        assert_eq!(suggestion("to Lisando.", "to Lisandro.", &[t("Lisandro", "lisando")]), None, "already in the list");
+        let list = with_term(&[t("Lisandro", "Lee Sandro")], t("Lisandro", "Lisando"));
+        assert_eq!(list, vec![Term { term: "Lisandro".into(), sounds_like: vec!["Lee Sandro".into(), "Lisando".into()] }]);
+        // Only the case: never a term.
+        assert_eq!(suggestion("we use cube", "We use cube", &[]), None);
+        assert_eq!(suggestion("i think so", "I think so", &[]), None);
+        // The signs of a term stay; sentence punctuation goes.
+        assert_eq!(suggestion("we use dot net.", "we use .NET.", &[]), Some(t(".NET", "dot net")));
+        assert_eq!(suggestion("in c sharp", "in C#", &[]), Some(t("C#", "c sharp")));
+        assert_eq!(suggestion("echo dollar home", "echo $HOME", &[]), Some(t("$HOME", "dollar home")));
+        // A script without case.
+        // No spaces between the words: the whole phrase is offered (the user can say No).
+        assert_eq!(suggestion("我和李明说", "我和黎明说", &[]), Some(t("我和黎明说", "我和李明说")));
+        assert_eq!(suggestion("with 李明 today", "with 黎明 today", &[]), Some(t("黎明", "李明")));
+        // The term in another case in the list: one more spelling for it.
+        let lower = with_term(&[t("lisandro", "Lee Sandro")], t("Lisandro", "Lisando"));
+        assert_eq!(lower.len(), 1);
+        assert!(has(&lower, &t("Lisandro", "Lisando")));
+        assert_eq!(suggestion("to Lisando.", "to Lisandro.", &lower), None, "already there, in any case");
+        // Full: has() says so.
+        let full: Vec<Term> = (0..MAX_TERMS).map(|i| t(&format!("Term{i}"), &format!("tirm{i}"))).collect();
+        assert!(!has(&with_term(&full, t("Lisandro", "Lisando")), &t("Lisandro", "Lisando")));
+    }
 
     fn t(term: &str, sounds: &[&str]) -> Term {
         Term { term: term.into(), sounds_like: sounds.iter().map(|s| s.to_string()).collect() }
