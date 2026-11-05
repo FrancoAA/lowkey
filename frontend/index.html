@@ -132,7 +132,7 @@
               <p>Your microphone and the computer's sound become text. Audio and text stay on this computer.</p>
             </header>
             <div class="meetings-bar">
-              <input id="meetings-search" class="input" type="search" placeholder="Search titles, transcripts and AI notes" aria-label="Search meetings: titles, transcripts and AI notes" spellcheck="false" />
+              <input id="meetings-search" class="input" type="search" placeholder="Search titles, transcripts and notes" aria-label="Search meetings: titles, transcripts and notes" spellcheck="false" />
               <button id="meeting-start" type="button" class="btn btn-default btn-rec" aria-describedby="meetings-key"><span class="rec-dot" aria-hidden="true"></span>Record</button>
               <span id="meetings-key" class="sr-only"></span>
             </div>
@@ -183,11 +183,11 @@
             </div>
             <ul id="meeting-notices" class="notices" role="status" hidden></ul>
             <div class="meeting-body">
-              <!-- Left: the AI notes, or the transcript in their place (the switch). -->
+              <!-- Left: the notes, or the transcript in their place (the switch). -->
               <section class="notes-pane" aria-label="Notes and transcript">
                 <div class="notes-head">
                   <div class="seg" role="tablist" aria-label="Show">
-                    <button id="tab-notes" type="button" role="tab" class="seg-item" aria-selected="true" aria-controls="notes-panel">AI notes</button>
+                    <button id="tab-notes" type="button" role="tab" class="seg-item" aria-selected="true" aria-controls="notes-panel">Notes</button>
                     <button id="tab-transcript" type="button" role="tab" class="seg-item" aria-selected="false" aria-controls="transcript-panel" tabindex="-1">Transcript</button>
                   </div>
                   <span id="ai-meta" class="ai-meta"></span>
@@ -210,7 +210,7 @@
                   <div id="meeting-transcript" class="meeting-transcript" tabindex="0" aria-label="Transcript"></div>
                 </div>
               </section>
-              <!-- Right: questions about this meeting, answered by the AI notes model. -->
+              <!-- Right: questions about this meeting, answered by the notes model. -->
               <aside class="chat-pane" aria-labelledby="chat-title">
                 <div class="chat-head">
                   <h3 id="chat-title" class="pane-title">Ask about this meeting</h3>
@@ -311,7 +311,7 @@
           <div class="field field-stacked">
             <div class="field-text">
               <span class="label" id="vocab-label">Vocabulary</span>
-              <p class="field-desc">Names and terms the model gets wrong. In every transcript, their "sounds like" spellings become the term. Whisper and the AI notes also get the list as a hint.</p>
+              <p class="field-desc">Names and terms the model gets wrong. In every transcript, their "sounds like" spellings become the term. Whisper and the notes model also get the list as a hint.</p>
             </div>
             <div id="vocab" class="vocab" role="table" aria-labelledby="vocab-label">
               <div class="vocab-row vocab-head" role="row">
@@ -342,11 +342,11 @@
           </div>
         </section>
 
-        <!-- Models: speech to text, AI notes -->
+        <!-- Models: speech to text, notes -->
         <section id="section-model" class="section" role="tabpanel" data-section="model" hidden>
           <header class="section-head">
             <h2>Models</h2>
-            <p>Two models run on this computer: one writes what you say as text, the other writes the AI notes of your meetings. Each downloads once.</p>
+            <p>Two models run on this computer: one writes what you say as text, the other writes the notes of your meetings. Each downloads once.</p>
           </header>
 
           <div class="model-group">
@@ -380,7 +380,7 @@
 
           <div class="model-group">
             <div class="group-head">
-              <h3>AI notes</h3>
+              <h3>Notes</h3>
               <div id="ai-status" class="model-status" data-state="loading" aria-live="off">
                 <span class="dot"></span><span id="ai-status-text">Checking…</span>
                 <div class="model-bar" hidden><div id="ai-bar-fill"></div></div>
@@ -417,7 +417,7 @@
             </div>
             <div class="field">
               <div class="field-text">
-                <label for="ai-auto">Write AI notes when a meeting stops</label>
+                <label for="ai-auto">Write notes when a meeting stops</label>
                 <p class="field-desc">On by default. The first time, the chosen built-in model downloads (once), with its progress in the meeting.</p>
               </div>
               <input id="ai-auto" type="checkbox" role="switch" class="switch" />
@@ -522,14 +522,14 @@
           <div class="field">
             <div class="field-text">
               <label for="export-auto">Save each meeting there by itself</label>
-              <p class="field-desc">When it stops, and again when its AI notes are written. A note you changed in the other app is never overwritten. Off: use Save to folder in the meeting.</p>
+              <p class="field-desc">When it stops, and again when its notes are written. A note you changed in the other app is never overwritten. Off: use Save to folder in the meeting.</p>
             </div>
             <input id="export-auto" type="checkbox" role="switch" class="switch" />
           </div>
           <div class="separator"></div>
           <fieldset class="field field-stacked export-parts">
             <legend class="label">In the note</legend>
-            <label><input type="checkbox" value="ai_notes" /> AI notes</label>
+            <label><input type="checkbox" value="ai_notes" /> Notes</label>
             <label><input type="checkbox" value="notes" /> Your notes</label>
             <label><input type="checkbox" value="transcript" /> Transcript</label>
           </fieldset>
@@ -563,9 +563,9 @@
               <span class="label">What agents can do</span>
             </div>
             <ul class="agent-tools">
-              <li><b>List and read meetings</b>: the AI notes, your notes and the transcript ("Me" is you).</li>
+              <li><b>List and read meetings</b>: the notes, your notes and the transcript ("Me" is you).</li>
               <li><b>Search</b> meetings and dictations.</li>
-              <li><b>Get action items</b> from the AI notes, by person.</li>
+              <li><b>Get action items</b> from the notes, by person.</li>
               <li><b>Read the last dictation.</b></li>
               <li><b>Transcribe a file</b> on this computer, with the model chosen in Models.</li>
               <li><b>See if a meeting is being recorded</b>, and start or stop one when the switch above is on.</li>

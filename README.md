@@ -188,28 +188,32 @@ Record a call or a talk, as text next to your notes (Linux for now). No bot join
 - The text comes a few seconds after someone speaks: each source is cut at pauses (4–20 s
   pieces) and the speech model chosen in Settings → Models writes them.
 - **Stop** transcribes the last seconds and saves. The list shows all meetings, newest first,
-  grouped by day; open one to read it (the AI notes, or the transcript in their place with the
-  **AI notes | Transcript** switch; the chat on the right), change the title, **Copy** or
-  **Export .md** (AI notes, then the transcript).
+  grouped by day; open one to read it (the notes, or the transcript in their place with the
+  **Notes | Transcript** switch; the chat on the right), change the title, **Copy** or
+  **Export .md** (the notes, then the transcript).
+- **Check a point of the notes:** click it (or <kbd>Enter</kbd> on it) to see, under it, the
+  transcript's paragraphs it most likely comes from (speaker, time, the shared words marked);
+  **Show in transcript** opens the transcript at that paragraph. A point that no paragraph
+  matches says so: check it, the notes are a draft.
 - **Fix the transcript:** in a saved meeting, click a paragraph (or Enter on it) to correct the
   model's words; <kbd>Enter</kbd> or a click outside saves, <kbd>Esc</kbd> cancels, and the
   **Me / Them** label switches the speaker. An empty paragraph is removed. A fix that looks
   like a name or a term ("Lisando" → "Lisandro") offers to add it to the Vocabulary, so the
   model writes it right next time. Copy, Export, search, the note-app file and AI agents use
-  the fixed text; the AI notes stay as written, with **Write notes again** for the fixed text.
+  the fixed text; the notes stay as written, with **Write notes again** for the fixed text.
 - **Search** (<kbd>Ctrl</kbd>+<kbd>F</kbd> on the list): the meetings that have every word you
-  type, in any order and any case, also inside a word, in the title, the transcript, the AI
+  type, in any order and any case, also inside a word, in the title, the transcript, the
   notes or your notes. Each result shows where the words are and the text around them, with
   the words marked. <kbd>Esc</kbd> clears the search.
 - **Delete** a meeting from the list (the bin icon at the end of its row, on hover or with
   <kbd>Tab</kbd>) or from the open meeting. A dialog asks first (Cancel has the focus).
-- **AI notes**: a language model writes the meeting's notes from your notes and the transcript,
+- **Notes**: a language model writes the meeting's notes from your notes and the transcript,
   organized like the meeting: one section for each topic, with a bullet for each decision, fact,
   figure or task (the person in bold), and sub-bullets for the details. Built in:
   **Qwen3.5 4B** (Apache-2.0), run by llama.cpp on this computer (a 2.7 GB download the first
   time; ~25 s for 8 minutes of meeting on the Radeon 780M, ~1 min on a CPU). Settings → Models →
-  AI notes also offers Qwen3.5 2B (1.3 GB, faster, less exact) and Gemma 4 E4B (5 GB). Or your own
-  server in Settings → Models → AI notes (Ollama, LM Studio, any OpenAI-compatible API; a warning shows
+  Notes also offers Qwen3.5 2B (1.3 GB, faster, less exact) and Gemma 4 E4B (5 GB). Or your own
+  server in Settings → Models → Notes (Ollama, LM Studio, any OpenAI-compatible API; a warning shows
   when it is not on this computer). They are written by themselves when a meeting stops (the
   first time, after the model's download), or with **Write notes** when a meeting has none;
   they are a draft, and Copy/Export include them. Measurements: [bench/summary/results.md](bench/summary/results.md).

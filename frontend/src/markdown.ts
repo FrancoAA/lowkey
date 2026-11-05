@@ -1,5 +1,5 @@
 /**
- * The small part of Markdown that the AI notes and answers use: headings, bullet and numbered
+ * The small part of Markdown that the notes and answers use: headings, bullet and numbered
  * lists (indented ones go inside the item above them), paragraphs, **bold** and `code`. Built from DOM nodes and text nodes only (never innerHTML):
  * whatever the model writes stays text.
  */

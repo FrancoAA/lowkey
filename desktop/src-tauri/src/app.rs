@@ -1792,9 +1792,9 @@ fn ai_busy_reason(app: &AppRef, id: &str) -> String {
     if app.chat_job.lock().is_some() {
         "The AI is answering a question. Wait for the answer, or stop it.".to_string()
     } else if app.ai_job.lock().as_deref() == Some(id) {
-        "The AI notes of this meeting are being written.".to_string()
+        "The notes of this meeting are being written.".to_string()
     } else {
-        "AI notes are being written for another meeting. Wait for them, or cancel them.".to_string()
+        "Notes are being written for another meeting. Wait for them, or cancel them.".to_string()
     }
 }
 
