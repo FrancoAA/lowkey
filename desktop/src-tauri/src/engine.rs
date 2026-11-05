@@ -527,7 +527,7 @@ fn run_parakeet(rec: &sherpa_onnx::OfflineRecognizer, pcm: &[f32], sink: &Sink) 
     Ok(Output { language: None, duration, segments })
 }
 
-fn physical_threads() -> i32 {
+pub(crate) fn physical_threads() -> i32 {
     let n = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
     (if n >= 4 { n / 2 } else { n }) as i32
 }

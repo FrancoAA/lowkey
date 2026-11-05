@@ -38,6 +38,8 @@ pub struct App {
     overlay_hovered: AtomicBool,
     /// Note apps: per meeting, the newest title/notes edit (its note is saved a moment after the last one).
     export_edits: Mutex<std::collections::HashMap<String, u64>>,
+    /// Meetings whose voices are being told apart (after Stop).
+    voices_working: Mutex<std::collections::BTreeSet<String>>,
     started: Instant,
     /// The overlay page has loaded and rendered (shown only then: no blank first frame).
     overlay_ready: AtomicBool,
@@ -303,6 +305,12 @@ impl App {
             },
             // Settings → AI agents: the command an agent starts (`lowkey --mcp`).
             "agents": { "recording": cfg.mcp_recording, "program": crate::autostart::launcher() },
+            // Settings → Models → Tell the other voices apart.
+            "voices": {
+                "on": cfg.meeting_voices, "supported": crate::voices::SUPPORTED, "present": crate::voices::present(),
+                "download": crate::voices::download_state(),
+                "working": *self.voices_working.lock(),
+            },
             // Settings → Note apps; `vault`: the Obsidian vault the folder is in.
             "export": {
                 "dir": cfg.export_dir, "auto": cfg.export_auto, "parts": cfg.export_parts,
@@ -926,6 +934,8 @@ impl App {
         }
         self.ai_cancel.store(true, Ordering::SeqCst);
         llm::stop_builtin();
+        // The others' sound of a meeting whose voices were being told apart: not kept.
+        crate::voices::delete_leftovers(&meeting::dir());
         let f = runtime_dir().join("desktop.json");
         if std::fs::read_to_string(&f).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()).and_then(|v| v["pid"].as_u64())
             == Some(std::process::id() as u64)
@@ -1111,6 +1121,7 @@ struct OptionsIn {
     ai_key: Option<String>,
     ai_auto: Option<bool>,
     mcp_recording: Option<bool>,
+    meeting_voices: Option<bool>,
     /// Some("") turns the note-app folder off.
     export_dir: Option<String>,
     export_auto: Option<bool>,
@@ -1207,6 +1218,12 @@ fn apply_options(app: &AppRef, options: OptionsIn) -> Result<Value, String> {
         if let Some(on) = options.mcp_recording {
             cfg.mcp_recording = on;
         }
+        if let Some(on) = options.meeting_voices {
+            if on && !crate::voices::SUPPORTED {
+                return Err("This build cannot tell voices apart (Linux x86_64 only).".into());
+            }
+            cfg.meeting_voices = on;
+        }
         if let Some(d) = options.export_dir {
             let d = d.trim().to_string();
             if !d.is_empty() && !(std::path::Path::new(&d).is_absolute() && std::path::Path::new(&d).is_dir()) {
@@ -1262,6 +1279,10 @@ fn apply_options(app: &AppRef, options: OptionsIn) -> Result<Value, String> {
     // After the other options are valid and saved.
     if let Some(on) = options.start_at_login {
         set_start_at_login(app, on)?;
+    }
+    if options.meeting_voices == Some(true) && !crate::voices::present() {
+        let a2 = app.clone();
+        std::thread::spawn(move || crate::voices::download_models(|| a2.emit_status()));
     }
     if preview_on && app.config.lock().live_preview {
         app.prepare_preview(); // turned on (again), or another engine: get it ready
@@ -1412,6 +1433,13 @@ fn meeting_open(app: &AppRef, title: &str) -> Result<meeting::Live, String> {
     let doc = meeting::Meeting::new(title, &model);
     let id = doc.id.clone();
     let session = meeting::Session::new(meeting::dir(), doc, transcribe, emit).map_err(|e| format!("Could not save the meeting: {e:#}"))?;
+    if app.config.lock().meeting_voices && crate::voices::SUPPORTED {
+        if !crate::voices::present() {
+            session.notice("The voice models are not downloaded yet (Settings → Models → Who is speaking): this meeting keeps \"Them\".".into());
+        } else if let Err(e) = session.keep_their_sound(&crate::voices::tape_path(&meeting::dir(), &id)) {
+            session.notice(format!("The others' voices will not be told apart in this meeting: {e:#}."));
+        }
+    }
     if let Err(e) = session.open_sources() {
         session.abandon();
         let _ = meeting::delete_in(&meeting::dir(), &id);
@@ -1449,16 +1477,30 @@ fn stop_meeting(app: &AppRef) -> Result<meeting::Meeting, String> {
     // The strip says "saved" with a link to the meeting for a while, then goes (unless a new
     // meeting started, or the pointer is on it).
     app.hide_meeting_strip_later(8);
-    // AI notes right away. The built-in model downloads first when it is not there yet
-    // (progress in the meeting; Cancel stops it).
     if let Ok(m) = &r {
-        auto_export(app, &m.id);
-        let cfg = app.config.lock().clone();
-        let ready = if cfg.ai_engine == "server" { !cfg.ai_url.is_empty() } else { llm::builtin_status(&cfg.ai_builtin_model).supported };
-        if cfg.ai_auto && ready && !m.lines.is_empty() {
-            if let Err(why) = start_ai_notes(app, m.id.clone()) {
-                // e.g. another meeting's notes are being written: say so in this meeting.
-                emit_logged(&app.handle, "ai-notes", json!({"id": m.id, "state": "error", "detail": format!("Not written: {why} Then use Write notes."), "progress": 0.0, "text": ""}));
+        let theirs = session.their_sound();
+        let them = m.lines.iter().any(|l| l.speaker == meeting::Speaker::Them);
+        match theirs {
+            // The voices first (about 2 min for an hour); the note app and the AI notes then
+            // get the speakers.
+            // (Settings → Models may have turned it off while it recorded.)
+            Some(tape) if them && app.config.lock().meeting_voices => {
+                // Marked before the thread starts: Export, Write notes and fixes wait for it.
+                app.voices_working.lock().insert(m.id.clone());
+                let (a2, id) = (app.clone(), m.id.clone());
+                std::thread::spawn(move || {
+                    tell_voices_apart(&a2, &id, &tape);
+                    // Deleted meanwhile: nothing to save or write.
+                    if let Ok(m) = meeting::load_in(&meeting::dir(), &id) {
+                        after_meeting(&a2, &m);
+                    }
+                });
+            }
+            other => {
+                if let Some(tape) = other {
+                    let _ = std::fs::remove_file(tape); // nobody else spoke
+                }
+                after_meeting(app, m);
             }
         }
     }
@@ -1466,6 +1508,56 @@ fn stop_meeting(app: &AppRef) -> Result<meeting::Meeting, String> {
         session.abandon(); // keep what is transcribed; the next meeting can start
         "Stopping failed; the meeting is saved as it was.".to_string()
     })
+}
+
+/// Who of the others said each line, from the sound kept during the meeting; the file is
+/// deleted after. Progress as "meeting-voices" {id, state: working | done | error, detail}.
+fn tell_voices_apart(app: &AppRef, id: &str, tape: &std::path::Path) {
+    /// The meeting is "working" until this is dropped, also after a panic.
+    struct Working<'a>(&'a AppRef, &'a str);
+    impl Drop for Working<'_> {
+        fn drop(&mut self) {
+            self.0.voices_working.lock().remove(self.1);
+            self.0.emit_status();
+        }
+    }
+    let working = Working(app, id);
+    app.voices_working.lock().insert(id.to_string());
+    emit_logged(&app.handle, "meeting-voices", json!({"id": id, "state": "working", "detail": ""}));
+    app.emit_status();
+    let r = std::panic::catch_unwind(|| crate::voices::read_tape(tape).and_then(|s| crate::voices::turns(&s)))
+        .unwrap_or_else(|_| Err(anyhow::anyhow!("it stopped with an internal error")));
+    let _ = std::fs::remove_file(tape);
+    if r.is_err() {
+        crate::voices::verify(); // a broken model downloads again when the setting is turned on
+    }
+    let r = r.and_then(|turns| meeting::edit_in(&meeting::dir(), id, |m| meeting::set_people(m, &turns)));
+    drop(working);
+    match r {
+        Ok(m) => emit_logged(&app.handle, "meeting-voices", json!({"id": id, "state": "done", "detail": "", "meeting": m})),
+        Err(e) => emit_logged(&app.handle, "meeting-voices", json!({"id": id, "state": "error", "detail": format!("The voices could not be told apart: {e:#}")})),
+    }
+}
+
+/// The voices of meeting `id` are being told apart (after Stop): its text is not final yet.
+fn voices_pending(app: &AppRef, id: &str) -> bool {
+    app.voices_working.lock().contains(id)
+}
+
+const VOICES_PENDING: &str = "Wait until the voices are told apart (about 2 minutes for an hour of meeting).";
+
+/// After a meeting is saved: the note app, and the AI notes right away. The built-in model
+/// downloads first when it is not there yet (progress in the meeting; Cancel stops it).
+fn after_meeting(app: &AppRef, m: &meeting::Meeting) {
+    auto_export(app, &m.id);
+    let cfg = app.config.lock().clone();
+    let ready = if cfg.ai_engine == "server" { !cfg.ai_url.is_empty() } else { llm::builtin_status(&cfg.ai_builtin_model).supported };
+    if cfg.ai_auto && ready && !m.lines.is_empty() {
+        if let Err(why) = start_ai_notes(app, m.id.clone()) {
+            // e.g. another meeting's notes are being written: say so in this meeting.
+            emit_logged(&app.handle, "ai-notes", json!({"id": m.id, "state": "error", "detail": format!("Not written: {why} Then use Write notes."), "progress": 0.0, "text": ""}));
+        }
+    }
 }
 
 /// The side menu's Exit: the same as the tray menu's (a meeting is stopped and saved by the page
@@ -1495,6 +1587,9 @@ fn export_meeting(app: &AppRef, id: &str, manual: bool) -> Result<Value, String>
     }
     if live_session(app, id).is_some() {
         return Err("Save it when the recording stops.".into());
+    }
+    if voices_pending(app, id) {
+        return Err(VOICES_PENDING.into()); // saved by itself after them
     }
     let dir = PathBuf::from(&cfg.export_dir);
     let result = crate::export::save_meeting(&meeting::dir(), id, &dir, crate::export::parts(&cfg.export_parts), &crate::export::local_offset_at);
@@ -1697,9 +1792,12 @@ fn meeting_update(app: State<'_, AppRef>, id: String, title: Option<String>, not
 /// A transcript paragraph fixed by the user (Transcript tab: a click on it). Returns the meeting
 /// and, when the fix looks like a name or term the model gets wrong, a Vocabulary suggestion.
 #[tauri::command]
-fn meeting_edit_paragraph(app: State<'_, AppRef>, id: String, from: usize, to: usize, before: String, text: String, speaker: String) -> Result<Value, String> {
+fn meeting_edit_paragraph(app: State<'_, AppRef>, id: String, from: usize, to: usize, before: String, text: String, speaker: String, person: Option<u32>) -> Result<Value, String> {
     if live_session(app.inner(), &id).is_some() {
         return Err("Fix the transcript when the recording stops.".into());
+    }
+    if voices_pending(app.inner(), &id) {
+        return Err(VOICES_PENDING.into());
     }
     let speaker = match speaker.as_str() {
         "me" => meeting::Speaker::Me,
@@ -1710,11 +1808,25 @@ fn meeting_edit_paragraph(app: State<'_, AppRef>, id: String, from: usize, to: u
         return Err("The text is too long.".into());
     }
     let mut result = Ok(());
-    let m = meeting::edit_in(&meeting::dir(), &id, |m| result = meeting::edit_paragraph(m, from, to, &before, &text, speaker)).map_err(|e| format!("{e:#}"))?;
+    let m = meeting::edit_in(&meeting::dir(), &id, |m| result = meeting::edit_paragraph(m, from, to, &before, &text, speaker, person.unwrap_or(0))).map_err(|e| format!("{e:#}"))?;
     result.map_err(|e| format!("{e:#}"))?;
     auto_export_after_edits(app.inner(), &id);
     let suggestion = crate::vocabulary::suggestion(&before, &text, &app.config.lock().vocabulary);
     Ok(json!({"meeting": m, "suggestion": suggestion}))
+}
+
+/// A name for one of the others found by voice (`person` 1, 2, …); the name of another one
+/// merges the two. Returns the meeting.
+#[tauri::command]
+fn meeting_name_speaker(app: State<'_, AppRef>, id: String, person: u32, name: String) -> Result<meeting::Meeting, String> {
+    if live_session(app.inner(), &id).is_some() || voices_pending(app.inner(), &id) {
+        return Err(VOICES_PENDING.into());
+    }
+    let mut result = Ok(());
+    let m = meeting::edit_in(&meeting::dir(), &id, |m| result = meeting::name_speaker(m, person, &name)).map_err(|e| format!("{e:#}"))?;
+    result.map_err(|e| format!("{e:#}"))?;
+    auto_export_after_edits(app.inner(), &id);
+    Ok(m)
 }
 
 /// The transcript's "Add … to Vocabulary": the term, or one more spelling of it.
@@ -1778,6 +1890,9 @@ fn meeting_ai_notes(app: State<'_, AppRef>, id: String) -> Result<(), String> {
     }
     if live_session(&app, &id).is_some() {
         return Err("Stop the recording first.".into());
+    }
+    if voices_pending(&app, &id) {
+        return Err(VOICES_PENDING.into());
     }
     start_ai_notes(&app, id)
 }
@@ -2442,6 +2557,7 @@ pub fn run() {
             open_meeting,
             meeting_save_to_folder,
             meeting_edit_paragraph,
+            meeting_name_speaker,
             vocabulary_add,
             meeting_open_in_obsidian,
             choose_export_folder,
@@ -2480,6 +2596,8 @@ pub fn run() {
                 std::process::exit(0);
             }
             let handle = tauri_app.handle().clone();
+            // The others' sound of a meeting that did not end (the app was killed): never kept.
+            crate::voices::delete_leftovers(&meeting::dir());
             let config = Config::load();
             set_window_theme(&handle, &config.theme);
             // The strip opens where the user left it (the rule that keys add uses this place).
@@ -2517,6 +2635,7 @@ pub fn run() {
                 open_files: Mutex::new(vec![]),
                 overlay_hovered: AtomicBool::new(false),
                 export_edits: Mutex::new(Default::default()),
+                voices_working: Mutex::new(Default::default()),
                 started: Instant::now(),
                 overlay_ready: AtomicBool::new(false),
                 overlay_pending: AtomicBool::new(false),
@@ -2761,6 +2880,12 @@ pub fn run() {
                     eprintln!("  model {model}: {e:#}");
                 }
             });
+            // Who is speaking is on but its models are not there (deleted, or a config from
+            // another computer): download them again.
+            if config.meeting_voices && crate::voices::SUPPORTED && !crate::voices::present() {
+                let a2 = app.clone();
+                std::thread::spawn(move || crate::voices::download_models(|| a2.emit_status()));
+            }
             // Live preview: 17 MB, downloaded once; dictation works without it meanwhile.
             if config.live_preview {
                 app.prepare_preview();

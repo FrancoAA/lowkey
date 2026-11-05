@@ -52,6 +52,15 @@ export interface MeetingsUi {
   exportInfo(): { dir: string; vault: string | null };
   /** Settings changed here (a term added to the Vocabulary): read them again. */
   refreshStatus(): void;
+  /** The meetings whose voices are being told apart now (from the app's status). */
+  voicesWorking(): string[];
+}
+
+/** "Me", "Them", or the name of one of the others found by voice ("Speaker 2" before one). */
+export function speakerLabel(m: Pick<Meeting, "people">, speaker: "me" | "them", person = 0): string {
+  if (speaker === "me") return "Me";
+  if (!person) return "Them";
+  return m.people?.[person - 1]?.trim() || `Speaker ${person}`;
 }
 
 /** A paragraph and the lines it is made of (`from`..`to`, in the meeting's lines). */
@@ -62,7 +71,7 @@ export function paragraphs(lines: MeetingLine[]): Paragraph[] {
   const out: Paragraph[] = [];
   lines.forEach((l, i) => {
     const p = out[out.length - 1];
-    if (p && p.speaker === l.speaker && l.start - p.end < 2 && p.text.length < 600) {
+    if (p && p.speaker === l.speaker && (p.person ?? 0) === (l.person ?? 0) && l.start - p.end < 2 && p.text.length < 600) {
       p.text += ` ${l.text}`;
       p.end = Math.max(p.end, l.end);
       p.to = i;
@@ -157,6 +166,8 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
   let chatError: { id: string; text: string } | null = null;
   /** What the left side shows. */
   let tab: "notes" | "transcript" = "notes";
+  /** Meetings whose voices are being told apart (after Stop). */
+  const voicesWorking = new Set<string>(ui.voicesWorking());
 
   /** The meeting on screen (live or saved), and the live one (if any). */
   let shown: Meeting | null = null;
@@ -216,6 +227,18 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
     editing = null;
     const nearEnd = transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight < 60;
     transcript.replaceChildren();
+    if (voicesWorking.has(m.id)) {
+      const n = document.createElement("p");
+      n.className = "transcript-note";
+      n.setAttribute("role", "status");
+      n.replaceChildren(spinner(), "Telling the voices apart… (about 2 minutes for an hour)");
+      transcript.append(n);
+    } else if (!isLive() && m.people?.length && m.people.every((x) => !x.trim())) {
+      const n = document.createElement("p");
+      n.className = "transcript-note";
+      n.textContent = "Click a speaker to give a name. Give two speakers the same name when they are one person.";
+      transcript.append(n);
+    }
     const paras = paragraphs(m.lines);
     if (!paras.length) {
       const p = document.createElement("p");
@@ -227,16 +250,26 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
       const row = document.createElement("div");
       row.className = "tline";
       row.dataset.speaker = l.speaker;
-      const who = document.createElement("span");
-      who.className = "who";
-      who.textContent = l.speaker === "me" ? "Me" : "Them";
+      if (l.person) row.dataset.person = String(((l.person - 1) % 6) + 1);
+      const named = !isLive() && l.speaker === "them" && !!l.person && !voicesWorking.has(m.id);
+      const who = document.createElement(named ? "button" : "span");
+      who.className = named ? "who who-name" : "who";
+      who.textContent = speakerLabel(m, l.speaker, l.person);
+      if (named && who instanceof HTMLButtonElement) {
+        who.type = "button";
+        who.title = "Click to give a name";
+        who.setAttribute("aria-label", `${who.textContent}: give a name`);
+        const person = l.person!;
+        who.addEventListener("click", () => startRename(who, person));
+      }
       const at = document.createElement("span");
       at.className = "when";
       at.textContent = clock(l.start);
       const text = document.createElement("p");
       text.textContent = l.text;
-      if (!isLive()) {
-        // A saved meeting: a click (or Enter) fixes the paragraph.
+      if (!isLive() && !voicesWorking.has(m.id)) {
+        // A saved meeting: a click (or Enter) fixes the paragraph (not while its voices are
+        // told apart: the speakers change then).
         text.tabIndex = 0;
         text.className = "fixable";
         text.title = "Click to fix the text";
@@ -263,17 +296,31 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
     if (!shown || isLive() || editing) return;
     const id = shown.id; // the meeting these lines belong to, whatever is shown later
     editing = { ...para, meetingId: id };
-    let speaker = para.speaker as "me" | "them";
+    const m = shown;
+    // Me, then each of the others found by voice who still has lines (one merged into another
+    // has none), or "Them" when there are none.
+    const persons = [...new Set(m.lines.filter((l) => l.speaker === "them" && l.person).map((l) => l.person!))].sort((a, b) => a - b);
+    const choices: { speaker: "me" | "them"; person: number }[] = [
+      { speaker: "me", person: 0 },
+      ...(persons.length ? persons.map((p) => ({ speaker: "them" as const, person: p })) : [{ speaker: "them" as const, person: 0 }]),
+    ];
+    let at = Math.max(0, choices.findIndex((c) => c.speaker === para.speaker && c.person === (para.person ?? 0)));
+    if (choices[at].speaker !== para.speaker || choices[at].person !== (para.person ?? 0)) choices.splice((at = 1), 0, { speaker: para.speaker, person: para.person ?? 0 });
+    let speaker = choices[at].speaker;
+    let person = choices[at].person;
     const who = row.querySelector<HTMLElement>(".who")!;
     const swap = document.createElement("button");
     swap.type = "button";
     swap.className = `who who-switch who-${speaker}`;
     const label = () => {
-      swap.textContent = speaker === "me" ? "Me" : "Them";
+      const name = speakerLabel(m, speaker, person);
+      swap.textContent = name;
       swap.className = `who who-switch who-${speaker}`;
-      swap.title = `Said by ${speaker === "me" ? "you" : "the others"}: click to switch`;
-      swap.setAttribute("aria-label", `Speaker: ${speaker === "me" ? "Me" : "Them"}. Switch`);
+      swap.title = `Said by ${speaker === "me" ? "you" : name}: click to switch`;
+      swap.setAttribute("aria-label", `Speaker: ${name}. Switch`);
       row.dataset.speaker = speaker;
+      if (person) row.dataset.person = String(((person - 1) % 6) + 1);
+      else delete row.dataset.person;
     };
     label();
     who.replaceWith(swap);
@@ -296,13 +343,13 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
       done = true;
       const text = field.value.trim();
       const mine = () => editing?.meetingId === id;
-      if (!save || (text === para.text && speaker === para.speaker)) {
+      if (!save || (text === para.text && speaker === para.speaker && person === (para.person ?? 0))) {
         if (mine()) editing = null;
         if (shown?.id === id) renderView();
         return;
       }
       try {
-        const r = await api.editParagraph(id, para.from, para.to, para.text, text, speaker);
+        const r = await api.editParagraph(id, para.from, para.to, para.text, text, speaker, person);
         if (mine()) editing = null;
         if (shown?.id !== id) return; // another meeting is open now
         shown = r.meeting;
@@ -321,7 +368,8 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
     };
     swap.addEventListener("mousedown", (e) => e.preventDefault()); // the focus stays in the text
     swap.addEventListener("click", () => {
-      speaker = speaker === "me" ? "them" : "me";
+      at = (at + 1) % choices.length;
+      ({ speaker, person } = choices[at]);
       label();
       field.focus();
     });
@@ -340,6 +388,62 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
       // Another window (a look-up of the spelling) is not a click outside: the edit stays.
       if (e.relatedTarget === null && !document.hasFocus()) return;
       if (!row.contains(e.relatedTarget as Node | null)) void finish(true);
+    });
+  }
+
+  /** A name for one of the others: a field in place of the label. Enter or a click outside
+   * saves, Escape cancels; the name of another speaker merges the two. */
+  function startRename(who: HTMLElement, person: number): void {
+    if (!shown || isLive() || editing) return;
+    const m = shown;
+    const id = m.id;
+    editing = { ...paragraphs(m.lines)[0], meetingId: id }; // no redraw under the field
+    const field = document.createElement("input");
+    field.className = "input name-field";
+    field.maxLength = 60;
+    field.value = m.people?.[person - 1] ?? "";
+    field.placeholder = `Speaker ${person}`;
+    field.setAttribute("aria-label", `Name of Speaker ${person}: Enter saves, Escape cancels`);
+    who.replaceWith(field);
+    field.focus();
+    let done = false;
+    const finish = async (save: boolean) => {
+      if (done) return;
+      done = true;
+      const name = field.value.trim();
+      const mine = () => editing?.meetingId === id;
+      if (!save || name === (m.people?.[person - 1] ?? "").trim()) {
+        if (mine()) editing = null;
+        if (shown?.id === id) renderView();
+        return;
+      }
+      try {
+        const next = await api.nameSpeaker(id, person, name);
+        if (mine()) editing = null;
+        if (shown?.id !== id) return;
+        const merged = !next.lines.some((l) => l.speaker === "them" && l.person === person);
+        shown = next;
+        renderView();
+        ui.announce(merged ? `Speaker ${person} is one person with ${name} now.` : name ? `Speaker ${person} is ${name} now.` : `Speaker ${person} has no name now.`);
+      } catch (err) {
+        if (mine()) editing = null;
+        if (shown?.id === id) renderView();
+        showError(String(err));
+      }
+    };
+    field.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        void finish(true);
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation(); // not the section's Escape
+        void finish(false);
+      }
+    });
+    field.addEventListener("blur", () => {
+      if (!document.hasFocus()) return; // another window: the field stays
+      void finish(true);
     });
   }
 
@@ -401,7 +505,8 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
     } else {
       delete meta.dataset.live;
       const interrupted = shown.state === "recording" ? " · interrupted" : "";
-      meta.textContent = `${when(shown.started_at)} · ${minutes(shown.duration)}${interrupted}`;
+      const voices = voicesWorking.has(shown.id) ? " · telling the voices apart…" : "";
+      meta.textContent = `${when(shown.started_at)} · ${minutes(shown.duration)}${interrupted}${voices}`;
     }
   }
 
@@ -501,7 +606,8 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
     aiWrite.hidden = running || (!!shown.ai_notes && !stale) || tab !== "notes";
     aiWrite.textContent = stale ? "Write notes again" : "Write notes";
     aiWrite.title = stale ? "The transcript was fixed after these notes were written" : "";
-    aiWrite.disabled = aiRunning() || chatRunning(); // the model is at work for something else
+    aiWrite.disabled = aiRunning() || chatRunning() || voicesWorking.has(shown.id); // at work for something else, or the speakers come first
+    if (voicesWorking.has(shown.id)) aiWrite.title = "Wait until the voices are told apart: then the notes have the speakers";
     aiCancel.hidden = !running;
     aiProgress.hidden = !running || mine!.state === "writing";
     if (running) {
@@ -1106,7 +1212,11 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
     const info = ui.exportInfo();
     const off = !shown || isLive() || !info.dir;
     folderBtn.hidden = off;
-    folderBtn.title = info.dir ? `Save this meeting as Markdown in ${info.dir}` : "";
+    const waiting = !!shown && voicesWorking.has(shown.id);
+    folderBtn.title = waiting ? "Wait until the voices are told apart (it is saved by itself then)" : info.dir ? `Save this meeting as Markdown in ${info.dir}` : "";
+    if (!folderBtn.textContent?.startsWith("Saved")) folderBtn.disabled = waiting;
+    exportBtn.disabled = waiting;
+    exportBtn.title = waiting ? "Wait until the voices are told apart" : "";
     // Saved in this folder (a note in a folder chosen before is not this vault's).
     obsidianBtn.hidden = off || !info.vault || !shown?.export_file || shown.export_dir !== info.dir;
     obsidianBtn.title = info.vault ? `Open its note in the ${info.vault} vault` : "";
@@ -1150,6 +1260,32 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
 
   deleteBtn.addEventListener("click", () => {
     if (shown) void confirmDelete(shown.id, title.value.trim() || shown.title);
+  });
+
+  // After Stop, with Settings → Models → Tell the other voices apart: the speakers come later.
+  api.onVoices((e) => {
+    if (e.state === "working") voicesWorking.add(e.id);
+    else voicesWorking.delete(e.id);
+    if (shown?.id !== e.id) return;
+    if (e.state === "done" && e.meeting) {
+      const n = e.meeting.people?.length ?? 0;
+      if (editing?.meetingId === e.id) {
+        // A fix is open: it saves into the old lines; the speakers show after it.
+        void api.get(e.id).then((m) => {
+          if (shown?.id === e.id && !editing) {
+            shown = m;
+            renderView();
+          }
+        });
+      } else {
+        shown = e.meeting;
+        renderView();
+      }
+      ui.announce(n > 1 ? `The voices are told apart: ${n} speakers.` : n === 1 ? "The voices are told apart: one speaker." : "No voices were told apart.");
+    } else if (e.state === "error") {
+      showError(e.detail);
+      renderView();
+    } else renderView();
   });
 
   // ---------------------------------------------------------------- search

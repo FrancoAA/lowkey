@@ -105,6 +105,9 @@ pub struct Config {
     /// AI agents (the MCP server, `lowkey --mcp`) may start and stop meeting recordings. Off:
     /// they only read meetings and dictations, and transcribe files.
     pub mcp_recording: bool,
+    /// Meetings: tell the others in a call apart by their voices, after Stop (src/voices.rs).
+    /// Off by default; turning it on downloads the models (46 MB).
+    pub meeting_voices: bool,
     /// Note apps: each meeting as Markdown in this folder (an Obsidian vault, Logseq's pages, a
     /// synced folder); "" = off.
     pub export_dir: String,
@@ -136,6 +139,7 @@ impl Default for Config {
             ai_key: String::new(),
             ai_auto: true,
             mcp_recording: false,
+            meeting_voices: false,
             export_dir: String::new(),
             export_auto: true,
             export_parts: crate::export::PARTS.iter().map(|s| s.to_string()).collect(),

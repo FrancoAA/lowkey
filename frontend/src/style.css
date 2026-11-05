@@ -21,6 +21,11 @@
   /* Meeting voices: Me (the microphone) is neutral; Them (the computer's sound) is steel blue. */
   --me: #3f3f46;
   --them: #4f6d8a;
+  --p2: #8a5a2b;
+  --p3: #2f7a57;
+  --p4: #8a3f6e;
+  --p5: #5f52a8;
+  --p6: #7d6400;
   --them-soft: #eef2f6;
   --rec: #dc2626;
   color-scheme: light;
@@ -52,6 +57,11 @@
   --brand-soft: #1c1c1f;
   --me: #e4e4e7;
   --them: #8aa4bf;
+  --p2: #d1a074;
+  --p3: #7fc8a6;
+  --p4: #d48bb8;
+  --p5: #ab9ee6;
+  --p6: #d9b85a;
   --them-soft: #141b22;
   --rec: #f87171;
 }
@@ -495,6 +505,17 @@ mark { background: color-mix(in srgb, var(--brand) 20%, transparent); color: inh
 .tline .who::before { content: ""; width: 7px; height: 7px; border-radius: 2px; background: currentColor; }
 .tline[data-speaker="me"] .who { color: var(--me); }
 .tline[data-speaker="them"] .who { color: var(--them); }
+/* The others told apart by voice: one colour each (6, then again). */
+.tline[data-speaker="them"][data-person="2"] .who { color: var(--p2); }
+.tline[data-speaker="them"][data-person="3"] .who { color: var(--p3); }
+.tline[data-speaker="them"][data-person="4"] .who { color: var(--p4); }
+.tline[data-speaker="them"][data-person="5"] .who { color: var(--p5); }
+.tline[data-speaker="them"][data-person="6"] .who { color: var(--p6); }
+.who-name { border: 0; background: transparent; padding: 0; cursor: pointer; font: inherit; font-size: 12px; font-weight: 600; border-radius: 4px; }
+.who-name:hover { text-decoration: underline; }
+.who-name:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 35%, transparent); }
+.name-field { height: 26px; font-size: 12px; padding: 2px 8px; width: 14em; }
+.transcript-note { display: flex; align-items: center; gap: 8px; color: var(--muted-foreground); font-size: 13px; margin: 0 0 12px; }
 .tline .when { font-size: 11px; color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
 .tline p { grid-column: 1 / -1; margin: 3px 0 0; line-height: 1.6; overflow-wrap: anywhere; text-wrap: pretty; max-width: 75ch; }
 

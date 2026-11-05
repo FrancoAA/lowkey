@@ -423,6 +423,23 @@
               <input id="ai-auto" type="checkbox" role="switch" class="switch" />
             </div>
           </div>
+
+          <div class="model-group" id="voices-group">
+            <div class="group-head">
+              <h3>Who is speaking</h3>
+              <div id="voices-status" class="model-status" data-state="missing" aria-live="off">
+                <span class="dot"></span><span id="voices-status-text">Off</span>
+                <div class="model-bar" hidden><div id="voices-bar-fill"></div></div>
+              </div>
+            </div>
+            <div class="field">
+              <div class="field-text">
+                <label for="voices-on">Tell the other voices apart in meetings</label>
+                <p class="field-desc">After a meeting stops, each of the others gets a label (Speaker 1, Speaker 2…) that you can name. The first time, two models download (46 MB). While a meeting records, the others' sound is kept in a temporary file on this computer, and deleted when the voices are told apart.</p>
+              </div>
+              <input id="voices-on" type="checkbox" role="switch" class="switch" />
+            </div>
+          </div>
         </section>
 
         <!-- Dictation -->
