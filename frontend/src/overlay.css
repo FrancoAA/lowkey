@@ -133,8 +133,11 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: transparent;
 .overlay[data-muted="1"] .mute { background: rgba(248, 113, 113, 0.18); color: #fca5a5; }
 .overlay[data-muted="1"] .mute .slash { display: inline; }
 .muted-note { color: #fca5a5; font-weight: 600; }
-/* The pill keeps the mute button while a meeting records. */
-.overlay[data-collapsed="1"][data-collapsed][data-mode="meeting"][data-state="recording"] { padding: 0 8px 0 12px; gap: 8px; }
+/* The pill keeps the mute button while a meeting records: the dot and the mute button go to the
+   two ends, the time stays in the middle. */
+.overlay[data-collapsed="1"][data-collapsed][data-mode="meeting"][data-state="recording"] {
+  justify-content: space-between; padding: 0 9px 0 10px; gap: 8px;
+}
 .overlay[data-collapsed="1"][data-collapsed][data-mode="meeting"][data-state="recording"] .mute { display: grid; width: 26px; height: 26px; }
 
 /* A saved meeting: "Open the notes" opens Lowkey on it. */
