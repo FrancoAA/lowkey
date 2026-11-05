@@ -1,6 +1,7 @@
 /**
  * Meetings section: record the microphone ("Me") and the computer's sound ("Them"), see the
- * transcript as it comes; when it stops, the AI notes are written (one section for each topic).
+ * transcript as it comes; when it stops, the notes are written (one section for each topic); a
+ * click on a point of the notes shows where the transcript says it.
  * A switch shows the transcript in the notes' place; on the right, questions about the meeting
  * are answered by the same model, and saved with it. The app records, transcribes, writes and
  * saves (desktop/src-tauri/src/meeting.rs, llm.rs); this page shows it and sends the title.
@@ -10,6 +11,7 @@ import { confirmDialog } from "./confirm";
 import { highlighted, searchWords } from "./highlight";
 import type { Backend } from "./backend";
 import { renderMarkdown } from "./markdown";
+import { excerpt, SourceIndex } from "./crossref";
 import { DualWaveform } from "./waveform";
 
 /** A small spinner (style.css "loading"): the app is at work, with no measure of how far. */
@@ -149,7 +151,7 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
   const chatForm = $<HTMLFormElement>("chat-form");
   const chatInput = $<HTMLTextAreaElement>("chat-input");
   const chatSend = $<HTMLButtonElement>("chat-send");
-  /** The AI notes job of the app (one at a time): which meeting, and its last event. */
+  /** The notes job of the app (one at a time): which meeting, and its last event. */
   let aiJob: AiNotesEvent | null = null;
   /** The question being answered (the app answers one at a time, and not while it writes notes). */
   let asking: { id: string; question: string } | null = null;
@@ -157,6 +159,15 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
   let chatError: { id: string; text: string } | null = null;
   /** What the left side shows. */
   let tab: "notes" | "transcript" = "notes";
+  /** Where the notes were scrolled to when the transcript took their place. */
+  let notesScroll = 0;
+  /** The notes now on screen with their points linked (same text and lines: not drawn again). */
+  let drawn: { text: string; lines: MeetingLine[] } | null = null;
+  /** The transcript as the points are looked up in: built again when its lines change. */
+  let sources: { lines: MeetingLine[]; paras: Paragraph[]; index: SourceIndex } | null = null;
+  /** The point whose places in the transcript are open: its meeting, its place among the points
+   * and its text (notes written again: a point with other text there stays closed). */
+  let openPoint: { id: string; n: number; text: string } | null = null;
 
   /** The meeting on screen (live or saved), and the live one (if any). */
   let shown: Meeting | null = null;
@@ -394,9 +405,9 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
     if (isLive() && live) {
       const elapsed = live.state === "recording" ? live.elapsed + (performance.now() - liveAt) / 1000 : live.elapsed;
       const mic = live.muted ? "your microphone (muted)" : "your microphone";
-      const sources = live.meeting.system_audio ? `${mic} and the computer's sound` : `${mic} only`;
+      const inputs = live.meeting.system_audio ? `${mic} and the computer's sound` : `${mic} only`;
       meta.dataset.live = live.state;
-      meta.textContent = live.state === "finishing" ? "Saving: transcribing the last seconds…" : `${when(live.meeting.started_at)} · ${sources}`;
+      meta.textContent = live.state === "finishing" ? "Saving: transcribing the last seconds…" : `${when(live.meeting.started_at)} · ${inputs}`;
       liveClock.textContent = clock(elapsed);
     } else {
       delete meta.dataset.live;
@@ -439,7 +450,7 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
     renderChat();
   }
 
-  // ---------------------------------------------------------------- AI notes | Transcript
+  // ---------------------------------------------------------------- Notes | Transcript
   function renderTab(): void {
     for (const [b, on] of [
       [tabNotes, tab === "notes"],
@@ -457,9 +468,11 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
 
   function setTab(t: "notes" | "transcript", focus = false): void {
     const changed = tab !== t;
+    if (changed && t === "transcript") notesScroll = aiBody.scrollTop;
     tab = t;
     renderTab();
     renderAi();
+    if (changed && t === "notes") aiBody.scrollTop = notesScroll; // back where the reader was
     if (focus) (t === "notes" ? tabNotes : tabTranscript).focus();
     // The transcript opens at its end while it records (the newest words), else at the start.
     if (changed && t === "transcript" && isLive()) transcript.scrollTop = transcript.scrollHeight;
@@ -478,7 +491,7 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
     });
   }
 
-  // ---------------------------------------------------------------- AI notes
+  // ---------------------------------------------------------------- Notes
   const running = (e: AiNotesEvent | null) => !!e && ["preparing", "downloading", "writing"].includes(e.state);
   const aiRunning = () => running(aiJob);
   const chatRunning = () => running(chatJob);
@@ -489,6 +502,7 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
       // The same place as later: the notes come here when the recording stops.
       aiWrite.hidden = aiCancel.hidden = aiProgress.hidden = aiError.hidden = true;
       aiMeta.textContent = "";
+      drawn = null;
       aiBody.replaceChildren("Written here when the recording stops: one section for each topic, with its decisions and tasks. The transcript is in the other tab.");
       aiBody.classList.add("ai-empty");
       return;
@@ -513,18 +527,188 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
     aiError.textContent = mine && mine.state === "error" ? mine.detail : "";
     const text = running && mine!.text ? mine!.text : shown.ai_notes ?? "";
     aiBody.classList.toggle("streaming", running && !!mine!.text);
+    const linked = !running && !!text && shown.lines.length > 0;
     if (text) {
-      renderMarkdown(aiBody, text);
+      // Drawn again only when they change: a chat event must not take the focus from a point.
+      if (!linked || drawn?.text !== text || drawn.lines !== shown.lines) {
+        renderMarkdown(aiBody, text);
+        if (linked) linkPoints();
+        drawn = linked ? { text, lines: shown.lines } : null;
+      }
       aiBody.classList.remove("ai-empty");
     } else if (running) {
-      aiBody.replaceChildren(skeleton("The AI notes are being written."));
+      drawn = null;
+      aiBody.replaceChildren(skeleton("The notes are being written."));
       aiBody.classList.remove("ai-empty");
     } else {
-      aiBody.replaceChildren("No AI notes yet. Write notes makes one section for each topic of the meeting, with its decisions and tasks, from the transcript.");
+      drawn = null;
+      aiBody.replaceChildren("No notes yet. Write notes makes one section for each topic of the meeting, with its decisions and tasks, from the transcript.");
       aiBody.classList.add("ai-empty");
     }
+    const check = linked ? "click a point to see it in the transcript" : "check it against the transcript";
     if (running && mine!.state === "writing") aiMeta.replaceChildren(spinner(), "Writing the notes…");
-    else aiMeta.textContent = running ? "" : shown.ai_notes ? `${shown.ai_model || "AI"} · a draft: check it against the transcript` : "";
+    else aiMeta.textContent = running ? "" : shown.ai_notes ? `${shown.ai_model || "AI"} · a draft: ${check}` : "";
+  }
+
+  // ---------------------------------------------------------------- Notes → transcript
+  function sourceIndex(m: Meeting): NonNullable<typeof sources> {
+    if (sources?.lines !== m.lines) {
+      const paras = paragraphs(m.lines);
+      sources = { lines: m.lines, paras, index: new SourceIndex(paras) };
+    }
+    return sources;
+  }
+
+  /** Each point of the notes (a bullet's own text, a paragraph) becomes a button: a click shows
+   * the transcript's paragraphs it most likely comes from, under it. */
+  function linkPoints(): void {
+    if (!shown) return;
+    const id = shown.id;
+    let n = 0;
+    for (const host of aiBody.querySelectorAll<HTMLElement>(":scope li, :scope > p")) {
+      const point = document.createElement("span");
+      point.className = "point";
+      // The point's own text: what comes before a list inside it (its sub-points).
+      while (host.firstChild && !(host.firstChild instanceof HTMLUListElement || host.firstChild instanceof HTMLOListElement)) {
+        point.append(host.firstChild);
+      }
+      host.prepend(point);
+      if (!point.textContent?.trim()) continue;
+      const k = n++;
+      point.tabIndex = 0;
+      point.setAttribute("role", "button");
+      point.setAttribute("aria-expanded", "false");
+      point.title = "Show where the transcript says this";
+      const text = point.textContent;
+      const isOpen = () => openPoint?.id === id && openPoint.n === k && openPoint.text === text;
+      const toggle = () => {
+        const was = isOpen();
+        closePoint();
+        if (!was) {
+          openPoint = { id, n: k, text };
+          showSources(point, true);
+        }
+      };
+      point.addEventListener("click", () => {
+        if (window.getSelection()?.toString()) return; // selecting text to copy it
+        toggle();
+      });
+      point.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          toggle();
+        }
+      });
+      if (isOpen()) showSources(point, false); // drawn again: stays open
+    }
+  }
+
+  /** The topic's heading, and the point above a sub-point: they help find the place. */
+  function pointContext(point: HTMLElement): string[] {
+    const out: string[] = [];
+    const parent = point.parentElement?.parentElement?.closest("li")?.querySelector(":scope > .point");
+    if (parent?.textContent) out.push(parent.textContent);
+    let top: Element | null = point;
+    while (top && top.parentElement !== aiBody) top = top.parentElement;
+    for (let e = top?.previousElementSibling; e; e = e.previousElementSibling) {
+      if (e.tagName === "H4" || e.tagName === "H5") {
+        out.push(e.textContent ?? "");
+        break;
+      }
+    }
+    return out;
+  }
+
+  function closePoint(): void {
+    aiBody.querySelector(".sources")?.remove();
+    aiBody.querySelector('.point[aria-expanded="true"]')?.setAttribute("aria-expanded", "false");
+    openPoint = null;
+  }
+
+  // Esc closes the open point first (then, again, it goes back to the list).
+  aiBody.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape" || !aiBody.querySelector(".sources")) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const point = aiBody.querySelector<HTMLElement>('.point[aria-expanded="true"]');
+    closePoint();
+    point?.focus();
+  });
+
+  /** `say`: tell a screen reader what was found (not when the notes are only drawn again). */
+  function showSources(point: HTMLElement, say: boolean): void {
+    if (!shown) return;
+    const { paras, index } = sourceIndex(shown);
+    const found = index.find(point.textContent ?? "", pointContext(point));
+    const box = document.createElement("div");
+    box.className = "sources";
+    box.setAttribute("role", "group");
+    box.setAttribute("aria-label", "In the transcript");
+    if (!found.length) {
+      const none = document.createElement("p");
+      none.className = "sources-none";
+      none.textContent = "No part of the transcript matches this point. Check it: the notes are a draft.";
+      box.append(none);
+    }
+    for (const f of found) {
+      const p = paras[f.index];
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "source";
+      b.dataset.speaker = p.speaker;
+      const who = document.createElement("span");
+      who.className = "who";
+      who.textContent = p.speaker === "me" ? "Me" : "Them";
+      const at = document.createElement("span");
+      at.className = "when";
+      at.textContent = clock(p.start);
+      const go = document.createElement("span");
+      go.className = "go";
+      go.textContent = "Show in transcript";
+      const text = document.createElement("span");
+      text.className = "source-text";
+      const part = excerpt(p.text, f.ranges);
+      let last = 0;
+      for (const [a, z] of part.ranges) {
+        if (a > last) text.append(part.text.slice(last, a));
+        const mark = document.createElement("mark");
+        mark.textContent = part.text.slice(a, z);
+        text.append(mark);
+        last = z;
+      }
+      text.append(part.text.slice(last));
+      b.append(who, at, go, text);
+      // A short name; the excerpt is read as its description.
+      text.id = `source-${f.index}`;
+      b.setAttribute("aria-label", `Show in transcript: ${who.textContent} at ${at.textContent}`);
+      b.setAttribute("aria-describedby", text.id);
+      b.addEventListener("click", () => showInTranscript(f.index));
+      box.append(b);
+    }
+    point.after(box);
+    point.setAttribute("aria-expanded", "true");
+    if (say) {
+      ui.announce(
+        found.length
+          ? `Found in ${found.length} place${found.length > 1 ? "s" : ""} of the transcript, under the point.`
+          : "No part of the transcript matches this point.",
+      );
+    }
+  }
+
+  /** The transcript in the notes' place, at that paragraph, marked for a moment. */
+  function showInTranscript(i: number): void {
+    if (!shown) return;
+    const p = sourceIndex(shown).paras[i];
+    setTab("transcript");
+    const row = transcript.querySelectorAll<HTMLElement>(".tline")[i];
+    if (!row || !p) return;
+    row.scrollIntoView({ block: "center" });
+    row.classList.remove("tline-hit");
+    void row.offsetWidth; // the animation again, for a second click
+    row.classList.add("tline-hit");
+    row.querySelector<HTMLElement>("p")?.focus({ preventScroll: true });
+    ui.announce(`The transcript, at ${clock(p.start)}.`);
   }
 
   aiWrite.addEventListener("click", async () => {
@@ -553,7 +737,7 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
       shown.ai_notes = e.text;
       shown.ai_model = e.detail;
       shown.ai_version = e.ai_version ?? shown.ai_version;
-      ui.announce("AI notes written.");
+      ui.announce("Notes written.");
     }
     if (shown?.id === e.id || !aiRunning()) {
       renderAi();
@@ -661,7 +845,7 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
     chatInput.placeholder = recording
       ? "Ask when the recording stops"
       : aiRunning()
-        ? "Ask when the AI notes are written"
+        ? "Ask when the notes are written"
         : busyElsewhere
           ? "Wait for the other answer"
           : "Ask about the meeting…";
@@ -836,7 +1020,7 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
 
   const timeFmt = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" });
 
-  const FOUND_IN: Record<string, string> = { transcript: "Transcript", ai_notes: "AI notes", notes: "Notes" };
+  const FOUND_IN: Record<string, string> = { transcript: "Transcript", ai_notes: "Notes", notes: "Your notes" };
 
   function item(s: MeetingSummary, recording: boolean, words: string[]): HTMLElement {
     const row = document.createElement("div");
@@ -895,7 +1079,7 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
   async function confirmDelete(id: string, name: string): Promise<boolean> {
     const yes = await confirmDialog({
       title: "Delete this meeting?",
-      body: `"${name}", with its transcript, AI notes and chat, is deleted from this computer. You cannot undo this.`,
+      body: `"${name}", with its transcript, notes and chat, is deleted from this computer. You cannot undo this.`,
       action: "Delete meeting",
       danger: true,
     });
@@ -925,7 +1109,7 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
     startBtn.title = hint;
     keyHint.textContent = key ? `Or press ${pretty} in any app.` : "";
     emptyText.textContent = search.value.trim()
-      ? "No meeting has all of these words in its title, transcript, AI notes or notes."
+      ? "No meeting has all of these words in its title, transcript or notes."
       : key
         ? `Click Record when your call begins, or press ${pretty} in any app.`
         : "Click Record when your call begins.";
@@ -979,7 +1163,7 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
       live = await api.start(defaultTitle());
       liveAt = performance.now();
       ui.onRecording(true);
-      ui.announce("Recording. The AI notes are written when it stops.");
+      ui.announce("Recording. The notes are written when it stops.");
       open({ ...live.meeting });
       stopBtn.focus();
     } catch (err) {
@@ -1138,7 +1322,7 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
     if (shown) void api.openInObsidian(shown.id).catch((err) => showError(String(err)));
   });
 
-  // Saved by itself (after Stop, after the AI notes): the buttons follow; a problem is shown.
+  // Saved by itself (after Stop, after the notes): the buttons follow; a problem is shown.
   api.onExport((e) => {
     if (shown?.id === e.id && e.file && e.state === "saved") {
       shown.export_file = e.file;

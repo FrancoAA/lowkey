@@ -254,7 +254,7 @@ quitButton.addEventListener("click", async () => {
     // Stopped and saved first (as Stop does); quitting alone would lose its last seconds.
     const yes = await confirmDialog({
       title: "Stop the recording and exit?",
-      body: "The meeting is saved first. Its AI notes are not written now: open the meeting later and use Write notes.",
+      body: "The meeting is saved first. Its notes are not written now: open the meeting later and use Write notes.",
       action: "Stop and exit",
       danger: true,
     });
@@ -929,9 +929,9 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
-// ------------------------------------------------------------------ AI notes settings
+// ------------------------------------------------------------------ Notes settings
 let aiFilled = false;
-/** Settings → Models → AI notes, from the status. Fields being edited are left alone. */
+/** Settings → Models → Notes, from the status. Fields being edited are left alone. */
 function renderAi(): void {
   const ai = status?.ai;
   if (!ai) return;
@@ -973,7 +973,7 @@ function renderAi(): void {
 let aiLive: AiNotesEvent | null = null;
 let aiLiveKind: "notes" | "chat" = "notes";
 
-/** Models → AI notes: its status, as the speech model's (ready / not downloaded / at work). */
+/** Models → Notes: its status, as the speech model's (ready / not downloaded / at work). */
 function renderAiStatus(): void {
   const ai = status?.ai;
   if (!ai) return;
@@ -1150,7 +1150,7 @@ void getBackend().then((b) => {
   );
   b.onOpenFiles((files) => files[0] && handleRef(files[0]));
   const liveDot = document.querySelector<HTMLElement>('.nav-item[data-section="meetings"] .nav-live')!;
-  // Models → AI notes shows the model at work: notes, or an answer (also its first download).
+  // Models → Notes shows the model at work: notes, or an answer (also its first download).
   const onAi = (kind: "notes" | "chat") => (e: AiNotesEvent) => {
     aiLive = e;
     aiLiveKind = kind;
