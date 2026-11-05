@@ -200,7 +200,7 @@ pub type ProgressFn<'a> = &'a mut dyn FnMut(&str, u64, u64);
 
 /// The server and the model, downloaded and checked once. Returns (server, model).
 pub fn ensure_builtin(m: &Model, progress: ProgressFn, cancel: &AtomicBool) -> anyhow::Result<(PathBuf, PathBuf)> {
-    let rt = RUNTIME.as_ref().ok_or_else(|| anyhow::anyhow!("the built-in model is not available for this system; use your own server in Settings → Models → AI notes"))?;
+    let rt = RUNTIME.as_ref().ok_or_else(|| anyhow::anyhow!("the built-in model is not available for this system; use your own server in Settings → Models → Notes"))?;
     let rdir = runtime_dir();
     if server_exe(&rdir).is_none() {
         let archive = dir().join(rt.url.rsplit('/').next().unwrap_or("llama.archive"));
@@ -592,7 +592,7 @@ pub fn write_notes(
     on_text: &mut dyn FnMut(&str),
     cancel: &AtomicBool,
 ) -> anyhow::Result<String> {
-    anyhow::ensure!(input.chars().count() <= MAX_INPUT_CHARS, "this meeting is too long for AI notes for now (over about four hours)");
+    anyhow::ensure!(input.chars().count() <= MAX_INPUT_CHARS, "this meeting is too long for notes for now (over about four hours)");
     let messages = vec![json!({"role": "system", "content": system_prompt(lang, names)}), json!({"role": "user", "content": input})];
     // Temperature 0: at 0.2 the 4B model gave the recorder's own task to someone else in half
     // of the runs (bench/summary/results.md, "Notes by topic").

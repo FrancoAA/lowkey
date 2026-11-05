@@ -476,7 +476,7 @@ mark { background: color-mix(in srgb, var(--brand) 20%, transparent); color: inh
   .meeting-body .notes-pane { min-height: auto; }
 }
 
-/* Left: the switch (AI notes | Transcript), the model, the button; then one of the two. */
+/* Left: the switch (Notes | Transcript), the model, the button; then one of the two. */
 .notes-pane { display: flex; flex-direction: column; gap: 12px; min-height: 0; }
 .notes-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; min-height: 32px; }
 .notes-head .actions { margin-left: auto; flex: none; flex-wrap: nowrap; }
@@ -523,7 +523,7 @@ mark { background: color-mix(in srgb, var(--brand) 20%, transparent); color: inh
   .live-legend { gap: 8px; }
 }
 
-/* ───────────────────────────── AI notes ───────────────────────────── */
+/* ───────────────────────────── Notes ───────────────────────────── */
 .input {
   height: 36px; width: 100%; padding: 0 12px; font: inherit; font-size: 14px; color: var(--foreground);
   background: transparent; border: 1px solid var(--input); border-radius: calc(var(--radius) - 2px); box-shadow: 0 1px 2px rgb(0 0 0 / 0.05);
@@ -549,6 +549,41 @@ mark { background: color-mix(in srgb, var(--brand) 20%, transparent); color: inh
 .ai-body li::marker { color: var(--muted-foreground); }
 .ai-body ul ul, .ai-body ol ul { list-style: circle; margin: 2px 0 4px; color: color-mix(in srgb, var(--foreground) 82%, var(--muted-foreground)); }
 .ai-body code { font-family: ui-monospace, monospace; font-size: 12px; background: var(--muted); padding: 0 4px; border-radius: 4px; }
+/* A point of the notes: a click shows, under it, where the transcript says it. */
+.ai-body .point {
+  cursor: pointer; border-radius: 4px; margin-inline: -3px; padding: 1px 3px;
+  -webkit-box-decoration-break: clone; box-decoration-break: clone; transition: background 0.12s;
+}
+.ai-body .point:hover { background: var(--muted); }
+.ai-body .point:focus-visible { outline: none; background: var(--muted); box-shadow: 0 0 0 2px color-mix(in srgb, var(--ring) 45%, transparent); }
+.ai-body .point[aria-expanded="true"] { background: color-mix(in srgb, var(--brand) 12%, transparent); }
+.sources {
+  display: flex; flex-direction: column; gap: 2px; margin: 6px 0 10px; padding: 4px;
+  border-left: 2px solid color-mix(in srgb, var(--brand) 40%, transparent); border-radius: 0 6px 6px 0;
+  background: color-mix(in srgb, var(--muted) 50%, transparent); color: var(--foreground);
+}
+.source {
+  display: grid; grid-template-columns: auto auto minmax(0, 1fr); align-items: baseline; column-gap: 8px; row-gap: 2px;
+  width: 100%; padding: 6px 8px; border: 0; border-radius: 5px; background: transparent;
+  font: inherit; color: inherit; text-align: left; cursor: pointer; transition: background 0.12s;
+}
+.source:hover { background: var(--background); }
+.source:focus-visible { outline: none; background: var(--background); box-shadow: 0 0 0 2px color-mix(in srgb, var(--ring) 45%, transparent); }
+.source .who { font-size: 12px; font-weight: 600; display: inline-flex; align-items: center; gap: 6px; }
+.source .who::before { content: ""; width: 7px; height: 7px; border-radius: 2px; background: currentColor; }
+.source[data-speaker="me"] .who { color: var(--me); }
+.source[data-speaker="them"] .who { color: var(--them); }
+.source .when { font-size: 11px; color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
+.source .go { justify-self: end; font-size: 11.5px; color: var(--muted-foreground); }
+.source:hover .go, .source:focus-visible .go { color: var(--foreground); }
+.source-text { grid-column: 1 / -1; font-size: 13px; line-height: 1.55; color: color-mix(in srgb, var(--foreground) 85%, var(--muted-foreground)); }
+.sources-none { margin: 0; padding: 4px 6px; font-size: 13px; color: var(--muted-foreground); }
+/* The transcript's paragraph a point was found in: marked for a moment. */
+.tline.tline-hit { border-radius: 6px; animation: tline-hit 2.6s ease-out; }
+@keyframes tline-hit {
+  0%, 35% { background: color-mix(in srgb, var(--brand) 14%, transparent); box-shadow: 0 0 0 6px color-mix(in srgb, var(--brand) 14%, transparent); }
+  100% { background: transparent; box-shadow: 0 0 0 6px transparent; }
+}
 
 /* Right: the chat. Questions in a bubble on the right, answers as text; the box at the bottom. */
 .chat-pane {
@@ -598,7 +633,7 @@ mark { background: color-mix(in srgb, var(--brand) 20%, transparent); color: inh
 .ai-error { margin: 0; color: var(--destructive); font-size: 13px; }
 
 /* ───────────────────────────── Models ───────────────────────────── */
-/* Two groups (speech to text, AI notes), each with its status on the right of its heading. */
+/* Two groups (speech to text, notes), each with its status on the right of its heading. */
 .model-group { display: flex; flex-direction: column; gap: 18px; padding-top: 22px; border-top: 1px solid var(--border); }
 .section-head + .model-group { padding-top: 4px; border-top: 0; }
 .group-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }

@@ -42,12 +42,22 @@ macOS and Windows, a prompt when a call starts, and questions over past meetings
   meetings, it says how to start, and names the meeting key.
 - One meeting: the notes on the left, the chat on the right (300–380 px), the full height of
   the window, each scrolling on its own (lines stay under ~75 characters); under 720 px one above
-  the other. A switch above the notes, **AI notes | Transcript** (the tabs pattern: the arrow
-  keys move between them), shows the transcript in the notes' place. While it records, the
+  the other. A switch above the notes, **Notes | Transcript** (the tabs pattern: the arrow
+  keys move between them), shows the transcript in the notes' place. (The tab was "AI notes"
+  before; the file, the export and the AI agents still say "AI notes", next to "your notes".) While it records, the
   transcript is shown, and a panel shows the clock, the two-colour wave (the same colours as the
   transcript's Me and Them) and Stop (it has the focus after Start); the notes and the chat
   start when it stops. Esc goes back to the list (not while a question is typed, or a dialog is
   open).
+- A point of the notes (a bullet's own text, without its sub-bullets) is a button: a click or
+  Enter shows under it up to three transcript paragraphs it most likely comes from, with the
+  speaker, the time and the shared words marked; **Show in transcript** switches to the
+  transcript at that paragraph (marked for a moment, with the focus), and the Notes tab comes
+  back where it was. No model and no network (`frontend/src/crossref.ts`): each word counts by
+  how rare it is in the meeting (IDF), compared without case or accents by its first 5 letters;
+  the topic's heading and the point above a sub-point help with less weight; a time such as
+  (04:19) picks its paragraph first. Nothing found: "No part of the transcript matches this
+  point", a cue to check it.
 - There is no notes field: the AI notes take its place. Notes typed in older versions stay in
   the file, in the export and in what the model reads.
 
@@ -130,7 +140,7 @@ models wrote English notes for a Spanish meeting (bench/summary/results.md).
   hours of meeting), all layers on the GPU when the app found one. It stops 2 minutes after the
   last use (never during a job), on Cancel, and when the app quits; a pid file lets the next
   start stop one that a crash or a kill left behind (only if that pid is our llama-server).
-- **The built-in model** (Settings → Models → AI notes → Notes model, `ai_builtin_model`; its status, "Ready · Qwen3.5 4B
+- **The built-in model** (Settings → Models → Notes → Notes model, `ai_builtin_model`; its status, "Ready · Qwen3.5 4B
   on GPU" or "downloads on first use", is next to the heading): Qwen3.5 4B
   (`qwen3.5-4b`, 2.7 GB, recommended), Qwen3.5 2B (`qwen3.5-2b`, 1.3 GB) or Gemma 4 E4B
   (`gemma-4-e4b`, 5.0 GB), each pinned to a Hugging Face commit and its SHA-256, with the
