@@ -45,6 +45,9 @@ export interface Status {
   recording?: boolean;
   /** Settings → AI agents: agents may start and stop recordings; the program they start. */
   agents?: { recording: boolean; program: string };
+  /** Settings → Models → Tell the other voices apart: on, this build can, the models are on
+   * disk, their download (state "" | downloading | error), and the meetings being worked on. */
+  voices?: { on: boolean; supported: boolean; present: boolean; download: { state: string; progress: number; error: string }; working: string[] };
   /** Settings → Note apps: the folder ("" = off), by itself, the parts, the Obsidian vault it is in. */
   export?: { dir: string; auto: boolean; parts: string[]; vault: string | null };
   /** AI notes settings (the API key itself never comes to the page). */
@@ -115,6 +118,8 @@ export interface MeetingLine {
   start: number;
   end: number;
   text: string;
+  /** "them" only: which of the others, told apart by voice (1, 2, …; see Meeting.people). */
+  person?: number;
 }
 
 export interface Meeting {
@@ -143,6 +148,8 @@ export interface Meeting {
    * written from (lower: Write notes again). */
   transcript_version?: number;
   ai_version?: number;
+  /** Names of the others found by voice: people[n - 1] names person n ("" = "Speaker n"). */
+  people?: string[];
 }
 
 export interface ChatMessage {

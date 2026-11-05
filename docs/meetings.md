@@ -2,7 +2,9 @@
 
 The Meetings section records a call or a talk and shows it as text next to your notes, like
 the AI note-takers that join no call (Granola and others). Here everything runs on the
-computer: no account, no cloud, and the audio is not kept.
+computer: no account, no cloud, and the audio is not kept (with Who is speaking on, the
+computer's sound is kept in a temporary file until the voices are told apart after Stop; see
+[voices.md](voices.md)).
 
 This is phase 1: recording, live transcript, notes, saving and export, on Linux. Phase 2 adds
 notes written by a language model (a local server such as Ollama or LM Studio by default; a

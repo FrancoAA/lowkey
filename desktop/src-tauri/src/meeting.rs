@@ -1,7 +1,9 @@
 //! Meetings: your microphone ("Me") and the computer's sound ("Them", the others in a call) as
 //! a live transcript, with your notes next to it. Each source is cut into pieces at pauses and
 //! the pieces go to the speech model in order. Saved as JSON in <data dir>/meetings; nothing
-//! leaves the computer, and no audio is kept.
+//! leaves the computer. No audio is kept, except with Settings → Models → "Tell the other voices
+//! apart": the computer's sound then stays in a temporary file until the voices are told apart
+//! after Stop (src/voices.rs).
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -44,7 +46,18 @@ pub struct Line {
     pub start: f64,
     pub end: f64,
     pub text: String,
+    /// "Them" only: which of the others (1, 2, …, see `Meeting::people`), told apart by voice
+    /// after Stop; 0 = not known.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub person: u32,
 }
+
+fn is_zero(n: &u32) -> bool {
+    *n == 0
+}
+
+/// The longest name of a speaker (characters).
+pub const MAX_NAME: usize = 60;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(default)]
@@ -79,6 +92,23 @@ pub struct Meeting {
     /// notes were written from (lower: they can be written again for the fixed text).
     pub transcript_version: u64,
     pub ai_version: u64,
+    /// The names the user gave the others found by voice: `people[n - 1]` names person n ("" =
+    /// "Speaker n"). As long as the highest person number in the lines.
+    pub people: Vec<String>,
+}
+
+impl Meeting {
+    /// "Me", "Them", or the person's name ("Speaker 2" before one is given).
+    pub fn label(&self, l: &Line) -> String {
+        match (l.speaker, l.person) {
+            (Speaker::Me, _) => "Me".into(),
+            (Speaker::Them, 0) => "Them".into(),
+            (Speaker::Them, n) => match self.people.get(n as usize - 1).map(|s| s.trim()) {
+                Some(name) if !name.is_empty() => name.to_string(),
+                _ => format!("Speaker {n}"),
+            },
+        }
+    }
 }
 
 /// One chat message: a question by "user" or an answer by "assistant".
@@ -341,6 +371,17 @@ impl Chunker {
     /// `at`: where the block starts by the clock (samples from the start). When a source stops
     /// sending for a while, its next audio is placed at the clock's position, not right after
     /// the old audio.
+    /// Where `push(block, at)` puts the block: right after the audio so far, or at `at` after a
+    /// gap of over 1 s.
+    pub fn position_for(&self, at: usize) -> usize {
+        let end = self.start + self.buf.len();
+        if at > end + RATE as usize {
+            at
+        } else {
+            end
+        }
+    }
+
     pub fn push(&mut self, block: &[f32], at: usize) -> Vec<Chunk> {
         let mut out = Vec::new();
         let end = self.start + self.buf.len();
@@ -488,7 +529,7 @@ pub fn paragraphs(lines: &[Line]) -> Vec<Line> {
     let mut out: Vec<Line> = Vec::new();
     for l in lines {
         match out.last_mut() {
-            Some(p) if p.speaker == l.speaker && l.start - p.end < 2.0 && p.text.len() < 600 => {
+            Some(p) if p.speaker == l.speaker && p.person == l.person && l.start - p.end < 2.0 && p.text.len() < 600 => {
                 p.text.push(' ');
                 p.text.push_str(&l.text);
                 p.end = p.end.max(l.end);
@@ -539,11 +580,14 @@ pub fn duration_text(seconds: f64) -> String {
 }
 
 /// A paragraph fixed by the user: lines `from..=to` (one paragraph as the page shows it, see
-/// `paragraphs`) become one line with `text`, said by `speaker`; its start and end stay. Empty
+/// `paragraphs`) become one line with `text`, said by `speaker` (and `person` of the others; 0
+/// for Me or not known); its start and end stay. Empty
 /// text removes the paragraph. `before`: its text as the page showed it (the meeting changed
 /// meanwhile: nothing is changed).
-pub fn edit_paragraph(m: &mut Meeting, from: usize, to: usize, before: &str, text: &str, speaker: Speaker) -> anyhow::Result<()> {
+pub fn edit_paragraph(m: &mut Meeting, from: usize, to: usize, before: &str, text: &str, speaker: Speaker, person: u32) -> anyhow::Result<()> {
     let stale = "The transcript changed meanwhile: open the meeting again.";
+    let person = if speaker == Speaker::Them { person } else { 0 };
+    anyhow::ensure!(person as usize <= m.people.len(), "There is no Speaker {person} in this meeting.");
     anyhow::ensure!(from <= to && to < m.lines.len(), stale);
     let shown = m.lines[from..=to].iter().map(|l| l.text.as_str()).collect::<Vec<_>>().join(" ");
     anyhow::ensure!(shown == before, stale);
@@ -552,11 +596,41 @@ pub fn edit_paragraph(m: &mut Meeting, from: usize, to: usize, before: &str, tex
     if text.is_empty() {
         m.lines.drain(from..=to);
     } else {
-        m.lines[from] = Line { speaker, start: m.lines[from].start, end, text };
+        m.lines[from] = Line { speaker, start: m.lines[from].start, end, text, person };
         m.lines.drain(from + 1..=to);
     }
     m.transcript_version += 1;
     Ok(())
+}
+
+/// Name person `person` (1, 2, …) of the others. The name the user gave another person merges
+/// the two (the voices of one person were found as two): its lines go to the other one ("Speaker
+/// 3" is not a name: it never merges). "" gives back "Speaker n".
+pub fn name_speaker(m: &mut Meeting, person: u32, name: &str) -> anyhow::Result<()> {
+    anyhow::ensure!(person >= 1 && person as usize <= m.people.len(), "There is no Speaker {person} in this meeting.");
+    let name: String = name.split_whitespace().collect::<Vec<_>>().join(" ");
+    anyhow::ensure!(name.chars().count() <= MAX_NAME, "A name has at most {MAX_NAME} characters.");
+    let other = (1..=m.people.len() as u32).find(|&n| {
+        n != person && !name.is_empty() && m.people[n as usize - 1].to_lowercase() == name.to_lowercase() && m.lines.iter().any(|l| l.person == n)
+    });
+    match other {
+        Some(into) => {
+            for l in m.lines.iter_mut().filter(|l| l.speaker == Speaker::Them && l.person == person) {
+                l.person = into;
+            }
+            m.people[person as usize - 1].clear();
+        }
+        None => m.people[person as usize - 1] = name,
+    }
+    m.transcript_version += 1;
+    Ok(())
+}
+
+/// After Stop: who of the others said each line (`voices::assign`), and room for their names.
+pub fn set_people(m: &mut Meeting, turns: &[crate::voices::Turn]) {
+    let n = crate::voices::assign(&mut m.lines, turns);
+    m.people = vec![String::new(); n];
+    m.transcript_version += 1;
 }
 
 /// What the language model reads: the title, your notes and the transcript (no AI notes).
@@ -617,7 +691,7 @@ fn markdown(m: &Meeting, when: &str, parts: Parts) -> String {
             s += "No speech was found.\n";
         }
         for p in paragraphs(&m.lines) {
-            s += &format!("**{}** ({}): {}\n\n", p.speaker.label(), clock(p.start), p.text);
+            s += &format!("**{}** ({}): {}\n\n", m.label(&p), clock(p.start), p.text);
         }
     }
     s.trim_end().to_string() + "\n"
@@ -664,6 +738,8 @@ struct Inner {
     muted: AtomicBool,
     emit: EmitFn,
     saving: Mutex<()>,
+    /// Settings → Models → Tell the other voices apart: the computer's sound, kept until Stop.
+    tape: Mutex<Option<crate::voices::Tape>>,
 }
 
 /// More pieces than this waiting: the model is slower than the speech.
@@ -676,7 +752,21 @@ impl Inner {
 
     /// Audio of one source; `at` = its position by the clock, in samples.
     fn feed(&self, who: Speaker, block: &[f32], at: usize) {
-        let chunks = self.chunkers[who.index()].lock().push(block, at);
+        let (pos, chunks) = {
+            let mut c = self.chunkers[who.index()].lock();
+            (c.position_for(at), c.push(block, at))
+        };
+        if who == Speaker::Them {
+            // At the transcript's own position: the voices' times are the lines' times.
+            let mut tape = self.tape.lock();
+            if let Some(t) = tape.as_mut() {
+                if let Err(e) = t.write_at(block, pos) {
+                    *tape = None; // the file is deleted; the voices are not told apart this time
+                    drop(tape);
+                    self.notice(format!("The others' voices will not be told apart in this meeting: {e}."));
+                }
+            }
+        }
         for c in chunks {
             self.send(who, c);
         }
@@ -735,7 +825,7 @@ impl Inner {
                 continue;
             }
             let start = offset + s.start.clamp(0.0, len);
-            let line = Line { speaker: who, start, end: (offset + s.end.clamp(0.0, len)).max(start), text: text.to_string() };
+            let line = Line { speaker: who, start, end: (offset + s.end.clamp(0.0, len)).max(start), text: text.to_string(), person: 0 };
             first = first.min(line.start);
             let at = doc.lines.partition_point(|l| l.start <= line.start);
             doc.lines.insert(at, line);
@@ -782,6 +872,7 @@ pub struct Session {
     mic: Mutex<Option<Box<dyn Recorder>>>,
     system: Mutex<Option<system_audio::Capture>>,
     worker: Mutex<Option<JoinHandle<()>>>,
+    tape_done: Mutex<Option<PathBuf>>,
 }
 
 impl Session {
@@ -804,6 +895,7 @@ impl Session {
             muted: AtomicBool::new(false),
             emit,
             saving: Mutex::new(()),
+            tape: Mutex::new(None),
         });
         let w = inner.clone();
         let worker = std::thread::Builder::new().name("meeting".into()).spawn(move || {
@@ -819,11 +911,29 @@ impl Session {
                 w.changed();
             }
         })?;
-        Ok(Arc::new(Self { inner, mic: Mutex::new(None), system: Mutex::new(None), worker: Mutex::new(Some(worker)) }))
+        Ok(Arc::new(Self { inner, mic: Mutex::new(None), system: Mutex::new(None), worker: Mutex::new(Some(worker)), tape_done: Mutex::new(None) }))
     }
 
     pub fn id(&self) -> String {
         self.inner.doc.lock().id.clone()
+    }
+
+    /// Keep the computer's sound in `path` until Stop, to tell the voices apart (call before
+    /// `open_sources`).
+    pub fn keep_their_sound(&self, path: &Path) -> anyhow::Result<()> {
+        *self.inner.tape.lock() = Some(crate::voices::Tape::create(path)?);
+        Ok(())
+    }
+
+    /// After `finish`: the file with the computer's sound (None: it was not kept, or it failed).
+    pub fn their_sound(&self) -> Option<PathBuf> {
+        self.tape_done.lock().take()
+    }
+
+    /// A problem to show in the meeting.
+    pub fn notice(&self, text: String) {
+        self.inner.notice(text);
+        self.inner.changed();
     }
 
     /// The microphone and the computer's sound. Fails only when neither one opens.
@@ -943,6 +1053,15 @@ impl Session {
             doc.duration = self.inner.elapsed();
         }
         *self.inner.state.lock() = "done";
+        if let Some(t) = self.inner.tape.lock().take() {
+            let path = t.path().to_path_buf();
+            match t.finish() {
+                Ok(p) => *self.tape_done.lock() = Some(p),
+                Err(_) => {
+                    let _ = std::fs::remove_file(path);
+                }
+            }
+        }
         self.inner.save();
         self.inner.changed();
         self.meeting()
@@ -958,6 +1077,10 @@ impl Session {
             doc.state = "done".into();
             doc.duration = self.inner.elapsed();
         }
+        drop(self.inner.tape.lock().take()); // an unfinished tape deletes its file
+        if let Some(p) = self.tape_done.lock().take() {
+            let _ = std::fs::remove_file(p); // `finish` got that far, then failed
+        }
         self.inner.save();
     }
 }
@@ -968,21 +1091,54 @@ mod tests {
 
     #[test]
     fn a_paragraph_is_fixed_in_place() {
-        let l = |speaker, start: f64, text: &str| Line { speaker, start, end: start + 1.5, text: text.into() };
+        let l = |speaker, start: f64, text: &str| Line { speaker, start, end: start + 1.5, text: text.into(), person: 0 };
         let mut m = Meeting {
             lines: vec![l(Speaker::Me, 0.0, "Hello"), l(Speaker::Me, 1.6, "from Lisando."), l(Speaker::Them, 5.0, "Hi.")],
             ..Default::default()
         };
-        assert!(edit_paragraph(&mut m, 0, 1, "Hello from Lisando!", "x", Speaker::Me).is_err(), "changed meanwhile");
-        assert!(edit_paragraph(&mut m, 0, 5, "", "x", Speaker::Me).is_err());
-        edit_paragraph(&mut m, 0, 1, "Hello from Lisando.", "Hello  from\nLisandro.", Speaker::Me).unwrap();
-        assert_eq!(m.lines[0], Line { speaker: Speaker::Me, start: 0.0, end: 3.1, text: "Hello from Lisandro.".into() });
+        assert!(edit_paragraph(&mut m, 0, 1, "Hello from Lisando!", "x", Speaker::Me, 0).is_err(), "changed meanwhile");
+        assert!(edit_paragraph(&mut m, 0, 5, "", "x", Speaker::Me, 0).is_err());
+        edit_paragraph(&mut m, 0, 1, "Hello from Lisando.", "Hello  from\nLisandro.", Speaker::Me, 0).unwrap();
+        assert_eq!(m.lines[0], Line { speaker: Speaker::Me, start: 0.0, end: 3.1, text: "Hello from Lisandro.".into(), person: 0 });
         assert_eq!(m.lines.len(), 2);
-        edit_paragraph(&mut m, 1, 1, "Hi.", "Hi.", Speaker::Me).unwrap();
+        edit_paragraph(&mut m, 1, 1, "Hi.", "Hi.", Speaker::Me, 0).unwrap();
         assert_eq!(m.lines[1].speaker, Speaker::Me, "an echo moved to the right side");
-        edit_paragraph(&mut m, 1, 1, "Hi.", "  ", Speaker::Me).unwrap();
+        edit_paragraph(&mut m, 1, 1, "Hi.", "  ", Speaker::Me, 0).unwrap();
         assert_eq!(m.lines.len(), 1, "an empty paragraph is removed");
         assert_eq!(m.transcript_version, 3, "one more for each fix");
+    }
+
+    #[test]
+    fn the_others_get_names_and_two_of_one_person_merge() {
+        let l = |speaker, start: f64, person, text: &str| Line { speaker, start, end: start + 1.0, text: text.into(), person };
+        let mut m = Meeting {
+            title: "Sync".into(),
+            lines: vec![l(Speaker::Me, 0.0, 0, "Hi all."), l(Speaker::Them, 2.0, 1, "Hello."), l(Speaker::Them, 3.5, 2, "Good morning."), l(Speaker::Them, 9.0, 3, "Me too.")],
+            people: vec![String::new(); 3],
+            ..Default::default()
+        };
+        let md = |m: &Meeting| markdown(m, "", Parts::ALL);
+        assert!(md(&m).contains("**Speaker 1** (00:02): Hello.\n\n**Speaker 2** (00:03): Good morning."), "two people: two paragraphs\n{}", md(&m));
+        name_speaker(&mut m, 1, "  Ana  María ").unwrap();
+        assert_eq!(m.people[0], "Ana María");
+        assert!(md(&m).contains("**Ana María** (00:02): Hello."));
+        name_speaker(&mut m, 3, "ana maría").unwrap(); // Speaker 3 was Ana too
+        assert_eq!(m.lines.iter().map(|l| l.person).collect::<Vec<_>>(), vec![0, 1, 2, 1]);
+        assert!(m.people[2].is_empty());
+        assert!(name_speaker(&mut m, 4, "Bo").is_err() && name_speaker(&mut m, 0, "Bo").is_err());
+        assert!(name_speaker(&mut m, 2, &"x".repeat(MAX_NAME + 1)).is_err());
+        name_speaker(&mut m, 2, "Speaker 1").unwrap(); // not a merge: only names the user gave merge
+        assert_eq!((m.label(&m.lines[2]), m.lines[2].person), ("Speaker 1".to_string(), 2));
+        name_speaker(&mut m, 2, "").unwrap();
+        assert_eq!(m.label(&m.lines[2]), "Speaker 2", "an empty name gives the number back");
+        // The paragraph fix moves a line to another person; a number that is not there is refused.
+        edit_paragraph(&mut m, 2, 2, "Good morning.", "Good morning.", Speaker::Them, 1).unwrap();
+        assert_eq!(m.lines[2].person, 1);
+        assert!(edit_paragraph(&mut m, 2, 2, "Good morning.", "x", Speaker::Them, 9).is_err());
+        edit_paragraph(&mut m, 0, 0, "Hi all.", "Hi all.", Speaker::Me, 2).unwrap();
+        assert_eq!(m.lines[0].person, 0, "Me has no person number");
+        let json = serde_json::to_string(&m.lines[0]).unwrap();
+        assert!(!json.contains("person"), "not written when 0: {json}");
     }
 
     const R: usize = RATE as usize;
@@ -996,7 +1152,7 @@ mod tests {
     }
 
     fn line(who: Speaker, start: f64, end: f64, text: &str) -> Line {
-        Line { speaker: who, start, end, text: text.into() }
+        Line { speaker: who, start, end, text: text.into(), person: 0 }
     }
 
     #[test]

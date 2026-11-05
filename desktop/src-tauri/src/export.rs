@@ -251,7 +251,7 @@ mod tests {
             duration: 1830.0,
             state: "done".into(),
             notes: "Ask about the budget".into(),
-            lines: vec![Line { speaker: Speaker::Me, start: 0.0, end: 2.0, text: "Hello everyone.".into() }],
+            lines: vec![Line { speaker: Speaker::Me, start: 0.0, end: 2.0, text: "Hello everyone.".into(), person: 0 }],
             ..Default::default()
         }
     }

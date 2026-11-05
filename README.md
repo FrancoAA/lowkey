@@ -193,10 +193,23 @@ Record a call or a talk, as text next to your notes (Linux for now). No bot join
   **Export .md** (AI notes, then the transcript).
 - **Fix the transcript:** in a saved meeting, click a paragraph (or Enter on it) to correct the
   model's words; <kbd>Enter</kbd> or a click outside saves, <kbd>Esc</kbd> cancels, and the
-  **Me / Them** label switches the speaker. An empty paragraph is removed. A fix that looks
+  speaker label switches the speaker (Me, then each speaker). An empty paragraph is removed. A fix that looks
   like a name or a term ("Lisando" → "Lisandro") offers to add it to the Vocabulary, so the
   model writes it right next time. Copy, Export, search, the note-app file and AI agents use
   the fixed text; the AI notes stay as written, with **Write notes again** for the fixed text.
+- **Who is speaking** (Linux x86_64; Settings → Models → Who is speaking, off by default):
+  after Stop, the others in the call are told apart by their voices, and each "Them" line gets
+  a speaker: **Speaker 1**, **Speaker 2**… Click a speaker to type a name; give two speakers the
+  same name when they are one person, and their lines merge. Copy, Export, the note-app file,
+  the AI notes and AI agents use the names. Turning it on downloads two models (46 MB). While a
+  meeting records, the computer's sound is kept in a temporary file in the meetings folder;
+  after Stop it takes about 2 minutes for an hour of meeting, then the file is deleted, and only
+  then are the note-app file and the AI notes written (Export, Write notes and fixes wait for
+  it). If the app is closed or stops meanwhile, the file is deleted at the next start, and
+  the meeting keeps "Them". Meetings over 3 hours keep "Them". On two test meetings, 89% of the speech
+  time went to the right person (54% with one label for all). Voices that are alike, people
+  who talk at the same time, and a person who says little are the usual errors.
+  Details: [docs/voices.md](docs/voices.md).
 - **Search** (<kbd>Ctrl</kbd>+<kbd>F</kbd> on the list): the meetings that have every word you
   type, in any order and any case, also inside a word, in the title, the transcript, the AI
   notes or your notes. Each result shows where the words are and the text around them, with
@@ -231,7 +244,8 @@ Record a call or a talk, as text next to your notes (Linux for now). No bot join
 - Use headphones. Without them the microphone also hears the others; the app removes a "Me"
   line when most of its words are in a "Them" line at the same time.
 - Tell the others that you record. Meetings are saved as JSON in
-  `~/.local/share/lowkey/meetings` (a private folder). The audio is not kept.
+  `~/.local/share/lowkey/meetings` (a private folder). The audio is not kept (with Who is
+  speaking on, the computer's sound only until the voices are told apart after Stop).
 - macOS and Windows record the microphone only, for now.
 
 Details: [docs/meetings.md](docs/meetings.md).
@@ -367,6 +381,7 @@ export_dir = ""                  # Note apps: the folder for each meeting's Mark
 export_auto = true              # save there when a meeting stops and when its AI notes are written
 export_parts = ["ai_notes", "notes", "transcript"]
 mcp_recording = false           # AI agents (lowkey --mcp) may start and stop recordings
+meeting_voices = false          # Who is speaking: tell the others apart by voice after Stop
 live_preview = true             # words in the overlay while you talk
 overlay_collapsed = false       # the strip as a small pill (its corner button; a click opens it)
 # overlay_at = [0.5, 0.9]       # where you left the strip (fractions of the screen's free room)
@@ -396,6 +411,9 @@ it makes 2–4× more errors than the default. Details: [docs/parakeet.md](docs/
 
 A model that is not on disk downloads the first time you use it, into
 `~/.local/share/lowkey/models`. Silero VAD drops silence, so silent audio gives no text.
+
+Who is speaking (meetings) uses two more models, 46 MB, in `models/voices`: pyannote
+segmentation 3.0 and NVIDIA TitaNet-S, run by sherpa-onnx on the CPU.
 
 ## How it works
 
@@ -440,8 +458,8 @@ Dependencies are pinned in `desktop/src-tauri/Cargo.lock` and `frontend/package-
 
 Audio and transcripts stay on your computer, unless you point AI notes to a server that is
 not on it (Settings says so), or connect an AI agent (it sends what it reads to its own service). The only other network access is the one-time model
-download from Hugging Face (and the llama.cpp runner from GitHub for AI notes) (the live preview engine and model come from pinned revisions,
-checked with SHA-256; that engine has no network code).
+download from Hugging Face (and the llama.cpp runner from GitHub for AI notes) (the live preview engine and model, and the voice models,
+come from pinned revisions, checked with SHA-256; that engine has no network code).
 
 ## Licenses
 
@@ -450,6 +468,9 @@ checked with SHA-256; that engine has no network code).
 - Parakeet: [NVIDIA Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3)
   weights (CC-BY-4.0), run with [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx)
   (Apache-2.0) and onnxruntime (MIT).
+- Who is speaking: [pyannote segmentation 3.0](https://huggingface.co/pyannote/segmentation-3.0)
+  (MIT) and [NVIDIA TitaNet-S](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/nemo/models/titanet_small)
+  (NeMo toolkit licence, Apache-2.0), sherpa-onnx exports.
 - Live preview: [Cactus Whistle and the needle engine](https://huggingface.co/Cactus-Compute/whistle)
   (Apache-2.0).
 - Tauri, Vite and TypeScript are open source (MIT/Apache).

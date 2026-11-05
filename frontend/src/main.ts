@@ -65,6 +65,11 @@ const exportOff = $<HTMLButtonElement>("export-off");
 const exportAuto = $<HTMLInputElement>("export-auto");
 const exportParts = [...document.querySelectorAll<HTMLInputElement>(".export-parts input")];
 const agentsRecording = $<HTMLInputElement>("agents-recording");
+const voicesOn = $<HTMLInputElement>("voices-on");
+const voicesStatus = $<HTMLDivElement>("voices-status");
+const voicesStatusText = $<HTMLSpanElement>("voices-status-text");
+const voicesBar = voicesStatus.querySelector<HTMLDivElement>(".model-bar")!;
+const voicesBarFill = $<HTMLDivElement>("voices-bar-fill");
 const aiStatus = $<HTMLDivElement>("ai-status");
 const aiStatusText = $<HTMLSpanElement>("ai-status-text");
 const aiBar = aiStatus.querySelector<HTMLDivElement>(".model-bar")!;
@@ -320,6 +325,7 @@ function applyStatus(next: Status): void {
   if (backend) renderCalls(backend, status, showError);
   renderAi();
   renderAgents();
+  renderVoices();
   renderExport();
   meetingsView?.refreshExport();
   renderAbout();
@@ -1135,6 +1141,38 @@ agentsRecording.addEventListener("change", () => {
     .finally(() => (agentsSaving = false));
 });
 
+/** The switch's save is on its way (as for the agents' switch). */
+let voicesSaving = false;
+
+/** Models → Who is speaking: the switch and the models' state. */
+function renderVoices(): void {
+  const v = status?.voices;
+  if (!v) return;
+  if (!voicesSaving) voicesOn.checked = v.on;
+  voicesOn.disabled = !v.supported && !v.on; // on from another computer's config: it can be turned off
+  const set = (state: string, text: string, progress: number | null = null) => {
+    voicesStatus.dataset.state = state;
+    voicesStatusText.textContent = text;
+    voicesBar.hidden = progress === null;
+    voicesBarFill.style.width = `${Math.floor((progress ?? 0) * 100)}%`;
+  };
+  if (!v.supported) return set("missing", "Not available in this build (Linux x86_64 only)");
+  if (v.download.state === "downloading") return set("downloading", `Downloading… ${Math.floor(v.download.progress * 100)}% of 46 MB`, v.download.progress);
+  if (v.download.state === "error") return set("error", `Download failed: ${v.download.error}`);
+  if (!v.on) return set("missing", "Off");
+  if (!v.present) return set("missing", "Models not downloaded");
+  if (v.working.length) return set("loading", "Telling voices apart…");
+  return set("ready", "Ready · on CPU");
+}
+
+voicesOn.addEventListener("change", () => {
+  voicesSaving = true;
+  void backend
+    .saveOptions({ meeting_voices: voicesOn.checked })
+    .then(refreshStatus, (err) => showError(String(err)))
+    .finally(() => (voicesSaving = false));
+});
+
 function renderAbout(): void {
   if (!status) return;
   $<HTMLElement>("about-version").textContent = status.version ?? "–";
@@ -1169,6 +1207,7 @@ void getBackend().then((b) => {
     showMeetings: () => showSection("meetings"),
     exportInfo: () => ({ dir: status?.export?.dir ?? "", vault: status?.export?.vault ?? null }),
     refreshStatus: () => void refreshStatus(),
+    voicesWorking: () => status?.voices?.working ?? [],
   });
   void loadLanguages();
   void refreshStatus();

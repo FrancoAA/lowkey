@@ -507,8 +507,9 @@ pub enum Engine {
 pub fn system_prompt(lang: &str, names: &[String]) -> String {
     format!(
         "You write meeting notes from a transcript. \"Me\" is the person who recorded the meeting; \
-\"Them\" is everyone else (several people: tell them apart by the names they use). The notes \
-written by \"Me\" during the meeting show what mattered to them.
+the others are \"Them\", or one label for each person told apart by voice (\"Speaker 2\", or a \
+name). For a label that is not a name, use the person's name when the transcript says it. The \
+notes written by \"Me\" during the meeting show what mattered to them.
 
 Write in {lang}. Use only facts from the transcript; never invent names, dates or numbers.
 
@@ -543,8 +544,8 @@ pub fn chat_prompt(meeting: &str, names: &[String]) -> String {
     format!(
         "You answer questions about one meeting. Below is the meeting: its title, the notes written \
 by \"Me\" during it, the AI notes (a draft written from the transcript) and the transcript. \"Me\" \
-is the person who recorded the meeting and who asks you now; \"Them\" is everyone else (several \
-people: tell them apart by the names they use).
+is the person who recorded the meeting and who asks you now; the others are \"Them\", or one label \
+for each person told apart by voice (\"Speaker 2\", or a name).
 
 Use only what the meeting says; never invent names, dates or numbers. When the answer is not in \
 the meeting, say so. When the AI notes and the transcript do not agree, the transcript is right. \

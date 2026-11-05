@@ -24,6 +24,7 @@ pub mod rename;
 pub mod system_audio;
 pub mod tray;
 pub mod vocabulary;
+pub mod voices;
 pub mod whisper_tokens;
 #[cfg(parakeet)]
 pub mod preview_parakeet;

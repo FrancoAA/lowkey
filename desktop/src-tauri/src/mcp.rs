@@ -21,7 +21,8 @@ use crate::meeting::{self, Meeting, Parts, Summary};
 const VERSIONS: &[&str] = &["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
 
 const INSTRUCTIONS: &str = "Lowkey records meetings and dictations on this computer and transcribes them there. \
-In a meeting transcript, \"Me\" is the user who recorded the meeting and \"Them\" is everyone else. \
+In a meeting transcript, \"Me\" is the user who recorded the meeting; the others are \"Them\", or one label \
+for each person told apart by voice (\"Speaker 2\", or a name the user gave). \
 AI notes are a draft that a language model wrote from the transcript; tasks in them start with the \
 owner's name in bold. All times are UTC. start_meeting and stop_meeting work only when the user \
 allows them in Lowkey (Settings → AI agents).";
@@ -457,7 +458,7 @@ fn tools() -> Value {
           "description": "The meetings Lowkey recorded, newest first: id, title, start (UTC), length and the first words.",
           "inputSchema": { "type": "object", "properties": { "limit": { "type": "integer", "minimum": 1, "maximum": 200, "description": "How many (default 20)." } } } },
         { "name": "get_meeting", "title": "Get a meeting", "annotations": read,
-          "description": "One meeting as Markdown: the AI notes (a draft), the user's own notes and the transcript, where \"Me\" is the user and \"Them\" everyone else. Long meetings have long transcripts: ask for the parts you need.",
+          "description": "One meeting as Markdown: the AI notes (a draft), the user's own notes and the transcript, where \"Me\" is the user and the others are \"Them\" or one label per person (\"Speaker 2\", or a name). Long meetings have long transcripts: ask for the parts you need.",
           "inputSchema": { "type": "object", "required": ["id"], "properties": { "id": id,
               "parts": { "type": "array", "items": { "type": "string", "enum": ["ai_notes", "notes", "transcript"] }, "description": "Only these parts (default: all)." } } } },
         { "name": "search", "title": "Search meetings and dictations", "annotations": read,
@@ -613,8 +614,8 @@ mod tests {
             state: state.into(),
             model: "small".into(),
             lines: vec![
-                Line { speaker: Speaker::Me, start: 0.0, end: 3.0, text: "I call the customer on Monday.".into() },
-                Line { speaker: Speaker::Them, start: 4.0, end: 8.0, text: "Ana sends the contract by Friday.".into() },
+                Line { speaker: Speaker::Me, start: 0.0, end: 3.0, text: "I call the customer on Monday.".into(), person: 0 },
+                Line { speaker: Speaker::Them, start: 4.0, end: 8.0, text: "Ana sends the contract by Friday.".into(), person: 0 },
             ],
             ai_notes: notes.into(),
             ai_model: "Qwen3.5 4B".into(),
@@ -634,7 +635,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         let meetings = dir.join("meetings");
         std::fs::create_dir_all(&meetings).unwrap();
-        let old = Meeting { lines: vec![Line { speaker: Speaker::Me, start: 0.0, end: 2.0, text: "Hello everyone.".into() }], ..doc("m-1", "Old sync", 500, "recording", "") };
+        let old = Meeting { lines: vec![Line { speaker: Speaker::Me, start: 0.0, end: 2.0, text: "Hello everyone.".into(), person: 0 }], ..doc("m-1", "Old sync", 500, "recording", "") };
         meeting::save_in(&meetings, &old).unwrap();
         meeting::save_in(&meetings, &doc("m-2", "Contract review", 2000, "done", NOTES)).unwrap();
         let history = dir.join("history.json");

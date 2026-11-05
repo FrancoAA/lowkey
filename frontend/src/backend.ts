@@ -23,6 +23,7 @@ export interface Options {
   ai_key?: string;
   ai_auto?: boolean;
   mcp_recording?: boolean;
+  meeting_voices?: boolean;
   /** "" turns the note-app folder off. */
   export_dir?: string;
   export_auto?: boolean;
@@ -114,7 +115,11 @@ export interface MeetingsBackend {
   onOpen(cb: (id: string) => void): void;
   /** A transcript paragraph fixed (lines from..to as `paragraphs` made it; `before`: its text then).
    * The saved meeting, and a Vocabulary suggestion when the fix looks like a name or term. */
-  editParagraph(id: string, from: number, to: number, before: string, text: string, speaker: "me" | "them"): Promise<{ meeting: Meeting; suggestion: VocabTerm | null }>;
+  editParagraph(id: string, from: number, to: number, before: string, text: string, speaker: "me" | "them", person: number): Promise<{ meeting: Meeting; suggestion: VocabTerm | null }>;
+  /** A name for one of the others found by voice; the name of another one merges the two. */
+  nameSpeaker(id: string, person: number, name: string): Promise<Meeting>;
+  /** Telling the voices apart after Stop: working | done (with the meeting) | error. */
+  onVoices(cb: (e: { id: string; state: string; detail: string; meeting?: Meeting }) => void): void;
   /** Add a term (or one more spelling of it) to the Vocabulary. */
   addVocabulary(term: VocabTerm): Promise<void>;
   /** Save to the note-app folder; its file and, in an Obsidian vault, its obsidian:// link. */
@@ -244,8 +249,12 @@ async function desktopBackend(): Promise<Backend> {
       onOpen(cb) {
         void listen<string>("open-meeting", (e) => cb(e.payload));
       },
-      editParagraph: (id, from, to, before, text, speaker) =>
-        invoke<{ meeting: Meeting; suggestion: VocabTerm | null }>("meeting_edit_paragraph", { id, from, to, before, text, speaker }),
+      editParagraph: (id, from, to, before, text, speaker, person) =>
+        invoke<{ meeting: Meeting; suggestion: VocabTerm | null }>("meeting_edit_paragraph", { id, from, to, before, text, speaker, person }),
+      nameSpeaker: (id, person, name) => invoke<Meeting>("meeting_name_speaker", { id, person, name }),
+      onVoices(cb) {
+        void listen<{ id: string; state: string; detail: string; meeting?: Meeting }>("meeting-voices", (e) => cb(e.payload));
+      },
       addVocabulary: async (term) => {
         await invoke("vocabulary_add", { term });
       },

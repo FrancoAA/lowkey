@@ -72,6 +72,10 @@ BENCH_PARAKEET = ROOT / "bench" / ".work" / "parakeet-tdt-0.6b-v3-int8"  # Parak
 # AI notes: Qwen3.5 4B (2.7 GB) and the llama.cpp runner, if cached (bench/summary). Without
 # them the AI notes step is skipped (the test never downloads 2.7 GB).
 BENCH_LLM = ROOT / "bench" / ".work" / "llm"
+# Telling the voices apart (Settings → Models → Who is speaking): the two models (46 MB), if
+# cached (segmentation-3.0.onnx, titanet-small.onnx; src/voices.rs has their URLs). Without them
+# that step is skipped.
+BENCH_VOICES = ROOT / "bench" / ".work" / "voices"
 if PREVIEW == "parakeet" and not BENCH_PARAKEET.is_dir():
     print(f"  note: OW_E2E_PREVIEW=parakeet but no {BENCH_PARAKEET}: using whistle")
     PREVIEW = "whistle"
@@ -169,6 +173,12 @@ def main() -> None:
             (models / "llm").mkdir()
             for f in ("Qwen3.5-4B-Q4_K_M.gguf", "llama-b12047"):
                 (models / "llm" / f).symlink_to(BENCH_LLM / f)
+        # The sizes the app checks (src/voices.rs FILES): a stale copy would make the step wait.
+        if all((BENCH_VOICES / f).is_file() and (BENCH_VOICES / f).stat().st_size == n
+               for f, n in (("segmentation-3.0.onnx", 5_992_913), ("titanet-small.onnx", 40_257_283))):
+            (models / "voices").mkdir()
+            for f in ("segmentation-3.0.onnx", "titanet-small.onnx"):
+                (models / "voices" / f).symlink_to(BENCH_VOICES / f)
         if BENCH_WHISTLE.is_dir():
             (models / "whistle").mkdir()
             for f in BENCH_WHISTLE.iterdir():
@@ -453,13 +463,15 @@ esac
             old_autostart.write_text(f'[Desktop Entry]\nType=Application\nName=open-whisper\nExec="{APP.with_name("open-whisper")}" --background\n')
         # AI notes after Stop only with the cached model: the test never downloads 2.7 GB.
         ai_auto = "true" if (models / "llm").is_dir() else "false"
+        voices = (models / "voices").is_dir()
         # A vocabulary term: "open whisper" (as Whisper hears it) must come out as "OpenWhisper".
         # Note apps: a folder in an Obsidian vault (a .obsidian folder makes it one).
         vault_notes = tmp / "vault" / "Meetings"
         vault_notes.mkdir(parents=True)
         (tmp / "vault" / ".obsidian").mkdir()
         (tmp / "config" / "open-whisper" / "config.toml").write_text(
-            f'idle_unload_minutes = 5\npreview_engine = "{PREVIEW}"\nai_auto = {ai_auto}\nexport_dir = "{vault_notes}"\n\n'
+            f'idle_unload_minutes = 5\npreview_engine = "{PREVIEW}"\nai_auto = {ai_auto}\nexport_dir = "{vault_notes}"\n'
+            f'meeting_voices = {"true" if voices else "false"}\n\n'
             '[[vocabulary]]\nterm = "OpenWhisper"\nsounds_like = ["open whisper", "Open Wish"]\n')
         app = subprocess.Popen([APP], env=env, stdout=open(tmp / "app.log", "w"), stderr=subprocess.STDOUT)
         main_win = wait(lambda: win("Lowkey"), 30, "main window")
@@ -968,6 +980,20 @@ esac
               "Me = the microphone, Them = the computer's sound")
         check(saved["lines"] == sorted(saved["lines"], key=lambda x: x["start"]), "lines in time order")
         check(oct(meetings_dir.stat().st_mode & 0o777) == "0o700", "the meetings folder is private (0700)")
+        # Who is speaking: the others' sound was kept in a file while it recorded; after Stop each
+        # "Them" line gets a speaker (JFK alone: Speaker 1), the file goes, then the note and notes.
+        if voices:
+            t_v = time.monotonic()
+            v = wait(lambda: next((e for e in events("meeting-voices") if e["id"] == mid and e["state"] in ("done", "error")), None), 120, "the voices told apart")
+            check(v["state"] == "done" and any(e["id"] == mid and e["state"] == "working" for e in events("meeting-voices")),
+                  f"the voices are told apart after Stop in {time.monotonic() - t_v:.1f} s ({v['detail'] or 'done'})")
+            saved = json.loads((meetings_dir / f"{mid}.json").read_text())
+            check(saved.get("people") == [""] and all(x.get("person") == 1 for x in saved["lines"] if x["speaker"] == "them")
+                  and all("person" not in x for x in saved["lines"] if x["speaker"] == "me"),
+                  "one voice in the computer's sound: its lines are Speaker 1, Me has no number")
+            check(not list(meetings_dir.glob(".*.them.pcm")), "the others' sound is deleted when the voices are told apart")
+        else:
+            print(f"  SKIP who is speaking: no cached voice models in {BENCH_VOICES}")
         time.sleep(1.0)
         shot("22-desktop-meeting-saved.png")
         # Note apps: saved as Markdown in the vault's folder by itself.
@@ -976,6 +1002,8 @@ esac
         check(ex["state"] == "saved" and note.is_file() and note.read_text().startswith("---\ntitle: ")
               and f"lowkey_id: {mid}\n" in note.read_text() and "## Transcript" in note.read_text(),
               f"the meeting is saved as a Markdown note in the folder: {ex['file']}")
+        if voices:
+            check("**Speaker 1** (" in note.read_text() and "**Them** (" not in note.read_text(), "the note is saved after the voices: Speaker 1, not Them")
 
         # ---------------------------------------------------------------- AI notes (written when it stops)
         if (models / "llm").is_dir():
@@ -1064,6 +1092,25 @@ esac
             if (vault_notes / note.name).is_file():
                 wait(lambda: "Lisandro." in (vault_notes / note.name).read_text(), 15, "the note follows the fix")
                 print("  ok  the note in the folder follows the fix")
+            if voices:
+                # A name for Speaker 1: a click on its label, a name, Enter.
+                time.sleep(0.5)
+                label = wait(them_label, 10, "the Speaker 1 label")
+                pointer(f"abs:{wx + label[0] + 4},{wy + label[1] + 2},{{W}},{{H}}", "sleep:200", "click")
+                time.sleep(0.5)
+                for st in ("down", "up"):
+                    run(["hyprctl", "dispatch", f'hl.dsp.send_key_state({{ mods = "SHIFT", key = "j", state = "{st}" }})'], env)
+                    time.sleep(0.05)
+                for ch in "ohn":
+                    press_key(ch)
+                press_key("Return")
+                named = wait(lambda: (m := json.loads((meetings_dir / f"{mid}.json").read_text())).get("people") == ["John"] and m, 10, "the name saved")
+                check(named["people"] == ["John"], "a click on Speaker 1 gives it a name (John)")
+                time.sleep(0.6)
+                shot("42-desktop-speaker-names.png")
+                if (vault_notes / note.name).is_file():
+                    wait(lambda: "**John** (" in (vault_notes / note.name).read_text(), 15, "the note with the name")
+                    print("  ok  the note in the folder has the name")
         else:
             print(f"  SKIP AI notes: no cached Qwen3.5 4B and runner in {BENCH_LLM}")
         # A wide window: the AI notes and the chat side by side (the nested window, full screen).
