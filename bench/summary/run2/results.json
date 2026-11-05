@@ -1,0 +1,38 @@
+[
+ {
+  "model": "Qwen3.5-2B-Q4_K_M.gguf",
+  "device": "GPU (Vulkan)",
+  "load_s": 1.5,
+  "prompt_tokens": 2770,
+  "prompt_tok_s": 1232.0,
+  "gen_tokens": 589,
+  "gen_tok_s": 47.8,
+  "total_s": 14.6,
+  "rss_mb": 245,
+  "answer": "## Summary\nSe determinó que la versión 2.4 se lanzará el jueves 14 de noviembre, con la integración de Salesforce pospuesta a enero y el servicio de facturas migrado a Postgres. Se acordó contratar un diseñador freelance remoto por tres meses con un presupuesto de $9,000 USD. El precio del plan Team se revisará el día 20 de noviembre.\n\n## Decisions\n- La versión 2.4 se lanzará el jueves 14 de noviembre.\n- La integración con Salesforce se pospone a enero.\n- El servicio de facturas migrará a Postgres en lugar de MongoDB.\n- Se contratará un diseñador freelance remoto por tres meses con un presupuesto de $9,000 USD.\n- El precio del plan Team se revisará el día 20 de noviembre.\n\n## Action items\n- **Lucía**: Preparar las notas de la versión 2.4 antes del miércoles.\n- **Lucía**: Activar la bandera de beta para el panel de reportes en la versión 2.4.\n- **Lucía**: Enviar la oferta de trabajo para el diseñador freelance a las dos bolsas de trabajo de diseño.\n- **Lucía**: Revisar la tabla de ingresos por cliente según el tamaño del equipo para el día 20 de noviembre.\n- **Martín**: Asegurar que el ticket de pagos duplicados esté cerrado antes del lanzamiento del jueves 14 de noviembre.\n- **Martín**: Asumir la revisión de seguridad de los datos fiscales en el borrador del esquema de facturas.\n- **Martín**: Asumir la aritmética de la migración del esquema de facturas.\n- **Sofía**: Publicar la oferta de trabajo para el diseñador freelance en las dos bolsas de trabajo de diseño.\n- **Sofía**: Actualizar las notas de la versión 2.4 indicando que el panel de reportes estará disponible para clientes beta.\n\n## Open questions\n- ¿Qué fecha exacta se fijará para la llamada técnica con Acme para explicar el retraso en la integración de Salesforce?\n- ¿Se confirmará el número de usuarios o el precio fijo por equipo para el plan Team antes del día 20 de noviembre?\n- ¿Se confirmará la disponibilidad del jueves 14 de noviembre para el lanzamiento de la versión 2.4?\n\n## Numbers\n- 2.4\n- 14 de noviembre\n- 9,000 USD\n- 3 meses\n- 41 clientes nuevos\n- 3.2% (churn)\n- 4 semanas (tiempo estimado para la integración de Salesforce)\n- 2 semanas (tiempo estimado para la migración del esquema de facturas)"
+ },
+ {
+  "model": "Qwen3.5-4B-Q4_K_M.gguf",
+  "device": "GPU (Vulkan)",
+  "load_s": 2.4,
+  "prompt_tokens": 2770,
+  "prompt_tok_s": 485.0,
+  "gen_tokens": 493,
+  "gen_tok_s": 22.9,
+  "total_s": 27.2,
+  "rss_mb": 341,
+  "answer": "## Resumen\nSe reprogramó el lanzamiento de la versión 2.4 al jueves 14 de noviembre para evitar un feriado y permitir cerrar un ticket de seguridad crítico. La integración con Salesforce se pospone hasta enero debido a la complejidad técnica y la presión del cliente Acme. Se decidió mantener la base de datos de facturas en Postgres en lugar de MongoDB para facilitar los reportes contables. Se aprobó contratar a un diseñador freelance por tres meses y se programó una reunión el 20 de noviembre para definir el precio del plan Team.\n\n## Decisiones\nLa versión 2.4 se lanza el jueves 14 de noviembre.\nLa integración con Salesforce se pospone hasta enero.\nLa base de datos del servicio de facturas se usará Postgres.\nSe contrata a un diseñador freelance por tres meses.\nNo se decide el precio del plan Team hoy.\n\n## Action items\n**Martín** — arreglar el ticket 412 sobre pagos duplicados — antes del miércoles.\n**Lucía** — preparar las notas de la versión 2.4 — antes del miércoles.\n**Martín** — armar un borrador del esquema y la migración de facturas — en dos semanas.\n**Sofía** — publicar la oferta de trabajo para el diseñador freelance — esta semana.\n**Yo** — llamar a Acme el viernes — para explicar el retraso en Salesforce.\n**Sofía** — traer una tabla con el ingreso por cliente según tamaño de equipo — para el 20 de noviembre.\n\n## Open questions\n¿Quién hará la revisión de seguridad de los datos fiscales en el servicio de facturas?\n\n## Numbers\n**2.4** — versión del software.\n**14 de noviembre** — fecha propuesta del lanzamiento.\n**412** — número del ticket de pagos duplicados.\n**4 semanas** — tiempo estimado para la integración con Salesforce.\n**9 mil dólares** — presupuesto total para el diseñador freelance.\n**3 mil** — costo mensual del diseñador freelance.\n**3 meses** — duración del contrato del diseñador.\n**41** — número de clientes nuevos este mes.\n**3.2%** — tasa de cancelación (churn) este mes.\n**20 de noviembre** — fecha de la próxima reunión sobre precios."
+ },
+ {
+  "model": "gemma-4-E4B-it-Q4_K_M.gguf",
+  "device": "GPU (Vulkan)",
+  "load_s": 3.9,
+  "prompt_tokens": 2767,
+  "prompt_tok_s": 501.9,
+  "gen_tokens": 554,
+  "gen_tok_s": 22.3,
+  "total_s": 30.3,
+  "rss_mb": 238,
+  "answer": "## Summary\nLa reunión abordó varios puntos clave, incluyendo la fecha de lanzamiento de la versión 2.4, la integración con Salesforce, la base de datos del servicio de facturas y la contratación de un diseñador. Se decidió mover el lanzamiento de la versión 2.4 al jueves 14 de noviembre para permitir la corrección de un error de pagos duplicados. La integración con Salesforce se pospondrá hasta enero, y se acordó utilizar Postgres en lugar de MongoDB para el servicio de facturas. Además, se aprobó contratar un diseñador freelance por tres meses con un presupuesto de nueve mil dólares.\n\n## Decisions\nLa versión 2.4 se lanzará el jueves 14 de noviembre.\nEl ticket de pagos duplicados (cuatro uno dos) debe estar arreglado antes del lanzamiento.\nLas notas de la versión serán preparadas antes del miércoles.\nLa integración con Salesforce se pospone hasta enero.\nEl servicio de facturas utilizará Postgres en lugar de MongoDB.\nSe contratará un diseñador freelance por tres meses con un presupuesto de nueve mil dólares.\nEl precio del plan Team se revisará el veinte de noviembre.\n\n## Action items\nLucía — Llamar a Acme el viernes para explicar el retraso de Salesforce.\nMartín — Arreglar el ticket cuatro uno dos antes del miércoles.\nLucía — Preparar las notas de la versión antes del miércoles.\nMartín — Traer un borrador del esquema y de la migración de la base de datos en dos semanas.\nSofía — Publicar la oferta de diseñador freelance esta semana.\nLucía — Traer una tabla con el ingreso por cliente según el tamaño del equipo para la próxima reunión.\n\n## Open questions\nLa revisión de seguridad de los datos fiscales del servicio de facturas debe ser vista cuando esté el borrador de la migración.\nEl precio del plan Team se discutirá el veinte de noviembre.\n\n## Numbers\n2.4 — Versión a lanzar.\n14 de noviembre — Fecha de lanzamiento de la versión 2.4.\ncuatro uno dos — Número del ticket de pagos duplicados.\nDiciembre — Mes propuesto para posponer la integración de Salesforce.\nEnero — Mes propuesto para iniciar la integración de Salesforce.\nNueve mil dólares — Presupuesto aprobado para el diseñador freelance.\nTres meses — Duración del contrato del diseñador freelance.\nCuarenta y un — Número de clientes nuevos este mes.\nTres coma dos por ciento — Tasa de *churn* de este mes.\nVeinte de noviembre — Fecha de la próxima reunión para discutir el precio del plan Team."
+ }
+]

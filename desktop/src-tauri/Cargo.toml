@@ -1,0 +1,86 @@
+[package]
+name = "lowkey"
+version = "0.7.0"
+description = "Local, open-source speech to text: desktop app"
+edition = "2021"
+rust-version = "1.80"
+license = "MIT"
+
+[lib]
+name = "lowkey_lib"
+crate-type = ["rlib"]
+
+[[bin]]
+name = "lowkey"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# macos-private-api: transparent windows on macOS (the rounded dictation overlay).
+tauri = { version = "2", features = ["tray-icon", "image-png", "macos-private-api"] }
+tauri-plugin-single-instance = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-global-shortcut = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.9"
+dirs = "6"
+anyhow = "1"
+parking_lot = "0.12"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "blocking", "json"] }
+symphonia = { version = "0.5", features = ["all"] }
+cpal = "0.16"
+hound = "3"
+# Live preview (Whistle): load the engine library at run time, check downloads, read its wheel.
+libloading = "0.8"
+sha2 = "0.10"
+flate2 = "1"
+# AI notes: unpack the pinned llama.cpp release (.tar.gz), name the meeting's language.
+tar = "0.4"
+# The built-in server's key, from the system's random generator.
+getrandom = "0.3"
+# The host of an own server's address, parsed as reqwest parses it (the same crate).
+url = "2"
+# Vocabulary: whole-word, case-insensitive replacement of "sounds like" spellings.
+regex = "1"
+whatlang = "0.16"
+
+log = "0.4"
+
+# GPU backend per OS: Vulkan (AMD/Intel/NVIDIA) on Linux, Metal on macOS. Windows: the CPU for
+# now (its Vulkan build needs the Vulkan SDK's Windows import library; not wired yet).
+[target.'cfg(target_os = "windows")'.dependencies]
+whisper-rs = { version = "0.16" }
+
+# Parakeet (NVIDIA, CC-BY-4.0 weights) through sherpa-onnx (Apache-2.0), linked statically with
+# onnxruntime. Exact version: desktop/scripts/sherpa-onnx.sh pins the archive of this release.
+[target.'cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))'.dependencies]
+sherpa-onnx = "=2.0.1"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+whisper-rs = { version = "0.16", features = ["metal"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+whisper-rs = { version = "0.16", features = ["vulkan", "openmp"] }
+# Same versions as wry/tauri use: only to set the overlay webview's GTK size request.
+gtk = "0.18"
+webkit2gtk = "2.0"
+
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+# Start at login on macOS/Windows (Linux writes its XDG autostart entry itself: src/autostart.rs).
+tauri-plugin-autostart = "2"
+enigo = "0.6"
+arboard = "3"
+
+[features]
+default = []
+# Embed the built UI (frontend/dist). `tauri build` turns it on; for a plain cargo build use
+# `cargo build --release --features custom-protocol` (see Makefile: make desktop).
+custom-protocol = ["tauri/custom-protocol"]
+
+[profile.release]
+lto = "thin"
+codegen-units = 4
+strip = true

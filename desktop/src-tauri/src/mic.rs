@@ -1,0 +1,380 @@
+//! Microphone capture with cpal (ALSA/PipeWire, CoreAudio, WASAPI). The app records the mic
+//! itself; nothing goes through the webview.
+//!
+//! OPENWHISPER_FAKE_MIC=<audio file> replaces the mic with that file played in real time,
+//! looped. It exists for automated tests only.
+
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc;
+use std::sync::Arc;
+use std::time::Duration;
+
+use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use parking_lot::Mutex;
+
+use crate::audio;
+use crate::preview::AudioFn;
+
+pub const MAX_RECORDING_S: usize = 10 * 60;
+
+pub type LevelFn = Arc<dyn Fn(f32) + Send + Sync>;
+/// Called once if capture ends on its own: "limit" or "failed: <why>".
+pub type EndFn = Arc<dyn Fn(String) + Send + Sync>;
+
+pub trait Recorder: Send {
+    fn start(&mut self) -> anyhow::Result<()>;
+    /// Stop and return 16 kHz mono samples.
+    fn stop(&mut self) -> Vec<f32>;
+}
+
+/// `on_audio` (the live preview) gets the mono samples at the device rate in ~0.5 s blocks.
+pub fn new_recorder(on_level: LevelFn, on_end: EndFn, on_audio: Option<AudioFn>) -> Box<dyn Recorder> {
+    open(on_level, on_end, on_audio, true)
+}
+
+/// A mic that only feeds `on_audio` (the meetings): it keeps no samples and has no length
+/// limit; `stop()` returns nothing.
+pub fn new_tap(on_level: LevelFn, on_end: EndFn, on_audio: AudioFn) -> Box<dyn Recorder> {
+    open(on_level, on_end, Some(on_audio), false)
+}
+
+/// Which microphone to open (Settings → General → Microphone): a source name on Linux, a
+/// device name elsewhere; None = the system default. Set by the app, asked at every open.
+pub type ResolveFn = Arc<dyn Fn() -> Option<String> + Send + Sync>;
+static RESOLVER: Mutex<Option<ResolveFn>> = Mutex::new(None);
+
+pub fn set_resolver(f: ResolveFn) {
+    *RESOLVER.lock() = Some(f);
+}
+
+fn chosen_device() -> Option<String> {
+    let f = RESOLVER.lock().clone();
+    f.and_then(|f| f())
+}
+
+fn open(on_level: LevelFn, on_end: EndFn, on_audio: Option<AudioFn>, keep: bool) -> Box<dyn Recorder> {
+    let shared = Shared::new(on_audio, keep);
+    if let Some(path) = std::env::var_os("OPENWHISPER_FAKE_MIC") {
+        return Box::new(FakeMic { path: path.into(), on_level, on_end, shared, thread: None });
+    }
+    let device = chosen_device();
+    // Linux: the exact PipeWire/PulseAudio source (the device list comes from there too).
+    #[cfg(target_os = "linux")]
+    if crate::system_audio::available() {
+        let source = device.unwrap_or_else(|| "@DEFAULT_SOURCE@".into());
+        return Box::new(PulseMic { source, on_level, on_end, shared, capture: None });
+    }
+    // Without that library a source name means nothing to cpal: the default input.
+    #[cfg(target_os = "linux")]
+    let device: Option<String> = {
+        let _ = device;
+        None
+    };
+    Box::new(CpalMic { device, on_level, on_end, shared, stop_tx: None, thread: None })
+}
+
+/// Linux: a microphone source through PipeWire/PulseAudio, 16 kHz mono blocks of 100 ms.
+#[cfg(target_os = "linux")]
+pub struct PulseMic {
+    source: String,
+    on_level: LevelFn,
+    on_end: EndFn,
+    shared: Arc<Shared>,
+    capture: Option<crate::system_audio::Capture>,
+}
+
+#[cfg(target_os = "linux")]
+impl Recorder for PulseMic {
+    fn start(&mut self) -> anyhow::Result<()> {
+        *self.shared.rate.lock() = audio::RATE;
+        let (shared, on_level, on_end) = (self.shared.clone(), self.on_level.clone(), self.on_end.clone());
+        let pending = Mutex::new(Vec::new());
+        let on_block: crate::system_audio::BlockFn = Arc::new(move |b: &[f32]| shared.push(b, &mut pending.lock(), &on_level, &on_end));
+        let (shared, on_end) = (self.shared.clone(), self.on_end.clone());
+        let on_fail: EndFn = Arc::new(move |why: String| {
+            if !shared.stopping.load(Ordering::Relaxed) && !shared.ended.swap(true, Ordering::Relaxed) {
+                on_end(why);
+            }
+        });
+        self.capture = Some(crate::system_audio::record_source(&self.source, "Microphone", on_block, on_fail)?);
+        Ok(())
+    }
+
+    fn stop(&mut self) -> Vec<f32> {
+        self.shared.stopping.store(true, Ordering::Relaxed);
+        if let Some(mut c) = self.capture.take() {
+            c.stop();
+        }
+        self.shared.take_16k()
+    }
+}
+
+struct Shared {
+    samples: Mutex<Vec<f32>>,
+    rate: Mutex<u32>,
+    stopping: AtomicBool,
+    ended: AtomicBool,
+    on_audio: Option<AudioFn>,
+    /// Samples not yet sent to `on_audio`.
+    audio_block: Mutex<Vec<f32>>,
+    /// Keep the samples for `stop()` (dictation); false for a tap (meetings).
+    keep: bool,
+}
+
+impl Shared {
+    fn new(on_audio: Option<AudioFn>, keep: bool) -> Arc<Self> {
+        Arc::new(Self {
+            samples: Mutex::default(),
+            rate: Mutex::new(audio::RATE),
+            stopping: AtomicBool::new(false),
+            ended: AtomicBool::new(false),
+            on_audio,
+            audio_block: Mutex::default(),
+            keep,
+        })
+    }
+
+    fn send_audio(&self, mono: &[f32], rate: usize, flush: bool) {
+        let Some(on_audio) = &self.on_audio else { return };
+        let mut block = self.audio_block.lock();
+        block.extend_from_slice(mono);
+        if !block.is_empty() && (flush || block.len() >= rate / 2) {
+            on_audio(&block, rate as u32);
+            block.clear();
+        }
+    }
+
+    /// Append mono samples; report the level every ~50 ms; stop at the length limit.
+    fn push(&self, mono: &[f32], pending: &mut Vec<f32>, on_level: &LevelFn, on_end: &EndFn) {
+        let rate = *self.rate.lock() as usize;
+        pending.extend_from_slice(mono);
+        let block = rate / 20;
+        while pending.len() >= block {
+            on_level(audio::level(&pending[..block]));
+            pending.drain(..block);
+        }
+        self.send_audio(mono, rate, false);
+        if !self.keep {
+            return;
+        }
+        let mut s = self.samples.lock();
+        s.extend_from_slice(mono);
+        if s.len() >= MAX_RECORDING_S * rate && !self.stopping.load(Ordering::Relaxed) && !self.ended.swap(true, Ordering::Relaxed) {
+            on_end("limit".into());
+        }
+    }
+
+    fn take_16k(&self) -> Vec<f32> {
+        self.send_audio(&[], *self.rate.lock() as usize, true);
+        let samples = std::mem::take(&mut *self.samples.lock());
+        audio::resample(&samples, *self.rate.lock(), audio::RATE)
+    }
+}
+
+pub struct CpalMic {
+    /// A device name; None = the default input.
+    device: Option<String>,
+    on_level: LevelFn,
+    on_end: EndFn,
+    shared: Arc<Shared>,
+    stop_tx: Option<mpsc::Sender<()>>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl Recorder for CpalMic {
+    fn start(&mut self) -> anyhow::Result<()> {
+        // cpal streams are not Send on every platform: one thread owns the stream.
+        let (ready_tx, ready_rx) = mpsc::channel::<anyhow::Result<()>>();
+        let (stop_tx, stop_rx) = mpsc::channel::<()>();
+        let (shared, on_level, on_end) = (self.shared.clone(), self.on_level.clone(), self.on_end.clone());
+        let wanted = self.device.clone();
+        let thread = std::thread::spawn(move || {
+            let result = (|| -> anyhow::Result<cpal::Stream> {
+                let host = cpal::default_host();
+                // The chosen device by name, else the default input.
+                let named = wanted.and_then(|n| host.input_devices().ok()?.find(|d| d.name().ok().as_deref() == Some(n.as_str())));
+                let device = named.or_else(|| host.default_input_device()).ok_or_else(|| anyhow::anyhow!("no microphone found"))?;
+                let config = device.default_input_config()?;
+                let channels = config.channels() as usize;
+                *shared.rate.lock() = config.sample_rate().0;
+                let err_end = on_end.clone();
+                let err_shared = shared.clone();
+                let on_err = move |e: cpal::StreamError| {
+                    if !err_shared.stopping.load(Ordering::Relaxed) && !err_shared.ended.swap(true, Ordering::Relaxed) {
+                        err_end(format!("failed: {e}"));
+                    }
+                };
+                macro_rules! build {
+                    ($t:ty, $conv:expr) => {{
+                        let (shared, on_level, on_end) = (shared.clone(), on_level.clone(), on_end.clone());
+                        let mut pending = Vec::new();
+                        device.build_input_stream(
+                            &config.clone().into(),
+                            move |data: &[$t], _: &cpal::InputCallbackInfo| {
+                                let mono: Vec<f32> = data.chunks(channels).map(|f| f.iter().map(|&x| $conv(x)).sum::<f32>() / channels as f32).collect();
+                                shared.push(&mono, &mut pending, &on_level, &on_end);
+                            },
+                            on_err,
+                            None,
+                        )?
+                    }};
+                }
+                let stream = match config.sample_format() {
+                    cpal::SampleFormat::F32 => build!(f32, |x: f32| x),
+                    cpal::SampleFormat::I16 => build!(i16, |x: i16| x as f32 / 32768.0),
+                    cpal::SampleFormat::U16 => build!(u16, |x: u16| (x as f32 - 32768.0) / 32768.0),
+                    cpal::SampleFormat::I32 => build!(i32, |x: i32| x as f32 / 2147483648.0),
+                    other => anyhow::bail!("unsupported microphone sample format {other:?}"),
+                };
+                stream.play()?;
+                Ok(stream)
+            })();
+            match result {
+                Ok(stream) => {
+                    let _ = ready_tx.send(Ok(()));
+                    let _ = stop_rx.recv();
+                    drop(stream);
+                }
+                Err(e) => {
+                    let _ = ready_tx.send(Err(e));
+                }
+            }
+        });
+        match ready_rx.recv_timeout(Duration::from_secs(5)) {
+            Ok(Ok(())) => {
+                self.stop_tx = Some(stop_tx);
+                self.thread = Some(thread);
+                Ok(())
+            }
+            Ok(Err(e)) => Err(e),
+            Err(_) => {
+                // Too slow: tell the thread to drop the stream if it opens later.
+                self.shared.stopping.store(true, Ordering::Relaxed);
+                let _ = stop_tx.send(());
+                Err(anyhow::anyhow!("the microphone did not start"))
+            }
+        }
+    }
+
+    fn stop(&mut self) -> Vec<f32> {
+        self.shared.stopping.store(true, Ordering::Relaxed);
+        if let Some(tx) = self.stop_tx.take() {
+            let _ = tx.send(());
+        }
+        if let Some(t) = self.thread.take() {
+            let _ = t.join();
+        }
+        self.shared.take_16k()
+    }
+}
+
+pub struct FakeMic {
+    path: std::path::PathBuf,
+    on_level: LevelFn,
+    on_end: EndFn,
+    shared: Arc<Shared>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl Recorder for FakeMic {
+    fn start(&mut self) -> anyhow::Result<()> {
+        let clip = audio::decode_file(&self.path).map_err(|e| anyhow::anyhow!("{e}"))?;
+        let (shared, on_level, on_end) = (self.shared.clone(), self.on_level.clone(), self.on_end.clone());
+        self.thread = Some(std::thread::spawn(move || {
+            let chunk = audio::RATE as usize / 20;
+            let mut pending = Vec::new();
+            let mut pos = 0usize;
+            while !shared.stopping.load(Ordering::Relaxed) {
+                let end = (pos + chunk).min(clip.len());
+                shared.push(&clip[pos..end], &mut pending, &on_level, &on_end);
+                pos = if end >= clip.len() { 0 } else { end };
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        }));
+        Ok(())
+    }
+
+    fn stop(&mut self) -> Vec<f32> {
+        self.shared.stopping.store(true, Ordering::Relaxed);
+        if let Some(t) = self.thread.take() {
+            let _ = t.join();
+        }
+        self.shared.take_16k()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn preview_gets_half_second_blocks_and_the_rest_at_stop() {
+        let got: Arc<Mutex<Vec<(usize, u32)>>> = Arc::default();
+        let g = got.clone();
+        let shared = Shared::new(Some(Arc::new(move |pcm: &[f32], rate: u32| g.lock().push((pcm.len(), rate)))), true);
+        *shared.rate.lock() = 48_000;
+        let (on_level, on_end): (LevelFn, EndFn) = (Arc::new(|_| {}), Arc::new(|_| {}));
+        let mut pending = Vec::new();
+        for _ in 0..7 {
+            shared.push(&[0.1; 4_800], &mut pending, &on_level, &on_end); // 0.1 s each
+        }
+        assert_eq!(*got.lock(), vec![(24_000, 48_000)]);
+        let pcm = shared.take_16k();
+        assert_eq!(*got.lock(), vec![(24_000, 48_000), (9_600, 48_000)]);
+        assert_eq!(pcm.len(), 7 * 1_600);
+        shared.take_16k(); // nothing left: nothing sent
+        assert_eq!(got.lock().len(), 2);
+    }
+
+    #[test]
+    fn no_preview_tap_records_the_same() {
+        let shared = Shared::new(None, true);
+        let (on_level, on_end): (LevelFn, EndFn) = (Arc::new(|_| {}), Arc::new(|_| {}));
+        shared.push(&[0.1; 16_000], &mut Vec::new(), &on_level, &on_end);
+        assert_eq!(shared.take_16k().len(), 16_000);
+    }
+
+    /// The real default microphone through PipeWire/PulseAudio for one second: blocks arrive at
+    /// 16 kHz and the level moves. Nothing is kept. Run with --ignored on a desktop.
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore]
+    fn the_real_default_microphone_opens_through_pipewire() {
+        let got: Arc<Mutex<usize>> = Arc::default();
+        let levels: Arc<Mutex<usize>> = Arc::default();
+        let (g, l) = (got.clone(), levels.clone());
+        let mut rec = PulseMic {
+            source: "@DEFAULT_SOURCE@".into(),
+            on_level: Arc::new(move |_| *l.lock() += 1),
+            on_end: Arc::new(|why| panic!("{why}")),
+            shared: Shared::new(Some(Arc::new(move |pcm: &[f32], rate: u32| {
+                assert_eq!(rate, 16_000);
+                *g.lock() += pcm.len();
+            })), false),
+            capture: None,
+        };
+        rec.start().expect("the default microphone");
+        std::thread::sleep(Duration::from_millis(1000));
+        assert!(rec.stop().is_empty(), "a tap keeps nothing");
+        let n = *got.lock();
+        assert!((12_000..=20_000).contains(&n), "{n} samples in a second");
+        assert!(*levels.lock() >= 15, "levels about every 50 ms");
+    }
+
+    #[test]
+    fn a_tap_keeps_nothing_and_has_no_length_limit() {
+        let got: Arc<Mutex<usize>> = Arc::default();
+        let g = got.clone();
+        let shared = Shared::new(Some(Arc::new(move |pcm: &[f32], _| *g.lock() += pcm.len())), false);
+        let ended: Arc<Mutex<Vec<String>>> = Arc::default();
+        let e = ended.clone();
+        let (on_level, on_end): (LevelFn, EndFn) = (Arc::new(|_| {}), Arc::new(move |r| e.lock().push(r)));
+        let mut pending = Vec::new();
+        for _ in 0..(MAX_RECORDING_S + 5) {
+            shared.push(&[0.1; 16_000], &mut pending, &on_level, &on_end); // 1 s each, past the dictation limit
+        }
+        assert!(ended.lock().is_empty(), "no limit for a tap");
+        assert!(shared.take_16k().is_empty(), "a tap keeps no samples");
+        assert_eq!(*got.lock(), (MAX_RECORDING_S + 5) * 16_000, "all audio went to the tap");
+    }
+}

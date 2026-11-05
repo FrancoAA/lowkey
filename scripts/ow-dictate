@@ -1,0 +1,45 @@
+#!/bin/sh
+# Global dictation key for Lowkey (the desktop app). The key bind runs it:
+#   ow-dictate press    on key press      (hold = push-to-talk, tap = start/stop)
+#   ow-dictate release  on key release
+#   ow-dictate toggle   one key, no hold detection
+#   ow-dictate cancel   stop without transcribing
+#   ow-dictate quit     stop Lowkey
+# The app does the work: a running app gets the action; with the app closed, a press (or
+# toggle) starts it in the background and the dictation begins as soon as it is ready.
+# This script only finds the app, so the bindings.lua block can keep pointing here.
+action=${1:-toggle}
+dir="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/lowkey"
+note() { command -v notify-send >/dev/null 2>&1 && notify-send -a Lowkey "Lowkey" "$1"; }
+
+# Our state must be private: refuse a directory that another user created (shared /tmp).
+if [ -e "$dir" ] && { [ ! -O "$dir" ] || [ -L "$dir" ]; }; then
+  note "Refusing $dir: it belongs to another user."
+  exit 1
+fi
+
+field() { sed -n "s/.*\"$1\": *\"\{0,1\}\([^\",}]*\).*/\1/p" "$2" 2>/dev/null; }
+
+# A running app (installed, or a development build) writes desktop.json: hand the action to it.
+exe=$(field exe "$dir/desktop.json")
+pid=$(field pid "$dir/desktop.json")
+if [ -n "$exe" ] && [ -x "$exe" ] && [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+  exec "$exe" --dictate "$action"
+fi
+
+case "$action" in
+  press | toggle) ;;
+  *) exit 0 ;; # release/cancel/quit with no app running: nothing to do
+esac
+
+# Not running: start the app; it begins the dictation when it is ready. The installed app
+# first ($OPENWHISPER_DESKTOP_BIN overrides), else this folder's build (make desktop).
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+bin="${OPENWHISPER_DESKTOP_BIN:-$HOME/.local/bin/lowkey}"
+[ -x "$bin" ] || bin="$root/desktop/src-tauri/target/release/lowkey"
+if [ ! -x "$bin" ]; then
+  note "Lowkey is not installed. Run 'make install-desktop' in $root."
+  exit 1
+fi
+mkdir -p "$dir" && chmod 700 "$dir" || exit 1
+exec setsid -f "$bin" --dictate "$action" </dev/null >"$dir/app.log" 2>&1

@@ -1,0 +1,38 @@
+[
+ {
+  "model": "Qwen3.5-2B-Q4_K_M.gguf",
+  "device": "GPU (Vulkan)",
+  "load_s": 1.8,
+  "prompt_tokens": 2768,
+  "prompt_tok_s": 986.4,
+  "gen_tokens": 608,
+  "gen_tok_s": 45.9,
+  "total_s": 16.0,
+  "rss_mb": 278,
+  "answer": "## Summary\nThe meeting focused on finalizing the release schedule for the \"Two Point Four\" version, resolving technical debt regarding Salesforce integration and billing database architecture, and securing a budget for a new designer. Key decisions include pushing the release to November 14th, deferring Salesforce integration to January, and moving the billing database to PostgreSQL. A freelance designer will be hired for three months to address the lack of a dedicated designer role.\n\n## Decisions\n- **Release Date:** The \"Two Point Four\" version will launch on Thursday, November 14th.\n- **Salesforce Integration:** The Salesforce integration is postponed to January to allow for dedicated resources and to address the client's urgent needs.\n- **Billing Database:** The billing service will use PostgreSQL instead of MongoDB, utilizing JSONB columns to handle country-specific data.\n- **Designer Role:** A freelance designer will be hired for three months at a rate of $3,000 per month.\n- **Team Pricing:** The decision to use a per-user pricing model for the Team plan will be finalized at the next meeting on November 20th.\n\n## Action items\n- **Lucía:** Prepare the \"Two Point Four\" release notes by the end of the current week (before Wednesday) and mark the new report panel as a beta feature.\n- **Martín:** Resolve the duplicate payment webhook ticket (Ticket #412) before the release date; if issues persist on Wednesday, the ticket will be moved to the next meeting.\n- **Lucía:** Draft a technical summary for the upcoming call with Acme regarding the Salesforce integration delay.\n- **Sofía:** Create a new job posting for a remote designer in Spanish, highlighting the budget and availability, and submit it to the two job boards.\n- **Me:** Schedule a meeting with the team on November 20th to review the current team pricing data and finalize the Team plan pricing strategy.\n\n## Open questions\n- **Martín:** Will the duplicate payment ticket (Ticket #412) be fully resolved by the end of the current week, or will it be moved to the next meeting?\n- **Sofía:** What is the specific timeline for the new designer's onboarding and the completion of the new report panel?\n- **Me:** What is the final agreed-upon per-user pricing model for the Team plan, pending the review of the November 20th data?\n\n## Numbers\n- **Release Date:** Thursday, November 14th\n- **Salesforce Integration:** Postponed to January\n- **Billing Database:** PostgreSQL (instead of MongoDB)\n- **Designer Hire:** 3 months\n- **Designer Rate:** $3,000 per month\n- **Team Plan:** Per-user pricing model\n- **Churn Rate:** 3.2% (current month)\n- **New Clients:** 41 (current month)"
+ },
+ {
+  "model": "Qwen3.5-4B-Q4_K_M.gguf",
+  "device": "GPU (Vulkan)",
+  "load_s": 3.0,
+  "prompt_tokens": 2768,
+  "prompt_tok_s": 484.6,
+  "gen_tokens": 372,
+  "gen_tok_s": 22.8,
+  "total_s": 22.0,
+  "rss_mb": 341,
+  "answer": "## Summary\nLa reunión se centró en ajustar la fecha de lanzamiento de la versión 2.4 al jueves 14 de noviembre para evitar conflictos con feriados y permitir cerrar un ticket de seguridad crítico. Se decidió posponer la integración con Salesforce hasta enero debido a la complejidad técnica y la presión de un cliente importante, Acme. También se confirmó que el servicio de facturas utilizará Postgres en lugar de MongoDB y se aprobó la contratación de un diseñador freelance por tres meses.\n\n## Decisions\n- La versión 2.4 se lanza el jueves 14 de noviembre.\n- La integración con Salesforce se pospone hasta enero.\n- El servicio de facturas se implementará en Postgres.\n- Se contrata a un diseñador freelance por tres meses.\n\n## Action items\n- **Martín** — arreglar el ticket 412 sobre pagos duplicados — antes del miércoles.\n- **Lucía** — preparar las notas de la versión 2.4 — antes del miércoles.\n- **Martín** — armar un borrador del esquema y la migración para Postgres — en dos semanas.\n- **Sofía** — publicar la oferta de trabajo para el diseñador freelance — esta semana.\n- **Yo** — llamar a Acme el viernes — para explicar el retraso en Salesforce.\n\n## Open questions\n- ¿Quién hará la revisión de seguridad de los datos fiscales en el servicio de facturas? (Se anotó como pendiente para revisar cuando esté el borrador del esquema).\n\n## Numbers\n- 2.4\n- 11\n- 14\n- 41\n- 3.2%\n- 20\n- 9000\n- 3000"
+ },
+ {
+  "model": "gemma-4-E4B-it-Q4_K_M.gguf",
+  "device": "GPU (Vulkan)",
+  "load_s": 4.2,
+  "prompt_tokens": 2765,
+  "prompt_tok_s": 465.4,
+  "gen_tokens": 308,
+  "gen_tok_s": 21.6,
+  "total_s": 20.2,
+  "rss_mb": 276,
+  "answer": "## Summary\nThe team finalized several key decisions regarding product development and operations. The release date for version two point four was moved to Thursday, November fourteenth, to accommodate bug fixes and support availability. The Salesforce integration was postponed until January, and the billing service database was confirmed to use Postgres instead of MongoDB. Furthermore, a decision was made to hire a freelance designer for three months to address design deficiencies.\n\n## Decisions\nThe release date for version two point four is Thursday, November fourteenth.\nThe Salesforce integration will be postponed until January.\nThe service billing database will use Postgres.\nA freelance designer will be hired for three months with a budget of nine thousand dollars.\n\n## Action items\nMartín — fix ticket four one two before Wednesday.\nLucía — call Acme on Friday to explain the Salesforce delay and new plan.\nMartín — provide a draft of the schema and migration for the billing service in two weeks.\nSofía — publish the freelance designer job offer this week, specifying remote and Spanish language requirements.\nLucía — bring a table showing revenue per client based on team size for the next discussion.\n\n## Open questions\nThe pricing model for the Team plan will be discussed again on November twentieth, pending Lucía providing revenue data.\nThe security review for fiscal data in the billing service will be addressed when the schema draft is ready.\n\n## Numbers\n2.4\n412\n14\n9000\n3000\n41\n3.2"
+ }
+]

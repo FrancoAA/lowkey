@@ -1,0 +1,14 @@
+[
+ {
+  "model": "Qwen3.5-4B-Q4_K_M.gguf",
+  "device": "CPU",
+  "load_s": 2.1,
+  "prompt_tokens": 2770,
+  "prompt_tok_s": 327.4,
+  "gen_tokens": 612,
+  "gen_tok_s": 11.5,
+  "total_s": 61.4,
+  "rss_mb": 1585,
+  "answer": "## Resumen\nSe decidió posponer el lanzamiento de la versión 2.4 al jueves 14 de noviembre para permitir cerrar el ticket de errores de pagos duplicados y evitar el feriado de lunes. La integración con Salesforce se retrasará hasta enero debido a la complejidad técnica y la presión del cliente Acme, quien será contactado directamente. Para el servicio de facturas, se confirmó el uso de Postgres en lugar de MongoDB, y se asignó la tarea de migración. Además, se aprobó contratar a un diseñador freelance por tres meses y se programó una reunión el 20 de noviembre para definir el precio del plan Team.\n\n## Decisiones\n- La versión 2.4 se lanza el jueves 14 de noviembre.\n- La integración con Salesforce se pospone hasta enero.\n- El servicio de facturas se implementará en Postgres.\n- Se contrata a un diseñador freelance por tres meses.\n- No se cambió el precio del plan Team hoy.\n\n## Action items\n- **Martín** — Arreglar el ticket de errores de pagos duplicados (4.1.2) — antes del miércoles.\n- **Lucía** — Escribir las notas de la versión 2.4 — antes del miércoles.\n- **Yo** — Llamar a Acme para explicar el retraso de Salesforce — el viernes.\n- **Martín** — Entregar un borrador del esquema y la migración de Postgres — en dos semanas.\n- **Sofía** — Publicar la oferta de trabajo para el diseñador freelance — esta semana.\n- **Yo** — Analizar la tabla de ingresos por cliente según tamaño de equipo — el 20 de noviembre.\n\n## Open questions\n- ¿Quién realizará la revisión de seguridad de los datos fiscales en el servicio de facturas? (Se anotó como pendiente para revisar cuando esté el borrador del esquema).\n\n## Numbers\n- 2.4: Versión del software.\n- 14: Fecha del lanzamiento de la versión 2.4 (jueves).\n- 4.1.2: Número del ticket de errores de pagos duplicados.\n- 4 semanas: Tiempo estimado para la integración con Salesforce completa.\n- 1 semana: Tiempo estimado para la integración parcial con Salesforce.\n- 1: Mes de enero para la integración con Salesforce.\n- 9 mil: Presupuesto total aprobado para contratación de diseñador.\n- 3 mil: Costo mensual del diseñador freelance.\n- 3 meses: Duración de la contratación del diseñador freelance.\n- 41: Número de clientes nuevos este mes.\n- 5: Umbral de personas para el plan de precio fijo por equipo.\n- 3.2: Porcentaje de churn (cancelaciones) este mes.\n- 20: Fecha de la próxima reunión para revisar el precio del plan Team."
+ }
+]
