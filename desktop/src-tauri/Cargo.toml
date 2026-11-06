@@ -67,6 +67,10 @@ whisper-rs = { version = "0.16", features = ["vulkan", "openmp"] }
 # Same versions as wry/tauri use: only to set the overlay webview's GTK size request.
 gtk = "0.18"
 webkit2gtk = "2.0"
+# Screen video with meetings: the ScreenCast portal (async-io, as the zbus of single-instance:
+# no second D-Bus runtime), and the encoder process's file descriptor and signals.
+ashpd = { version = "0.12", default-features = false, features = ["async-std"] }
+libc = "0.2"
 
 [target.'cfg(not(target_os = "linux"))'.dependencies]
 # Start at login on macOS/Windows (Linux writes its XDG autostart entry itself: src/autostart.rs).

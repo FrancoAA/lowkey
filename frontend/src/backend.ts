@@ -62,6 +62,12 @@ export interface Backend {
   quit(): Promise<void>;
   /** Settings → Note apps: the system's folder dialog (saved at once); false when cancelled. */
   chooseExportFolder(): Promise<boolean>;
+  /** Settings → Screen video → Choose the screen again: the next Record screen shows the picker. */
+  screenForget(): Promise<void>;
+  /** Settings → Screen video → Check again: what this computer has (comes with the status). */
+  screenCheck(): Promise<void>;
+  /** Automated tests only: what only the page sees, to the test log ("page-…" events). */
+  testEvent(event: string, payload: unknown): Promise<void>;
   /** Move the dictation key now (Hyprland syntax, "SUPER + ALT + D"). */
   setHotkey(key: string): Promise<Status>;
   /** Move the meeting key now. */
@@ -122,6 +128,10 @@ export interface MeetingsBackend {
   onVoices(cb: (e: { id: string; state: string; detail: string; meeting?: Meeting }) => void): void;
   /** Add a term (or one more spelling of it) to the Vocabulary. */
   addVocabulary(term: VocabTerm): Promise<void>;
+  /** The address the page plays screen video `file` of the meeting from (null: not on disk). */
+  videoUrl(id: string, file: string): Promise<string | null>;
+  /** Record screen (true) or Stop screen (false) in the meeting being recorded. */
+  screen(on: boolean): Promise<void>;
   /** Save to the note-app folder; its file and, in an Obsidian vault, its obsidian:// link. */
   saveToFolder(id: string): Promise<{ file: string; obsidian: string | null }>;
   openInObsidian(id: string): Promise<void>;
@@ -175,6 +185,9 @@ async function desktopBackend(): Promise<Backend> {
       await invoke("set_options", { options: o });
     },
     chooseExportFolder: async () => (await invoke<unknown>("choose_export_folder")) !== null,
+    screenForget: () => invoke("screen_forget"),
+    screenCheck: () => invoke("screen_check"),
+    testEvent: (event, payload) => invoke("test_event", { event, payload }),
     setHotkey: (key) => invoke<Status>("set_hotkey", { key }),
     setMeetingHotkey: (key) => invoke<Status>("set_meeting_hotkey", { key }),
     setPasteHotkey: (key) => invoke<Status>("set_paste_hotkey", { key }),
@@ -258,6 +271,8 @@ async function desktopBackend(): Promise<Backend> {
       addVocabulary: async (term) => {
         await invoke("vocabulary_add", { term });
       },
+      videoUrl: (id, file) => invoke<string | null>("meeting_video_url", { id, file }),
+      screen: (on) => invoke("meeting_screen", { on }),
       saveToFolder: (id) => invoke<{ file: string; obsidian: string | null }>("meeting_save_to_folder", { id }),
       openInObsidian: (id) => invoke("meeting_open_in_obsidian", { id }),
       onExport(cb) {

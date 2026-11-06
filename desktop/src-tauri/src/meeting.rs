@@ -95,6 +95,30 @@ pub struct Meeting {
     /// The names the user gave the others found by voice: `people[n - 1]` names person n ("" =
     /// "Speaker n"). As long as the highest person number in the lines.
     pub people: Vec<String>,
+    /// The screen videos (Record screen during the meeting), in the order they were recorded:
+    /// one for each time the screen was recorded.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub videos: Vec<Video>,
+}
+
+/// A meeting's screen video (src/screen.rs), a file next to the meeting's JSON.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(default)]
+pub struct Video {
+    /// Its name in the meetings folder: "m-<id>-<n>.webm" or ".mp4" (n = 1, 2…).
+    pub file: String,
+    /// Seconds from the meeting's start (time 0 of the transcript) to the video's time 0: a
+    /// moment `t` of the transcript is `t - offset` in the video. The picker can take seconds.
+    /// -1: not known (a crash came before it joined the meeting).
+    pub offset: f64,
+    pub width: u32,
+    pub height: u32,
+    /// "AV1", "VP8", "H.264"…
+    pub codec: String,
+    /// Bytes on disk (0 while it records).
+    pub bytes: u64,
+    /// Its length in seconds (0: not known, e.g. after a crash).
+    pub duration: f64,
 }
 
 impl Meeting {
@@ -221,7 +245,53 @@ pub fn load_in(dir: &Path, id: &str) -> anyhow::Result<Meeting> {
 
 pub fn delete_in(dir: &Path, id: &str) -> anyhow::Result<()> {
     let _one = ONE_EDIT.lock();
-    std::fs::remove_file(file_in(dir, id)?).map_err(|e| anyhow::anyhow!("meeting {id}: {e}"))
+    std::fs::remove_file(file_in(dir, id)?).map_err(|e| anyhow::anyhow!("meeting {id}: {e}"))?;
+    crate::screen::delete_files(dir, id); // its screen video
+    Ok(())
+}
+
+/// At start: the screen videos that a crash left unfinished get their final name (written again
+/// whole when they can be), and their size in the meeting. A video without its meeting is
+/// deleted. `left`: `screen::leftovers`, listed before any meeting can start (a new meeting's
+/// `.part` is never taken for a leftover).
+pub fn recover_videos(dir: &Path, left: Vec<crate::screen::Leftover>) {
+    for l in left {
+        if !dir.join(format!("{}.json", l.id)).exists() {
+            let _ = std::fs::remove_file(&l.part); // its meeting was deleted
+            continue;
+        }
+        let file = crate::screen::file_name(&l.stem, l.container);
+        let r = crate::screen::finish_part(dir, &l.stem, &l.part, l.container, false);
+        let _ = edit_in(dir, &l.id, |m| match &r {
+            Ok((_, bytes)) => {
+                if !m.videos.iter().any(|v| v.file == file) {
+                    // The crash came before it joined: its time in the meeting is not known.
+                    m.videos.push(Video { file: file.clone(), offset: -1.0, ..Default::default() });
+                }
+                if let Some(v) = m.videos.iter_mut().find(|v| v.file == file) {
+                    v.bytes = *bytes;
+                }
+            }
+            Err(_) => m.videos.retain(|v| v.file != file),
+        });
+        if r.is_err() {
+            let _ = std::fs::remove_file(dir.join(&file));
+        }
+    }
+}
+
+/// Screen video `file` of meeting `id` on disk, when the meeting has it.
+pub fn video_path_in(dir: &Path, id: &str, file: &str) -> Option<PathBuf> {
+    // Only a video of this meeting: never a path elsewhere.
+    let ok = crate::screen::video_file(file).is_some_and(|(of, _)| of == id);
+    let listed = load_in(dir, id).ok()?.videos.iter().any(|v| v.file == file && v.bytes > 0);
+    let path = dir.join(file);
+    (ok && listed && path.is_file()).then_some(path)
+}
+
+/// The meeting's screen videos on disk, in order.
+pub fn video_paths_in(dir: &Path, m: &Meeting) -> Vec<PathBuf> {
+    m.videos.iter().filter_map(|v| video_path_in(dir, &m.id, &v.file)).collect()
 }
 
 /// Newest first. Broken files are skipped.
@@ -713,6 +783,32 @@ pub struct Live {
     pub notices: Vec<String>,
     /// Your microphone is muted (the strip's button): silence goes in its place.
     pub muted: bool,
+    /// The screen video: "" (not recorded now) | "waiting" (the screen picker is open) | "on" |
+    /// "stopping" (its file is being closed).
+    pub screen: String,
+    /// Record screen can be offered (this build records the screen).
+    pub screen_supported: bool,
+}
+
+/// The screen video of a meeting being recorded. `Waiting` and `On` carry the video's stem: an
+/// answer from an earlier picker (cancelled) is never taken for this one's.
+#[derive(Debug, Clone, PartialEq)]
+enum Screen {
+    Off,
+    Waiting(String),
+    On(String),
+    Stopping,
+}
+
+impl Screen {
+    fn name(&self) -> &'static str {
+        match self {
+            Screen::Off => "",
+            Screen::Waiting(_) => "waiting",
+            Screen::On(_) => "on",
+            Screen::Stopping => "stopping",
+        }
+    }
 }
 
 pub enum Event {
@@ -740,6 +836,8 @@ struct Inner {
     saving: Mutex<()>,
     /// Settings → Models → Tell the other voices apart: the computer's sound, kept until Stop.
     tape: Mutex<Option<crate::voices::Tape>>,
+    /// See `Live::screen`.
+    screen: Mutex<Screen>,
 }
 
 /// More pieces than this waiting: the model is slower than the speech.
@@ -852,13 +950,17 @@ impl Inner {
     }
 
     fn live(&self) -> Live {
+        // One lock at a time: `attach_video` takes `ended` and `screen`, then `doc`.
+        let meeting = self.doc.lock().clone();
         Live {
-            meeting: self.doc.lock().clone(),
+            meeting,
             state: self.state.lock().to_string(),
             elapsed: self.elapsed(),
             pending: self.pending.load(Ordering::SeqCst),
             notices: self.notices.lock().clone(),
             muted: self.muted.load(Ordering::SeqCst),
+            screen: self.screen.lock().name().into(),
+            screen_supported: crate::screen::SUPPORTED,
         }
     }
 
@@ -873,6 +975,12 @@ pub struct Session {
     system: Mutex<Option<system_audio::Capture>>,
     worker: Mutex<Option<JoinHandle<()>>>,
     tape_done: Mutex<Option<PathBuf>>,
+    /// The screen video being recorded.
+    video: Mutex<Option<crate::screen::Recording>>,
+    /// Held while a screen video stops (up to 5 s): the meeting's Stop waits for it.
+    video_stop: Mutex<()>,
+    /// Screen videos started in this meeting: the next one's number (never the same twice).
+    videos_started: AtomicUsize,
 }
 
 impl Session {
@@ -896,6 +1004,7 @@ impl Session {
             emit,
             saving: Mutex::new(()),
             tape: Mutex::new(None),
+            screen: Mutex::new(Screen::Off),
         });
         let w = inner.clone();
         let worker = std::thread::Builder::new().name("meeting".into()).spawn(move || {
@@ -911,7 +1020,16 @@ impl Session {
                 w.changed();
             }
         })?;
-        Ok(Arc::new(Self { inner, mic: Mutex::new(None), system: Mutex::new(None), worker: Mutex::new(Some(worker)), tape_done: Mutex::new(None) }))
+        Ok(Arc::new(Self {
+            inner,
+            mic: Mutex::new(None),
+            system: Mutex::new(None),
+            worker: Mutex::new(Some(worker)),
+            tape_done: Mutex::new(None),
+            video: Mutex::new(None),
+            video_stop: Mutex::new(()),
+            videos_started: AtomicUsize::new(0),
+        }))
     }
 
     pub fn id(&self) -> String {
@@ -996,6 +1114,145 @@ impl Session {
         self.inner.live()
     }
 
+    // -------------------------------------------------------------- the screen video
+    // Lock order: ended, screen, doc (nothing holds `doc` while it takes one of the others);
+    // `video_stop` before all of them.
+
+    /// Record screen: the screen picker opens (the audio records on). Returns the new video's
+    /// stem, or why not (the screen records already, or the meeting has ended).
+    pub fn screen_begin(&self) -> Result<String, String> {
+        let ended = self.inner.ended.lock();
+        if ended.is_some() {
+            return Err("The meeting has ended.".into());
+        }
+        let mut screen = self.inner.screen.lock();
+        match *screen {
+            Screen::Off => {}
+            Screen::Stopping => return Err("The screen video is being saved.".into()),
+            _ => return Err("The screen is recorded already.".into()),
+        }
+        let n = self.videos_started.fetch_add(1, Ordering::SeqCst) as u32 + 1;
+        let stem = crate::screen::stem(&self.id(), n);
+        *screen = Screen::Waiting(stem.clone());
+        drop((screen, ended));
+        self.inner.changed();
+        Ok(stem)
+    }
+
+    /// The screen video `stem` is not recorded: why (the picker was closed, no encoder…).
+    pub fn screen_failed(&self, stem: &str, why: &str) {
+        {
+            let ended = self.inner.ended.lock();
+            let mut screen = self.inner.screen.lock();
+            if ended.is_some() || *screen != Screen::Waiting(stem.into()) {
+                return; // Stop or Stop screen came first: not news
+            }
+            *screen = Screen::Off;
+        }
+        self.notice(format!("The screen is not recorded: {why}."));
+    }
+
+    /// For `screen::start`: the video ended by itself (the sharing was stopped…). The file so
+    /// far is kept, and saved at once.
+    pub fn screen_end_fn(self: &Arc<Self>, stem: &str) -> Box<dyn FnOnce(String) + Send> {
+        let me = Arc::downgrade(self);
+        let stem = stem.to_string();
+        Box::new(move |why: String| {
+            let Some(me) = me.upgrade() else { return };
+            if me.inner.ended.lock().is_some() {
+                return; // the meeting stops: that ended it
+            }
+            me.inner.notice(format!("The screen recording stopped ({why}); the video so far is kept."));
+            // Not on this thread: the recording's stop waits for it. (Not attached yet: then
+            // `attach_video` stops it.)
+            std::thread::spawn(move || {
+                let on = *me.inner.screen.lock() == Screen::On(stem);
+                if on {
+                    me.stop_screen();
+                }
+            });
+        })
+    }
+
+    /// The screen video joins the meeting: its time 0 is `rec.started` on the meeting's clock.
+    /// The meeting stopped meanwhile, or Stop screen, or another Record screen: `rec` comes
+    /// back (to be discarded).
+    pub fn attach_video(&self, rec: crate::screen::Recording) -> Result<(), crate::screen::Recording> {
+        let ended = self.inner.ended.lock();
+        let mut screen = self.inner.screen.lock();
+        if ended.is_some() || *screen != Screen::Waiting(rec.stem.clone()) || self.video.lock().is_some() {
+            return Err(rec);
+        }
+        let offset = rec.started.saturating_duration_since(self.inner.clock).as_secs_f64();
+        {
+            let mut doc = self.inner.doc.lock();
+            let file = crate::screen::file_name(&rec.stem, rec.container);
+            doc.videos.push(Video { file, offset, width: rec.size.0, height: rec.size.1, codec: rec.codec.into(), bytes: 0, duration: 0.0 });
+        }
+        let dead = !rec.running();
+        *screen = Screen::On(rec.stem.clone());
+        *self.video.lock() = Some(rec);
+        drop((screen, ended));
+        self.inner.save();
+        self.inner.changed();
+        if dead {
+            self.stop_screen(); // it ended before it joined: what it recorded is kept
+        }
+        Ok(())
+    }
+
+    /// Stop screen: the video so far is saved (the meeting records on). With the picker open:
+    /// its answer is discarded.
+    pub fn stop_screen(&self) {
+        {
+            let mut screen = self.inner.screen.lock();
+            match *screen {
+                Screen::Waiting(_) => *screen = Screen::Off,
+                Screen::On(_) => *screen = Screen::Stopping,
+                Screen::Off | Screen::Stopping => return, // nothing, or stopping already
+            }
+        }
+        self.inner.changed();
+        self.stop_video();
+        {
+            let mut screen = self.inner.screen.lock();
+            if *screen == Screen::Stopping {
+                *screen = Screen::Off;
+            }
+        }
+        if self.inner.ended.lock().is_none() {
+            self.inner.save(); // after Stop: `finish` saves
+        }
+        self.inner.changed();
+    }
+
+    /// Stop the screen video and give it its final name (its size and length in the meeting).
+    /// One at a time: a second caller waits for the first, then finds nothing.
+    fn stop_video(&self) {
+        let _one = self.video_stop.lock();
+        let Some(rec) = self.video.lock().take() else { return };
+        let (part, container, stem, started) = (rec.part.clone(), rec.container, rec.stem.clone(), rec.started);
+        let end = rec.stop();
+        let file = crate::screen::file_name(&stem, container);
+        let r = crate::screen::finish_part(&self.inner.dir, &stem, &part, container, end.closed);
+        let mut doc = self.inner.doc.lock();
+        match r {
+            Ok((_, bytes)) => {
+                if let Some(v) = doc.videos.iter_mut().find(|v| v.file == file) {
+                    v.bytes = bytes;
+                    v.duration = end.at.saturating_duration_since(started).as_secs_f64();
+                }
+            }
+            Err(e) => {
+                doc.videos.retain(|v| v.file != file);
+                drop(doc);
+                let _ = std::fs::remove_file(&part);
+                let _ = std::fs::remove_file(self.inner.dir.join(&file));
+                self.inner.notice(format!("The screen video could not be saved: {e:#}."));
+            }
+        }
+    }
+
     /// Mute or unmute your microphone (the computer's sound goes on).
     pub fn set_muted(&self, on: bool) {
         if self.inner.muted.swap(on, Ordering::SeqCst) != on {
@@ -1030,6 +1287,8 @@ impl Session {
         if let Some(mut s) = self.system.lock().take() {
             s.stop();
         }
+        self.stop_video(); // (waits for a Stop screen on its way)
+        *self.inner.screen.lock() = Screen::Off; // a picker's answer after this is discarded (`attach_video`)
         for who in [Speaker::Me, Speaker::Them] {
             let rest = self.inner.chunkers[who.index()].lock().flush();
             if let Some(c) = rest {
@@ -1048,9 +1307,10 @@ impl Session {
             let _ = w.join();
         }
         {
+            let elapsed = self.inner.elapsed(); // not under `doc` (the lock order)
             let mut doc = self.inner.doc.lock();
             doc.state = "done".into();
-            doc.duration = self.inner.elapsed();
+            doc.duration = elapsed;
         }
         *self.inner.state.lock() = "done";
         if let Some(t) = self.inner.tape.lock().take() {
@@ -1073,9 +1333,10 @@ impl Session {
         self.stop_sources();
         drop(self.inner.tx.lock().take());
         {
+            let elapsed = self.inner.elapsed(); // not under `doc` (the lock order)
             let mut doc = self.inner.doc.lock();
             doc.state = "done".into();
-            doc.duration = self.inner.elapsed();
+            doc.duration = elapsed;
         }
         drop(self.inner.tape.lock().take()); // an unfinished tape deletes its file
         if let Some(p) = self.tape_done.lock().take() {
@@ -1153,6 +1414,109 @@ mod tests {
 
     fn line(who: Speaker, start: f64, end: f64, text: &str) -> Line {
         Line { speaker: who, start, end, text: text.into(), person: 0 }
+    }
+
+    #[test]
+    fn the_screen_videos_are_saved_with_the_meeting() {
+        use crate::screen::{part_path, test_recording, Container::Webm};
+        let dir = temp("video");
+        let doc = Meeting::new("Demo", "test");
+        let id = doc.id.clone();
+        let s = Session::new(dir.clone(), doc, Arc::new(|_| Ok(vec![])), Arc::new(|_| {})).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(300)); // Record screen, a moment later
+        let first = s.screen_begin().unwrap();
+        assert_eq!((first.as_str(), s.live().screen.as_str()), (format!("{id}-1").as_str(), "waiting"));
+        assert!(s.screen_begin().is_err(), "one at a time");
+        let Some(rec) = test_recording(&dir, &first) else {
+            eprintln!("skipped: no GStreamer with vp8enc");
+            return;
+        };
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&rec.part).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600, "the video is private while it records");
+        }
+        s.attach_video(rec).map_err(|_| ()).unwrap();
+        assert_eq!(s.live().screen, "on");
+        let v = load_in(&dir, &id).unwrap().videos[0].clone();
+        assert!(v.offset >= 0.3 && v.offset < 2.0, "the video starts later than the meeting: {}", v.offset);
+        assert_eq!((v.file.as_str(), v.width, v.codec.as_str(), v.bytes), (format!("{id}-1.webm").as_str(), 320, "VP8", 0));
+        std::thread::sleep(std::time::Duration::from_millis(1200));
+
+        // Stop screen: the meeting records on; the video is whole, with its length.
+        s.stop_screen();
+        assert_eq!(s.live().screen, "");
+        let v = load_in(&dir, &id).unwrap().videos[0].clone();
+        assert!(v.bytes > 1000 && v.duration > 1.0 && v.duration < 3.0, "{v:?}");
+        assert!(!part_path(&dir, &first, Webm).exists());
+
+        // The picker closed: no video, a notice. Stop screen with the picker open: its answer is
+        // discarded.
+        let second = s.screen_begin().unwrap();
+        assert_eq!(second, format!("{id}-2"));
+        s.screen_failed(&second, "the screen picker was closed");
+        assert_eq!(s.live().screen, "");
+        assert!(s.live().notices.iter().any(|n| n.contains("picker was closed")));
+        // Stop screen with the picker open, and Record screen again at once: the first picker's
+        // answer is not taken for the second's (each has its own number and file).
+        let third = s.screen_begin().unwrap();
+        assert_eq!(third, format!("{id}-3"), "a number is never used twice");
+        s.stop_screen();
+        assert_eq!(s.live().screen, "");
+        let second = s.screen_begin().unwrap();
+        assert_eq!(second, format!("{id}-4"));
+        let late = test_recording(&dir, &third).unwrap();
+        s.attach_video(late).err().expect("an earlier picker's answer").discard();
+        assert!(!part_path(&dir, &third, Webm).exists());
+        s.screen_failed(&third, "the screen picker was closed");
+        assert_eq!(s.live().screen, "waiting", "the earlier picker's end changes nothing");
+
+        // The second video, saved at Stop.
+        s.attach_video(test_recording(&dir, &second).unwrap()).map_err(|_| ()).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(1200));
+        let m = s.finish();
+        assert_eq!(m.videos.len(), 2);
+        let v2 = &m.videos[1];
+        assert!(v2.file == format!("{id}-4.webm") && v2.bytes > 1000 && v2.offset > v.offset + v.duration, "{v2:?}");
+        assert_eq!(video_paths_in(&dir, &m), vec![dir.join(&v.file), dir.join(&v2.file)]);
+        // A screen chosen after Stop does not join.
+        assert!(s.screen_begin().is_err());
+        let late = test_recording(&dir, "m-9-1").unwrap();
+        s.attach_video(late).err().expect("the meeting has ended").discard();
+        assert!(!part_path(&dir, "m-9-1", Webm).exists());
+        // Only a file of this meeting is played.
+        assert_eq!(video_path_in(&dir, &id, "../config.toml"), None);
+        assert_eq!(video_path_in(&dir, &id, "m-9-1.webm"), None);
+        edit_in(&dir, &id, |m| m.videos[1].file = "../config.toml".into()).unwrap();
+        assert_eq!(video_paths_in(&dir, &load_in(&dir, &id).unwrap()), vec![dir.join(&v.file)]);
+        delete_in(&dir, &id).unwrap();
+        assert!(!dir.join(&v.file).exists() && !dir.join(&v2.file).exists(), "deleted with their meeting");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_video_left_by_a_crash_is_made_whole() {
+        let dir = temp("recover");
+        let doc = Meeting::new("Crashed", "test");
+        let id = doc.id.clone();
+        save_in(&dir, &doc).unwrap(); // the crash came before the video joined
+        let Some(rec) = crate::screen::test_recording(&dir, &crate::screen::stem(&id, 1)) else {
+            eprintln!("skipped: no GStreamer with vp8enc");
+            return;
+        };
+        std::thread::sleep(std::time::Duration::from_millis(1200));
+        let part = rec.part.clone();
+        let kept = dir.join("kept.part");
+        std::fs::copy(&part, &kept).unwrap(); // as the kill left it
+        rec.discard();
+        std::fs::rename(&kept, &part).unwrap();
+        std::fs::write(crate::screen::part_path(&dir, "m-404-1", crate::screen::Container::Webm), b"x").unwrap();
+        recover_videos(&dir, crate::screen::leftovers(&dir));
+        let m = load_in(&dir, &id).unwrap();
+        let v = &m.videos[0];
+        assert!(v.bytes > 0 && v.offset < 0.0 && v.file == format!("{id}-1.webm") && dir.join(&v.file).is_file(), "{v:?}");
+        assert!(crate::screen::leftovers(&dir).is_empty(), "a video without its meeting is deleted");
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

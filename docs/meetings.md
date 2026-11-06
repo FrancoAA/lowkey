@@ -58,6 +58,16 @@ macOS and Windows, a prompt when a call starts, and questions over past meetings
   the topic's heading and the point above a sub-point help with less weight; a time such as
   (04:19) picks its paragraph first. Nothing found: "No part of the transcript matches this
   point", a cue to check it.
+- With a screen video (**Record screen** during the meeting): the player on the left, with the
+  chat under it, and the notes and the transcript on the right; under 900 pixels, one column
+  with the video on top (it stays in view while the rest scrolls). It can be collapsed (the
+  choice is kept); its codec and size next to it, and a button for each video when the screen
+  was recorded more than once. A click on a paragraph moves the video to its moment (playing
+  or not, as it was; a double click fixes the text); each transcript time plays the video from
+  there; the places under a point of the notes get **Play**, and **Show in transcript** shows
+  the video at that moment too. While it plays, or when it is moved, the paragraph said at that
+  moment is marked and kept in view in the Transcript tab (not while you scroll it yourself).
+  See [screen.md](screen.md).
 - There is no notes field: the AI notes take its place. Notes typed in older versions stay in
   the file, in the export and in what the model reads.
 
@@ -103,6 +113,10 @@ others spoke stay. Chinese and Japanese count each character as a word.
 - Files: `~/.local/share/lowkey/meetings/m-<unix ms>.json` (the folder is 0700). The id
   is `m-` plus digits only, so a command never names a path outside the folder.
 - Quitting the app during a recording keeps what is transcribed and does not wait for the rest.
+- The screen videos: `m-<unix ms>-<n>.webm` (or `.mp4`; n = 1, 2… for each Record screen) next
+  to the JSON, mode 0600; the meeting's `videos` list has, for each, its name, its offset from
+  the meeting's start, its length, its size in pixels, its codec and its bytes. Deleting the
+  meeting deletes them.
 - **Export .md** and **Copy**: the title, the date in your time zone, the length, your notes,
   then the transcript in paragraphs (`**Me** (00:12): …`).
 

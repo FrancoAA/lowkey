@@ -140,7 +140,8 @@ impl Server {
         };
         let now_id = self.recording().map(|s| s.id);
         let data = json!({ "id": m.id, "title": m.title, "started_at": m.started_at, "started_utc": utc(m.started_at),
-                           "duration_s": m.duration.round(), "state": shown_state(&m.state, &m.id, now_id.as_deref()), "has_ai_notes": !m.ai_notes.trim().is_empty() });
+                           "duration_s": m.duration.round(), "state": shown_state(&m.state, &m.id, now_id.as_deref()), "has_ai_notes": !m.ai_notes.trim().is_empty(),
+                           "videos": m.videos.iter().filter_map(|v| meeting::video_path_in(&self.meetings, &m.id, &v.file).map(|p| json!({"path": p.to_string_lossy(), "offset_s": v.offset, "duration_s": v.duration}))).collect::<Vec<_>>() });
         Ok((meeting::to_markdown_utc(&m, parts), data))
     }
 
@@ -458,7 +459,7 @@ fn tools() -> Value {
           "description": "The meetings Lowkey recorded, newest first: id, title, start (UTC), length and the first words.",
           "inputSchema": { "type": "object", "properties": { "limit": { "type": "integer", "minimum": 1, "maximum": 200, "description": "How many (default 20)." } } } },
         { "name": "get_meeting", "title": "Get a meeting", "annotations": read,
-          "description": "One meeting as Markdown: the AI notes (a draft), the user's own notes and the transcript, where \"Me\" is the user and the others are \"Them\" or one label per person (\"Speaker 2\", or a name). Long meetings have long transcripts: ask for the parts you need.",
+          "description": "One meeting as Markdown: the AI notes (a draft), the user's own notes and the transcript, where \"Me\" is the user and the others are \"Them\" or one label per person (\"Speaker 2\", or a name). Long meetings have long transcripts: ask for the parts you need. `videos`: the meeting's screen videos, when the screen was recorded (path, offset_s, duration_s; a moment t of the transcript is t - offset_s in a video).",
           "inputSchema": { "type": "object", "required": ["id"], "properties": { "id": id,
               "parts": { "type": "array", "items": { "type": "string", "enum": ["ai_notes", "notes", "transcript"] }, "description": "Only these parts (default: all)." } } } },
         { "name": "search", "title": "Search meetings and dictations", "annotations": read,

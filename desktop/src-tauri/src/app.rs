@@ -138,15 +138,28 @@ static EARLY_ARGS: Mutex<Vec<Vec<String>>> = Mutex::new(Vec::new());
 /// Test seam: OPENWHISPER_TEST_LOG=<file> appends every UI event as a JSON line, so automated
 /// tests can follow the app without a WebDriver. No effect when unset.
 fn emit_logged<S: serde::Serialize + Clone>(handle: &AppHandle, event: &str, payload: S) {
+    test_log(event, &payload);
+    let _ = handle.emit(event, payload);
+}
+
+fn test_log<S: serde::Serialize>(event: &str, payload: &S) {
     if let Some(path) = std::env::var_os("OPENWHISPER_TEST_LOG") {
         use std::io::Write;
         static LOG: Mutex<()> = Mutex::new(()); // one line at a time from all threads
         let _guard = LOG.lock();
         if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
-            let _ = f.write_all(format!("{}\n", json!({"event": event, "payload": payload.clone()})).as_bytes());
+            let _ = f.write_all(format!("{}\n", json!({"event": event, "payload": payload})).as_bytes());
         }
     }
-    let _ = handle.emit(event, payload);
+}
+
+/// The same test seam for what only the page sees (the video player): "page-…" events. The page
+/// sends them only when the status says `test`.
+#[tauri::command]
+fn test_event(event: String, payload: Value) {
+    if event.starts_with("page-") {
+        test_log(&event, &payload);
+    }
 }
 
 impl App {
@@ -297,6 +310,8 @@ impl App {
                 "apps": self.call_apps(&cfg),
             },
             "recording": self.meeting.lock().is_some(),
+            // OPENWHISPER_TEST_LOG: the page reports its player's events (`test_event`).
+            "test": std::env::var_os("OPENWHISPER_TEST_LOG").is_some(),
             "ai": {
                 "engine": cfg.ai_engine, "url": cfg.ai_url, "model": cfg.ai_model, "has_key": !cfg.ai_key.is_empty(),
                 "auto": cfg.ai_auto,
@@ -310,6 +325,11 @@ impl App {
                 "on": cfg.meeting_voices, "supported": crate::voices::SUPPORTED, "present": crate::voices::present(),
                 "download": crate::voices::download_state(),
                 "working": *self.voices_working.lock(),
+            },
+            // Settings → General → Screen video; `chosen`: a screen is remembered.
+            "screen": {
+                "supported": crate::screen::SUPPORTED, "chosen": !cfg.screen_token.is_empty(),
+                "check": crate::screen::status(),
             },
             // Settings → Note apps; `vault`: the Obsidian vault the folder is in.
             "export": {
@@ -1456,6 +1476,77 @@ fn meeting_open(app: &AppRef, title: &str) -> Result<meeting::Live, String> {
     Ok(session.live())
 }
 
+/// Record screen (the live meeting, the strip): the screen video joins the meeting when the
+/// screen is chosen (the picker can take seconds; the audio records meanwhile). The portal's new
+/// token is kept for next time. Stop screen: the video so far is saved.
+#[tauri::command]
+fn meeting_screen(app: State<'_, AppRef>, on: bool) -> Result<(), String> {
+    let session = app.meeting.lock().clone().ok_or("No meeting is being recorded.")?;
+    if !on {
+        // The encoder closes its file: up to 5 s.
+        std::thread::spawn(move || session.stop_screen());
+        return Ok(());
+    }
+    if !crate::screen::SUPPORTED {
+        return Err("The screen video is on Linux only for now.".into());
+    }
+    let stem = session.screen_begin()?;
+    let a2 = app.inner().clone();
+    std::thread::spawn(move || {
+        let token = a2.config.lock().screen_token.clone();
+        match crate::screen::start(&meeting::dir(), &stem, Some(&token), session.screen_end_fn(&stem)) {
+            Ok(started) => {
+                if let Some(t) = started.token {
+                    let mut cfg = a2.config.lock();
+                    if cfg.screen_token != t {
+                        cfg.screen_token = t;
+                        let _ = cfg.save();
+                    }
+                }
+                if let Err(rec) = session.attach_video(started.recording) {
+                    rec.discard(); // the meeting (or the screen) stopped before it was chosen
+                }
+                a2.emit_status();
+            }
+            Err(e) => session.screen_failed(&stem, &format!("{e:#}")),
+        }
+    });
+    Ok(())
+}
+
+/// Settings → Choose the screen again: the next Record screen shows the screen picker.
+#[tauri::command]
+fn screen_forget(app: State<'_, AppRef>) -> Result<(), String> {
+    {
+        let mut cfg = app.config.lock();
+        cfg.screen_token.clear();
+        cfg.save().map_err(|e| e.to_string())?;
+    }
+    app.emit_status();
+    Ok(())
+}
+
+/// Settings → Check again: what this computer has for the screen video (GStreamer may have been
+/// installed since). Returns when it is known (seconds: each encoder is tried).
+#[tauri::command]
+async fn screen_check(app: State<'_, AppRef>) -> Result<(), String> {
+    let a2 = app.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::screen::check(true);
+        a2.emit_status();
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// Where the page plays screen video `file` of meeting `id` from (src/video_server.rs).
+#[tauri::command]
+fn meeting_video_url(id: String, file: String) -> Result<Option<String>, String> {
+    let Some(path) = meeting::video_path_in(&meeting::dir(), &id, &file) else { return Ok(None) };
+    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    crate::video_server::url(&name).map(Some).map_err(|e| format!("The video cannot be played: {e:#}"))
+}
+
 /// Stop, transcribe the last seconds, save. Returns the saved meeting.
 #[tauri::command]
 async fn meeting_stop(app: State<'_, AppRef>) -> Result<meeting::Meeting, String> {
@@ -2571,6 +2662,11 @@ pub fn run() {
             meeting_get,
             meeting_update,
             meeting_delete,
+            meeting_video_url,
+            test_event,
+            screen_forget,
+            screen_check,
+            meeting_screen,
             meeting_markdown,
             meeting_ai_notes,
             ai_notes_cancel,
@@ -2598,6 +2694,9 @@ pub fn run() {
             let handle = tauri_app.handle().clone();
             // The others' sound of a meeting that did not end (the app was killed): never kept.
             crate::voices::delete_leftovers(&meeting::dir());
+            // Its screen video: kept, made whole (seconds for a long one: not in the way).
+            let left = crate::screen::leftovers(&meeting::dir()); // now: no meeting records yet
+            std::thread::spawn(move || meeting::recover_videos(&meeting::dir(), left));
             let config = Config::load();
             set_window_theme(&handle, &config.theme);
             // The strip opens where the user left it (the rule that keys add uses this place).
@@ -2699,6 +2798,14 @@ pub fn run() {
             // Files from the command line: queued before the page exists, so it always finds them.
             app.open_files.lock().extend(cli.files.iter().filter(|p| p.is_file()).cloned());
             tauri_app.manage(app.clone());
+            // Settings → Screen video: what this computer has (a second or two; once).
+            if crate::screen::SUPPORTED {
+                let a2 = app.clone();
+                std::thread::spawn(move || {
+                    crate::screen::check(false);
+                    a2.emit_status();
+                });
+            }
 
             // Windows: the main window, and the dictation overlay (hidden; never focused).
             let background = cli.background || cli.dictate.is_some() || cli.meeting.is_some();

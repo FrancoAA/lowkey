@@ -214,6 +214,19 @@ Record a call or a talk, as text next to your notes (Linux for now). No bot join
   time went to the right person (54% with one label for all). Voices that are alike, people
   who talk at the same time, and a person who says little are the usual errors.
   Details: [docs/voices.md](docs/voices.md).
+- **Screen video** (Linux): during a meeting, **Record screen** (in the meeting's live panel,
+  or the screen button on the strip) saves the screen, or one window, as a video with the
+  meeting; **Stop screen** stops it, and the meeting goes on. Record it as often as you want:
+  each time is one more video of the meeting. In a saved meeting the video is on the left, with
+  the chat under it, and the notes and the transcript are on the right (one column on a narrow
+  window). A click on a paragraph of the transcript moves the video to that moment (a double
+  click fixes the text); each time in the transcript plays it from there; a place under a point
+  of the notes has **Play**. While the video plays, or when you move it, the paragraph said at
+  that moment is marked and kept in view. The first time, your desktop asks what to share; it
+  then remembers it (Settings → General → Screen video → **Choose the screen again** asks
+  again). 10 frames a second, at most 1920 pixels wide, about 450 MB for one hour. It needs
+  GStreamer: `gst-plugins-good` (VP8 on the CPU), and `gst-plugin-va` for AV1, VP9 or H.264 on
+  the GPU; Settings says what it found. Details: [docs/screen.md](docs/screen.md).
 - **Search** (<kbd>Ctrl</kbd>+<kbd>F</kbd> on the list): the meetings that have every word you
   type, in any order and any case, also inside a word, in the title, the transcript, the
   notes or your notes. Each result shows where the words are and the text around them, with
@@ -249,7 +262,8 @@ Record a call or a talk, as text next to your notes (Linux for now). No bot join
   line when most of its words are in a "Them" line at the same time.
 - Tell the others that you record. Meetings are saved as JSON in
   `~/.local/share/lowkey/meetings` (a private folder). The audio is not kept (with Who is
-  speaking on, the computer's sound only until the voices are told apart after Stop).
+  speaking on, the computer's sound only until the voices are told apart after Stop). The
+  screen videos, when you record the screen, are kept next to the meeting and deleted with it.
 - macOS and Windows record the microphone only, for now.
 
 Details: [docs/meetings.md](docs/meetings.md).
@@ -386,6 +400,7 @@ export_auto = true              # save there when a meeting stops and when its A
 export_parts = ["ai_notes", "notes", "transcript"]
 mcp_recording = false           # AI agents (lowkey --mcp) may start and stop recordings
 meeting_voices = false          # Who is speaking: tell the others apart by voice after Stop
+screen_token = ""               # the screen chosen last time (the portal's token); "" = ask
 live_preview = true             # words in the overlay while you talk
 overlay_collapsed = false       # the strip as a small pill (its corner button; a click opens it)
 # overlay_at = [0.5, 0.9]       # where you left the strip (fractions of the screen's free room)
@@ -456,11 +471,13 @@ make bench         # research only: the model benchmark (docs/benchmark.md), Pyt
 ```
 
 The real preview engine test: `cd desktop/src-tauri && cargo test --lib real_whistle -- --ignored`.
+The real screen portal test (it opens your desktop's screen picker):
+`cd desktop/src-tauri && cargo test --lib real_portal -- --ignored --nocapture`.
 Dependencies are pinned in `desktop/src-tauri/Cargo.lock` and `frontend/package-lock.json`.
 
 ## Privacy
 
-Audio and transcripts stay on your computer, unless you point AI notes to a server that is
+Audio, transcripts and screen videos stay on your computer, unless you point AI notes to a server that is
 not on it (Settings says so), or connect an AI agent (it sends what it reads to its own service). The only other network access is the one-time model
 download from Hugging Face (and the llama.cpp runner from GitHub for AI notes) (the live preview engine and model, and the voice models,
 come from pinned revisions, checked with SHA-256; that engine has no network code).

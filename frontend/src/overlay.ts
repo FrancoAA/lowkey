@@ -22,6 +22,7 @@ const root = document.getElementById("overlay")!;
 const mini = document.getElementById("mini")!;
 const collapseBtn = document.getElementById("collapse") as HTMLButtonElement;
 const muteBtn = document.getElementById("mute") as HTMLButtonElement;
+const screenBtn = document.getElementById("screen") as HTMLButtonElement;
 const label = document.getElementById("label")!;
 const detail = document.getElementById("detail")!;
 const timer = document.getElementById("timer")!;
@@ -37,6 +38,10 @@ interface MeetingLive {
   pending: number;
   /** Your microphone is muted (silence goes in its place). */
   muted?: boolean;
+  /** The screen video: "" | waiting (the screen picker is open) | on. */
+  screen?: string;
+  /** Record screen can be offered (this build records the screen). */
+  screen_supported?: boolean;
 }
 
 /** Me above the line, Them below, in their colours (overlay.css --me / --them). */
@@ -170,6 +175,35 @@ muteBtn.addEventListener("click", (e) => {
   void call("overlay_unfocus"); // after the click (see the collapse button)
 });
 
+/** Record screen / Stop screen: its look and its words follow the meeting. */
+function renderScreen(m: MeetingLive | null): void {
+  const s = m && m.state === "recording" && m.screen_supported ? (m.screen ?? "") : null;
+  root.dataset.screenBtn = s === null ? "" : "1";
+  root.dataset.screen = s ?? "";
+  screenBtn.setAttribute("aria-pressed", String(s === "on"));
+  const what =
+    s === "on" ? "Stop recording the screen"
+    : s === "waiting" ? "Choose what to share in your desktop's dialog (click to cancel)"
+    : s === "stopping" ? "The screen video is being saved"
+    : "Record the screen";
+  screenBtn.disabled = s === "stopping";
+  screenBtn.title = what;
+  screenBtn.setAttribute("aria-label", what);
+}
+
+screenBtn.addEventListener("click", (e) => {
+  e.stopPropagation();
+  const on = (meet?.screen ?? "") === "";
+  if (meet) meet.screen = on ? "waiting" : "stopping";
+  show();
+  const before = meet?.screen;
+  void call("meeting_screen", { on }).catch(() => {
+    if (meet) meet.screen = before; // refused (the app says why in the meeting's notices)
+    show();
+  });
+  void call("overlay_unfocus"); // after the click (see the collapse button)
+});
+
 // "Open the notes" on a saved meeting: the Lowkey window opens on it (the app hides the strip).
 const openLink = document.createElement("a");
 openLink.className = "open-link";
@@ -206,7 +240,7 @@ async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> 
 }
 root.addEventListener("pointerdown", (e) => {
   if (e.button !== 0) return;
-  if ((e.target as Element).closest("#collapse, #mute, .open-link")) return; // their clicks (above)
+  if ((e.target as Element).closest("#collapse, #mute, #screen, .open-link")) return; // their clicks (above)
   press = { x: e.screenX, y: e.screenY, appDrag: call<boolean>("overlay_drag_start").catch(() => false) };
 });
 root.addEventListener("pointermove", (e) => {
@@ -265,6 +299,7 @@ function renderMeeting(now: number): void {
   root.dataset.state = m.state === "recording" ? "recording" : m.state === "finishing" ? "transcribing" : "done";
   const last = m.meeting.lines[m.meeting.lines.length - 1];
   renderMute(m.state === "recording" && !!m.muted);
+  renderScreen(m);
   if (m.state === "recording") {
     label.textContent = ""; // the time, the wave and the mute button say it (no "Recording")
     timer.textContent = clock(elapsed * 1000); // aria-hidden: no announcement every second
@@ -273,11 +308,17 @@ function renderMeeting(now: number): void {
       const tag = document.createElement("span");
       tag.className = "muted-note";
       tag.textContent = "Mic muted";
-      detail.replaceChildren(tag, m.meeting.system_audio ? " · only the computer's sound is recorded" : "");
+      const rest = m.meeting.system_audio
+        ? m.screen === "on" ? " · only the computer's sound and the screen are recorded" : " · only the computer's sound is recorded"
+        : m.screen === "on" ? " · only the screen is recorded" : "";
+      detail.replaceChildren(tag, rest);
     } else if (note?.state === "ended") detail.textContent = `The ${note.label} call ended${note.key ? ` · ${prettyKey(note.key)} stops` : ""}`;
     else if (note?.state === "auto") detail.textContent = `Started automatically · ${note.label} call`;
     else if (last) speakerLine(last.speaker, last.text);
-    else detail.textContent = `${m.meeting.system_audio ? "Your mic and the computer's sound" : "Your mic only"}${stop}`;
+    else {
+      const what = m.meeting.system_audio ? "Your mic and the computer's sound" : "Your mic only";
+      detail.textContent = `${m.screen === "on" ? what.replace(" and ", ", ").replace(" only", "") + " and the screen" : what}${stop}`;
+    }
   } else if (m.state === "finishing") {
     label.textContent = "Saving the meeting…";
     detail.textContent = m.pending ? `${m.pending} part${m.pending > 1 ? "s" : ""} to transcribe` : "One moment";
@@ -295,6 +336,7 @@ function renderMeeting(now: number): void {
 function render(d: DictationState): void {
   if (root.dataset.mode === "meeting") mwave.stop();
   renderMute(false);
+  renderScreen(null);
   delete root.dataset.mode;
   level = d.level;
   if (d.state !== current) {
@@ -350,6 +392,8 @@ void (async () => {
     show();
   });
   await listen<MeetingLive>("meeting", (e) => {
+    // A late word about a meeting that ended, while another one records: not shown.
+    if (e.payload.state === "done" && meet?.state === "recording" && meet.meeting.id !== e.payload.meeting.id) return;
     meet = e.payload;
     meetAt = performance.now();
     if (meet.state === "recording") meetError = null;

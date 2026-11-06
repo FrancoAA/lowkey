@@ -78,8 +78,12 @@ pub fn save_meeting(meetings: &Path, id: &str, dir: &Path, parts: Parts, offset_
 /// The file: front matter, then the chosen parts (title and time always).
 pub fn file_text(m: &Meeting, parts: Parts, offset_min: i32) -> String {
     let date = format!("{}:00{}", meeting::local_time(m.started_at, offset_min).replace(' ', "T"), offset_text(offset_min));
+    // The screen videos stay in the app's folder: the note links to them (big files in a synced
+    // vault are not wanted).
+    let saved: Vec<String> = m.videos.iter().filter(|v| v.bytes > 0).map(|v| format!("  - {}\n", yaml_str(&meeting::dir().join(&v.file).to_string_lossy()))).collect();
+    let video = if saved.is_empty() { String::new() } else { format!("videos:\n{}", saved.concat()) };
     let front = format!(
-        "---\ntitle: {}\ndate: {date}\nduration_min: {}\ntags: [meeting]\nlowkey_id: {}\n---\n\n",
+        "---\ntitle: {}\ndate: {date}\nduration_min: {}\ntags: [meeting]\nlowkey_id: {}\n{video}---\n\n",
         yaml_str(&m.title),
         (m.duration / 60.0).round() as u64,
         m.id
@@ -263,6 +267,15 @@ mod tests {
         assert!(t.contains("## Notes\n\nAsk about the budget") && t.contains("## Transcript") && !t.contains("AI notes"), "{t}");
         let only_notes = file_text(&doc(), parts(&["notes".into()]), 0);
         assert!(!only_notes.contains("## Transcript"), "{only_notes}");
+        // The screen videos: their paths, once they are saved.
+        let mut m = doc();
+        let video = |n: u32, bytes| crate::meeting::Video { file: format!("m-1793800000000-{n}.webm"), bytes, ..Default::default() };
+        m.videos = vec![video(1, 0)];
+        assert!(!file_text(&m, parts(&["notes".into()]), 0).contains("videos:"), "not while it records");
+        m.videos = vec![video(1, 9), video(2, 9)];
+        let path = |n: u32| meeting::dir().join(format!("m-1793800000000-{n}.webm")).display().to_string();
+        let t = file_text(&m, parts(&["notes".into()]), 0);
+        assert!(t.contains(&format!("lowkey_id: m-1793800000000\nvideos:\n  - \"{}\"\n  - \"{}\"\n---", path(1), path(2))), "{t}");
     }
 
     #[test]
