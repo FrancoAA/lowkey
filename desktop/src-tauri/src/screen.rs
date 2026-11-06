@@ -532,6 +532,12 @@ impl Recording {
     }
 }
 
+/// The PipeWire connection given to GStreamer (Linux only; nothing to give elsewhere).
+#[cfg(unix)]
+type Fd = std::os::fd::OwnedFd;
+#[cfg(not(unix))]
+type Fd = std::convert::Infallible;
+
 /// The gst-launch process.
 struct Process {
     child: std::sync::Arc<Mutex<std::process::Child>>,
@@ -555,7 +561,7 @@ fn tail(lines: &Mutex<Vec<String>>) -> String {
 impl Process {
     /// Start gst-launch with `args`; `fd` becomes its fd 3. Returns when the pipeline plays (the
     /// moment is the video's time 0), or with GStreamer's error.
-    fn spawn(args: Vec<String>, fd: Option<&std::os::fd::OwnedFd>, on_end: Box<dyn FnOnce(String) + Send>) -> anyhow::Result<(Self, Instant)> {
+    fn spawn(args: Vec<String>, fd: Option<&Fd>, on_end: Box<dyn FnOnce(String) + Send>) -> anyhow::Result<(Self, Instant)> {
         use std::io::BufRead;
         use std::sync::atomic::{AtomicBool, Ordering};
         use std::sync::{mpsc, Arc};
