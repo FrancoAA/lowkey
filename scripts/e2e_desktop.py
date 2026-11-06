@@ -1,7 +1,7 @@
 """End-to-end check of the Tauri desktop app, in a nested Hyprland (your session is not touched).
 
 The nested Hyprland sits on a temporary headless output of your session; it and the app get
-their own XDG_RUNTIME_DIR, XDG_STATE_HOME, XDG_CONFIG_HOME, XDG_DATA_HOME and a private D-Bus
+their own XDG_RUNTIME_DIR, XDG_STATE_HOME, XDG_CONFIG_HOME, XDG_DATA_HOME, XDG_CACHE_HOME and a private D-Bus
 session bus that starts no services (no portals), so nothing reaches your desktop, your config
 or your notifications.
 
@@ -222,6 +222,7 @@ esac
         "XDG_STATE_HOME": str(tmp / "state"),
         "XDG_CONFIG_HOME": str(tmp / "config"),
         "XDG_DATA_HOME": str(tmp / "data"),
+        "XDG_CACHE_HOME": str(tmp / "cache"),  # WebKit's cache: not shared with a Lowkey you run
         "WAYLAND_DISPLAY": str(Path(outer_runtime) / outer_display),
         "DBUS_SESSION_BUS_ADDRESS": bus_addr,
         # The nested Hyprland tries the real screens first: libseat may only try seatd (there is
@@ -349,7 +350,15 @@ esac
             n0 = len(events("meeting"))
             focus_before = (hj("activewindow") or {}).get("address")
             run(["hyprctl", "dispatch", f'hl.dsp.exec_cmd("{APP} --meeting toggle")'], env)
-            s0 = wait(lambda: win("lowkey-overlay"), 15, "the strip for the drag")
+            try:
+                s0 = wait(lambda: win("lowkey-overlay"), 15, "the strip for the drag")
+            except AssertionError:  # where the windows are (for the log)
+                print("  windows:", [(c["title"], c["workspace"], c["mapped"], c["hidden"], c["at"], c["size"]) for c in hj("clients")])
+                print("  events:", [json.loads(l)["event"] for l in log.read_text().splitlines()][-25:])
+                if os.environ.get("OW_E2E_HOLD"):  # debugging: keep the session for commands from outside
+                    (Path(os.environ["OW_E2E_HOLD"]) / "env.json").write_text(json.dumps({**env, "OW_TMP": str(tmp)}))
+                    wait(lambda: (Path(os.environ["OW_E2E_HOLD"]) / "stop").exists(), 1800, "the stop file")
+                raise
             wait(lambda: next((m for m in events("meeting")[n0:] if m["state"] == "recording"), None), 30, "recording")
             time.sleep(0.8)
             check(tuple(s0["size"]) == (380, 76), f"the strip opens at 380x76: {s0['size']}")
@@ -423,6 +432,17 @@ esac
             wait(lambda: "overlay_collapsed = false" in cfg.read_text(), 5, "open state saved")
             time.sleep(0.5)
             check((hj("activewindow") or {}).get("address") == focus_before, f"a click on the pill opens the strip ({s4['at']}); no focus taken")
+            # Record screen on the strip (first row, before the mute button), Stop screen, and again:
+            # two screen videos in this meeting.
+            sx, sy = s4["at"][0] + 292, s4["at"][1] + 27
+            for want in ("on", "", "on"):
+                n_s = len(events("meeting"))
+                pointer(f"abs:{sx},{sy},{{W}},{{H}}", "sleep:250", "click")
+                wait(lambda: any(m.get("screen") == want and m["state"] == "recording" for m in events("meeting")[n_s:]), 15,
+                     f"the screen {'records' if want else 'stopped'}")
+                time.sleep(2.5)
+            check((hj("activewindow") or {}).get("address") == focus_before,
+                  "the strip's screen button records the screen, stops it, and records it again; no focus taken")
             n3 = len(events("meeting"))
             # The pointer rests on the strip: a saved strip stays while it does.
             pointer(f"abs:{s4['at'][0] + 60},{s4['at'][1] + 38},{{W}},{{H}}")
@@ -454,37 +474,54 @@ esac
             video_step(saved)
 
         def video_step(saved) -> None:
-            """The meeting's screen video (a test picture): saved with it, and played in the window
-            from a time in the transcript (the local video server, WebKitGTK's GStreamer, a seek)."""
+            """The meeting's screen videos (a test picture, recorded twice): saved with it, and played
+            in the window beside the transcript (the local video server, WebKitGTK's GStreamer): a
+            click on a paragraph moves the video there, a click on a time plays it."""
             m = saved["meeting"]
-            v = m.get("video") or {}
-            path = tmp / "data" / "lowkey" / "meetings" / v.get("file", "-")
-            check(v.get("bytes", 0) > 0 and path.is_file() and path.stat().st_size == v["bytes"],
-                  f"the screen video is saved with the meeting ({v.get('file')}, {v.get('bytes')} bytes, {v.get('codec')})")
-            check(0 <= v["offset"] < 5, f"the video starts {v['offset']:.2f} s after the meeting")
-            check(not list(path.parent.glob(".*.part")), "no unfinished video is left")
+            vs = m.get("videos") or []
+            folder = tmp / "data" / "lowkey" / "meetings"
+            check(len(vs) == 2 and all(v["bytes"] > 0 and (folder / v["file"]).stat().st_size == v["bytes"] for v in vs),
+                  f"two screen videos are saved with the meeting ({[(v['file'], v['bytes'], v['codec']) for v in vs]})")
+            check(0 <= vs[0]["offset"] < vs[0]["offset"] + vs[0]["duration"] <= vs[1]["offset"] < m["duration"],
+                  "in order, each with its time: " + ", ".join(f"{v['offset']:.1f}-{v['offset'] + v['duration']:.1f} s" for v in vs))
+            check(not list(folder.glob(".*.part")), "no unfinished video is left")
 
             def page():
                 return [e for e in events("page-video") if e.get("id") == m["id"]]
 
+            def part_of(t: float) -> int:
+                return max(i for i, v in enumerate(vs) if v["offset"] - 0.5 <= t or i == 0)
+
             loaded = wait(lambda: next((e for e in page() if e["state"] in ("loaded", "error")), None), 20, "the video in the window")
-            check(loaded["state"] == "loaded" and abs(loaded["duration"] - (m["duration"] - v["offset"])) < 2.5,
-                  f"the window loads it ({loaded['duration']:.1f} s of {m['duration']:.1f} s; {loaded['error'] or 'no error'})")
+            check(loaded["state"] == "loaded" and loaded["part"] == 0 and loaded["parts"] == 2 and abs(loaded["duration"] - vs[0]["duration"]) < 1.5,
+                  f"the window loads the first ({loaded['duration']:.1f} s; {loaded['error'] or 'no error'})")
+            (vx, vy), (tx, ty) = loaded["layout"]
+            check(vx < tx or vy < ty, f"the video is on the left of the notes, or above them on a narrow window ({vx},{vy} / {tx},{ty})")
             wx, wy = win("Lowkey")["at"]
             n = len(page())
             pointer(f"abs:{wx + loaded['tab'][0]},{wy + loaded['tab'][1]},{{W}},{{H}}", "sleep:200", "click")
             tab = wait(lambda: next((e for e in page()[n:] if e["state"] == "tab"), None), 5, "the transcript tab")
+            if tab["para"]:
+                # A click on a paragraph: the video at its moment (paused: as it was), the paragraph marked.
+                px, py, start = tab["para"]
+                n = len(page())
+                pointer(f"abs:{wx + px},{wy + py},{{W}},{{H}}", "sleep:200", "click")
+                seeked = wait(lambda: next((e for e in page()[n:] if e["state"] in ("seeked", "error")), None), 10, "the seek")
+                i = part_of(start)
+                want = max(0.0, start - vs[i]["offset"])
+                check(seeked["state"] == "seeked" and seeked["part"] == i and abs(seeked["time"] - want) < 0.6 and seeked["now"] >= 0,
+                      f"a click on a paragraph ({start:.1f} s) moves the video there (video {i + 1}, {seeked['time']:.2f} s) and marks it")
             if not tab["play"]:
-                print("  note: the meeting has no transcript lines: the seek is not checked")
+                print("  note: no transcript line in a screen video: the play is not checked")
                 return
             px, py, start = tab["play"]
             n = len(page())
             pointer(f"abs:{wx + px},{wy + py},{{W}},{{H}}", "sleep:200", "click")
-            seeked = wait(lambda: next((e for e in page()[n:] if e["state"] in ("seeked", "error")), None), 10, "the seek")
-            want = max(0.0, start - v["offset"])
-            check(seeked["state"] == "seeked" and abs(seeked["time"] - want) < 0.6,
-                  f"a click on a transcript time ({start:.1f} s) plays the video from there ({seeked['time']:.2f} s of the video)")
-            wait(lambda: next((e for e in page()[n:] if e["state"] == "playing"), None), 10, "playing")
+            i = part_of(start)
+            want = max(0.0, start - vs[i]["offset"])
+            playing = wait(lambda: next((e for e in page()[n:] if e["state"] in ("playing", "error")), None), 10, "playing")
+            check(playing["state"] == "playing" and playing["part"] == i and abs(playing["time"] - want) < 0.8,
+                  f"a click on a transcript time ({start:.1f} s) plays the video from there (video {i + 1}, {playing['time']:.2f} s)")
             time.sleep(1.2)
             (mx, my), (mw, mh) = win("Lowkey")["at"], win("Lowkey")["size"]
             run(["grim", "-g", f"{mx},{my} {mw}x{mh}", SHOTS / "40-desktop-meeting-video.png"], env)
@@ -512,7 +549,7 @@ esac
         (tmp / "vault" / ".obsidian").mkdir()
         (tmp / "config" / "open-whisper" / "config.toml").write_text(
             f'idle_unload_minutes = 5\npreview_engine = "{PREVIEW}"\nai_auto = {ai_auto}\nexport_dir = "{vault_notes}"\n'
-            f'meeting_voices = {"true" if voices else "false"}\nscreen_record = true\n\n'
+            f'meeting_voices = {"true" if voices else "false"}\n\n'
             '[[vocabulary]]\nterm = "OpenWhisper"\nsounds_like = ["open whisper", "Open Wish"]\n')
         app = subprocess.Popen([APP], env=env, stdout=open(tmp / "app.log", "w"), stderr=subprocess.STDOUT)
         main_win = wait(lambda: win("Lowkey"), 30, "main window")
