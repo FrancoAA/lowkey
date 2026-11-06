@@ -122,20 +122,43 @@ fn fetch(progress: impl Fn(f32)) -> anyhow::Result<()> {
 }
 
 // ------------------------------------------------------------------ the temporary audio file
-/// The others' sound of meeting `id` while it records (deleted after Stop).
+/// The others' sound of meeting `id` while it records, and after Stop until its voices are told
+/// apart (deleted then).
 pub fn tape_path(meetings: &Path, id: &str) -> PathBuf {
     meetings.join(format!(".{id}.them.pcm"))
 }
 
-/// Files left by a recording that did not end (the app was killed): deleted at start.
-pub fn delete_leftovers(meetings: &Path) {
+/// A file taken again at start (`leftovers`): its last try. Left again (the app quit, or telling
+/// the voices apart crashed it), it is deleted at the next start: never a crash at every start.
+pub fn retry_path(meetings: &Path, id: &str) -> PathBuf {
+    meetings.join(format!(".{id}.them.retry.pcm"))
+}
+
+/// Last tries left by the previous run (see `retry_path`): deleted.
+pub fn delete_retries(meetings: &Path) {
     let Ok(entries) = std::fs::read_dir(meetings) else { return };
     for e in entries.flatten() {
         let name = e.file_name().to_string_lossy().into_owned();
-        if name.starts_with(".m-") && name.ends_with(".them.pcm") {
+        if name.starts_with(".m-") && name.ends_with(".them.retry.pcm") {
             let _ = std::fs::remove_file(e.path());
         }
     }
+}
+
+/// The files of meetings whose voices were not told apart yet (the app quit, or crashed, first):
+/// (meeting id, file). At start, before a meeting can record (its file is never in the list).
+pub fn leftovers(meetings: &Path) -> Vec<(String, PathBuf)> {
+    let Ok(entries) = std::fs::read_dir(meetings) else { return vec![] };
+    let mut out: Vec<(String, PathBuf)> = entries
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().into_owned();
+            let id = name.strip_prefix('.')?.strip_suffix(".them.pcm")?.to_string();
+            crate::meeting::valid_id(&id).then(|| (id, e.path()))
+        })
+        .collect();
+    out.sort();
+    out
 }
 
 /// The longest meeting whose voices are told apart: 3 hours is a 345 MB file and 690 MB of
@@ -378,13 +401,16 @@ mod tests {
     }
 
     #[test]
-    fn leftovers_are_deleted() {
+    fn leftovers_are_found() {
         let d = std::env::temp_dir().join(format!("lowkey-voices-{}", std::process::id()));
         std::fs::create_dir_all(&d).unwrap();
-        std::fs::write(tape_path(&d, "m-1"), b"xx").unwrap();
-        std::fs::write(d.join("m-1.json"), b"{}").unwrap();
-        delete_leftovers(&d);
-        assert!(!tape_path(&d, "m-1").exists() && d.join("m-1.json").exists());
+        for f in [".m-2.them.pcm", ".m-1.them.pcm", ".x-3.them.pcm", ".m-4.them.wav", ".m-5.them.retry.pcm", "m-1.json"] {
+            std::fs::write(d.join(f), b"xx").unwrap();
+        }
+        assert_eq!(leftovers(&d), vec![("m-1".to_string(), tape_path(&d, "m-1")), ("m-2".to_string(), tape_path(&d, "m-2"))]);
+        // A last try left again: deleted (telling those voices apart may be what crashed).
+        delete_retries(&d);
+        assert!(!retry_path(&d, "m-5").exists() && tape_path(&d, "m-1").exists());
         let _ = std::fs::remove_dir_all(&d);
     }
 

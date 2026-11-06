@@ -80,7 +80,11 @@ the CPU. Windows must have the Visual C++ runtime (`MSVCP140.dll`). The installe
 - Files given on the command line open in the app. **Closing the window keeps the app
   running** in the tray, so the dictation key stays instant. Quit with **Exit** at the bottom
   of the side menu, from the tray, or with `lowkey --dictate quit`. While a meeting records,
-  Exit asks first, then stops and saves the meeting before it quits.
+  Exit asks first, then stops and saves the meeting before it quits. While the app is still at
+  work (telling the voices apart, writing notes, answering a question, transcribing files),
+  Exit lists that work and asks: **Quit when done** (it quits by itself after), **Quit now**
+  (that work stops: Write notes writes the notes later), or **Keep running**.
+  `lowkey --dictate quit` quits at once.
 - **Appearance** (Settings → General): System (follows the desktop's light or dark setting),
   Light or Dark. The recording strip stays dark.
 - **The tray icon's menu:** Open, Start/Stop dictation (the text goes to the app that has the
@@ -209,8 +213,11 @@ Record a call or a talk, as text next to your notes (Linux for now). No bot join
   meeting records, the computer's sound is kept in a temporary file in the meetings folder;
   after Stop it takes about 2 minutes for an hour of meeting, then the file is deleted, and only
   then are the note-app file and the notes written (Export, Write notes and fixes wait for
-  it). If the app is closed or stops meanwhile, the file is deleted at the next start, and
-  the meeting keeps "Them". Meetings over 3 hours keep "Them". On two test meetings, 89% of the speech
+  it). If the app quits or crashes first (also while the meeting records), the file is kept and
+  the next start tells the voices apart, then writes the note-app file and the notes (the
+  notes only if the meeting has none). That is its last try: if it is stopped again, the file
+  is deleted at the following start and the meeting keeps "Them" (never a crash at every
+  start). Meetings over 3 hours keep "Them". On two test meetings, 89% of the speech
   time went to the right person (54% with one label for all). Voices that are alike, people
   who talk at the same time, and a person who says little are the usual errors.
   Details: [docs/voices.md](docs/voices.md).
