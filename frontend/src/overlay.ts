@@ -359,6 +359,8 @@ void (async () => {
     show();
   });
   await listen<MeetingLive>("meeting", (e) => {
+    // A late word about a meeting that ended, while another one records: not shown.
+    if (e.payload.state === "done" && meet?.state === "recording" && meet.meeting.id !== e.payload.meeting.id) return;
     meet = e.payload;
     meetAt = performance.now();
     if (meet.state === "recording") meetError = null;

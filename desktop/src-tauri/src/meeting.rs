@@ -252,8 +252,8 @@ pub fn delete_in(dir: &Path, id: &str) -> anyhow::Result<()> {
 /// `.part` is never taken for a leftover).
 pub fn recover_videos(dir: &Path, left: Vec<(String, PathBuf, crate::screen::Container)>) {
     for (id, part, c) in left {
-        if load_in(dir, &id).is_err() {
-            let _ = std::fs::remove_file(&part);
+        if !dir.join(format!("{id}.json")).exists() {
+            let _ = std::fs::remove_file(&part); // its meeting was deleted
             continue;
         }
         let r = crate::screen::finish_part(dir, &id, &part, c, false);
@@ -1076,6 +1076,9 @@ impl Session {
 
     /// The screen is not recorded in this meeting: why.
     pub fn screen_failed(&self, why: &str) {
+        if self.inner.ended.lock().is_some() {
+            return; // an answer after Stop: not news (another meeting may record now)
+        }
         *self.inner.screen.lock() = "";
         self.notice(format!("The screen is not recorded: {why}."));
     }
@@ -1097,7 +1100,10 @@ impl Session {
     /// The screen video joins the meeting: its time 0 is `rec.started` on the meeting's clock.
     /// The meeting stopped meanwhile: `rec` comes back (to be discarded).
     pub fn attach_video(&self, rec: crate::screen::Recording) -> Result<(), crate::screen::Recording> {
-        let ended = self.inner.ended.lock(); // held: `stop_sources` takes the video after this
+        // Held: `stop_sources` takes the video after this. Lock order here: ended, then doc;
+        // `finish` takes doc, then ended (through `elapsed`): no deadlock only because `doc` is
+        // taken here while `ended` is None, and `finish` sets `ended` before it takes `doc`.
+        let ended = self.inner.ended.lock();
         if ended.is_some() {
             return Err(rec);
         }
@@ -1312,6 +1318,11 @@ mod tests {
             eprintln!("skipped: no GStreamer with vp8enc");
             return;
         };
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&rec.part).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600, "the video is private while it records");
+        }
         s.attach_video(rec).map_err(|_| ()).unwrap();
         assert_eq!(s.live().screen, "on");
         let v = load_in(&dir, &id).unwrap().video.unwrap();

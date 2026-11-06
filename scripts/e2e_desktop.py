@@ -455,7 +455,7 @@ esac
 
         def video_step(saved) -> None:
             """The meeting's screen video (a test picture): saved with it, and played in the window
-            from a time in the transcript (the asset protocol, WebKitGTK's GStreamer, a seek)."""
+            from a time in the transcript (the local video server, WebKitGTK's GStreamer, a seek)."""
             m = saved["meeting"]
             v = m.get("video") or {}
             path = tmp / "data" / "lowkey" / "meetings" / v.get("file", "-")

@@ -37,7 +37,9 @@ the transcript plays what was on the screen then. Linux only for now; off by def
   last frame again when the screen does not change, so the video has no holes; the queue drops
   old frames when the encoder is slower than the screen.
 - **Encoder**: the first one that works, best first. Each is checked with two test frames
-  through the same pipeline (a GPU encoder can be installed and still fail):
+  through the same pipeline (a GPU encoder can be installed and still fail), and the player
+  must have a decoder for its codec (AV1: dav1d, VP9/VP8: libvpx, H.264: libav or OpenH264, or
+  the VA one):
 
   | Encoder | File | Where | Package (Arch) |
   |---|---|---|---|
@@ -62,9 +64,9 @@ the transcript plays what was on the screen then. Linux only for now; off by def
   folder; at Stop, `m-<id>.webm`. The meeting's JSON has
   `video: { file, offset, width, height, codec, bytes }`. Deleting the meeting deletes the
   video.
-- **A crash**: GStreamer gets SIGINT from the kernel when the app ends (`PR_SET_PDEATHSIG`), so
-  its file is closed. At the next start a `.part` file left behind is written again (remuxed,
-  no new encoding) so that it has its length and can be seeked, gets its final name and its
+- **A crash**: GStreamer gets SIGINT from the kernel when the app ends (`PR_SET_PDEATHSIG`; it
+  ignores SIGPIPE, because its output then goes nowhere), so its file is closed. At the next start a `.part` file left behind is written again (remuxed,
+  no new encoding, 60 s at most) so that it has its length and can be seeked, gets its final name and its
   size in the meeting. A `.part` without its meeting is deleted.
 - **Playback**: WebKitGTK plays media only from http(s) and file addresses (through a custom
   scheme such as Tauri's asset protocol its player fails: "source not supported"). So the app

@@ -76,13 +76,19 @@ pub struct Encoder {
     pub gpu: bool,
     /// The elements it needs besides the common ones (parsers, the muxer).
     pub needs: &'static [&'static str],
+    /// Decoders of its codec (one is enough): the player (WebKitGTK's GStreamer) must play it.
+    pub plays: &'static [&'static str],
 }
+
+const AV1_DEC: &[&str] = &["dav1ddec", "av1dec", "vaav1dec"];
+const VP9_DEC: &[&str] = &["vp9dec", "vavp9dec"];
+const H264_DEC: &[&str] = &["avdec_h264", "openh264dec", "vah264dec"];
 
 /// Best first. The GPU ones (VA-API) are in gst-plugins-bad; vp8enc in gst-plugins-good.
 pub const ENCODERS: &[Encoder] = &[
-    Encoder { element: "vaav1enc", launch: "vaav1enc bitrate=800 key-int-max=100 ! av1parse", format: "NV12", container: Container::Webm, codec: "AV1", gpu: true, needs: &["av1parse", "webmmux"] },
-    Encoder { element: "vavp9enc", launch: "vavp9enc bitrate=1000 key-int-max=100", format: "NV12", container: Container::Webm, codec: "VP9", gpu: true, needs: &["webmmux"] },
-    Encoder { element: "vah264enc", launch: "vah264enc bitrate=1000 key-int-max=100 ! h264parse", format: "NV12", container: Container::Mp4, codec: "H.264", gpu: true, needs: &["h264parse", "mp4mux"] },
+    Encoder { element: "vaav1enc", launch: "vaav1enc bitrate=800 key-int-max=100 ! av1parse", format: "NV12", container: Container::Webm, codec: "AV1", gpu: true, needs: &["av1parse", "webmmux"], plays: AV1_DEC },
+    Encoder { element: "vavp9enc", launch: "vavp9enc bitrate=1000 key-int-max=100", format: "NV12", container: Container::Webm, codec: "VP9", gpu: true, needs: &["webmmux"], plays: VP9_DEC },
+    Encoder { element: "vah264enc", launch: "vah264enc bitrate=1000 key-int-max=100 ! h264parse", format: "NV12", container: Container::Mp4, codec: "H.264", gpu: true, needs: &["h264parse", "mp4mux"], plays: H264_DEC },
     Encoder {
         element: "vp8enc",
         launch: "vp8enc deadline=1 cpu-used=8 target-bitrate=1000000 keyframe-max-dist=100 threads=4",
@@ -91,9 +97,10 @@ pub const ENCODERS: &[Encoder] = &[
         codec: "VP8",
         gpu: false,
         needs: &["webmmux"],
+        plays: &["vp8dec"],
     },
-    Encoder { element: "x264enc", launch: "x264enc tune=zerolatency speed-preset=veryfast bitrate=1000 key-int-max=100 ! h264parse", format: "I420", container: Container::Mp4, codec: "H.264", gpu: false, needs: &["h264parse", "mp4mux"] },
-    Encoder { element: "openh264enc", launch: "openh264enc bitrate=1000000 complexity=low rate-control=bitrate ! h264parse", format: "I420", container: Container::Mp4, codec: "H.264", gpu: false, needs: &["h264parse", "mp4mux"] },
+    Encoder { element: "x264enc", launch: "x264enc tune=zerolatency speed-preset=veryfast bitrate=1000 key-int-max=100 ! h264parse", format: "I420", container: Container::Mp4, codec: "H.264", gpu: false, needs: &["h264parse", "mp4mux"], plays: H264_DEC },
+    Encoder { element: "openh264enc", launch: "openh264enc bitrate=1000000 complexity=low rate-control=bitrate ! h264parse", format: "I420", container: Container::Mp4, codec: "H.264", gpu: false, needs: &["h264parse", "mp4mux"], plays: H264_DEC },
 ];
 
 /// Every pipeline has these (gst-plugins-base, and pipewiresrc of PipeWire).
@@ -241,15 +248,23 @@ fn private(path: &Path) {
     let _ = path;
 }
 
+/// No new encoding: about 1 s for an hour of video. A damaged file that hangs GStreamer is kept
+/// as it is after this.
+const REPAIR_LIMIT: Duration = Duration::from_secs(60);
+
 fn repair(c: Container, from: &Path, to: &Path) -> anyhow::Result<()> {
-    let out = std::process::Command::new(GST_LAUNCH)
-        .arg("-q")
-        .args(repair_pipeline(c, from, to))
-        .stdin(std::process::Stdio::null())
-        .output()?;
-    anyhow::ensure!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr).trim());
+    anyhow::ensure!(run_quiet(&repair_pipeline(c, from, to), REPAIR_LIMIT), "GStreamer could not read it again");
     anyhow::ensure!(std::fs::metadata(to).map(|m| m.len() > 0).unwrap_or(false), "nothing was written");
     Ok(())
+}
+
+/// An empty file only this user can read, for GStreamer to write into (filesink keeps the mode).
+fn private_file(path: &Path) -> std::io::Result<()> {
+    let mut o = std::fs::OpenOptions::new();
+    o.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut o, 0o600);
+    o.open(path).map(drop)
 }
 
 // ------------------------------------------------------------------ what this computer has
@@ -264,6 +279,9 @@ pub struct Status {
     pub encoder: String,
     /// What to install when it is missing.
     pub problem: String,
+    /// The encoder's element (two have the same label).
+    #[serde(skip)]
+    pub element: String,
 }
 
 static STATUS: Mutex<Option<(Instant, Status)>> = Mutex::new(None);
@@ -293,7 +311,7 @@ pub fn check(force: bool) -> Status {
 /// The encoder to record with (from the last look; a new look when there was none).
 fn encoder() -> anyhow::Result<&'static Encoder> {
     let s = check(false);
-    ENCODERS.iter().find(|e| e.label() == s.encoder && s.state == "ready").ok_or_else(|| anyhow::anyhow!("{}", s.problem))
+    ENCODERS.iter().find(|e| e.element == s.element && s.state == "ready").ok_or_else(|| anyhow::anyhow!("{}", s.problem))
 }
 
 fn has(element: &str) -> bool {
@@ -310,13 +328,22 @@ fn has(element: &str) -> bool {
 /// An encoder is installed and makes a file: two test frames through the same pipeline (a GPU
 /// encoder can be installed and still fail, e.g. without a VA driver).
 fn works(enc: &Encoder) -> bool {
-    if !enc.needs.iter().chain(std::iter::once(&enc.element)).all(|e| has(e)) {
+    if !enc.needs.iter().chain(std::iter::once(&enc.element)).all(|e| has(e)) || !enc.plays.iter().any(|e| has(e)) {
         return false;
     }
-    let out = std::env::temp_dir().join(format!("lowkey-screen-check-{}.{}", std::process::id(), enc.container.ext()));
+    // A new private folder (not a name another user could have made first).
+    let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+    let dir = std::env::temp_dir().join(format!("lowkey-screen-check-{}-{nanos}", std::process::id()));
+    let mut b = std::fs::DirBuilder::new();
+    #[cfg(unix)]
+    std::os::unix::fs::DirBuilderExt::mode(&mut b, 0o700);
+    if b.create(&dir).is_err() {
+        return false;
+    }
+    let out = dir.join(format!("check.{}", enc.container.ext()));
     let ok = run_quiet(&pipeline(&Source::Test { frames: Some(2) }, enc, (320, 240), &out), Duration::from_secs(10));
     let made = std::fs::metadata(&out).map(|m| m.len() > 0).unwrap_or(false);
-    let _ = std::fs::remove_file(&out);
+    let _ = std::fs::remove_dir_all(&dir);
     ok && made
 }
 
@@ -360,7 +387,7 @@ fn look() -> Status {
         return Status { state: "missing".into(), problem: "Install gst-plugins-base.".into(), ..Default::default() };
     }
     match choose(works) {
-        Some(e) => Status { state: "ready".into(), encoder: e.label(), problem: String::new() },
+        Some(e) => Status { state: "ready".into(), encoder: e.label(), problem: String::new(), element: e.element.into() },
         None => Status { state: "missing".into(), problem: "No video encoder: install gst-plugins-good (and gst-plugin-va for the GPU).".into(), ..Default::default() },
     }
 }
@@ -410,6 +437,7 @@ pub fn start(dir: &Path, id: &str, token: Option<&str>, on_end: Box<dyn FnOnce(S
     let enc = encoder()?;
     std::fs::create_dir_all(dir)?;
     let part = part_path(dir, id, enc.container);
+    private_file(&part)?;
     #[cfg(target_os = "linux")]
     {
         if fake() {
@@ -417,9 +445,22 @@ pub fn start(dir: &Path, id: &str, token: Option<&str>, on_end: Box<dyn FnOnce(S
             let (process, started) = Process::spawn(pipeline(&Source::Test { frames: None }, enc, size, &part), None, on_end)?;
             return Ok(Started { recording: Recording { container: enc.container, codec: enc.codec, size, started, part, process, portal: None }, token: None });
         }
-        let (cast, token) = portal::Cast::open(token)?;
+        let (cast, token) = match portal::Cast::open(token) {
+            Ok(c) => c,
+            Err(e) => {
+                let _ = std::fs::remove_file(&part);
+                return Err(e);
+            }
+        };
         let size = video_size(cast.size.0, cast.size.1);
-        let (process, started) = Process::spawn(pipeline(&Source::PipeWire { node: cast.node }, enc, size, &part), Some(&cast.fd), on_end)?;
+        let (process, started) = match Process::spawn(pipeline(&Source::PipeWire { node: cast.node }, enc, size, &part), Some(&cast.fd), on_end) {
+            Ok(p) => p,
+            Err(e) => {
+                cast.close(); // the desktop's "sharing" sign goes
+                let _ = std::fs::remove_file(&part);
+                return Err(e);
+            }
+        };
         Ok(Started { recording: Recording { container: enc.container, codec: enc.codec, size, started, part, process, portal: Some(cast) }, token })
     }
     #[cfg(not(target_os = "linux"))]
@@ -483,13 +524,20 @@ impl Process {
             use std::os::fd::AsRawFd;
             use std::os::unix::process::CommandExt;
             let raw = fd.map(|f| f.as_raw_fd());
+            let parent = std::process::id() as libc::pid_t;
             // SAFETY: only async-signal-safe calls between fork and exec.
             unsafe {
                 cmd.pre_exec(move || {
+                    // Its output may go nowhere after the app ends: SIGPIPE would kill it before
+                    // it closes the file.
+                    libc::signal(libc::SIGPIPE, libc::SIG_IGN);
                     // The app ends (also killed): GStreamer gets SIGINT and closes the file. Tied
                     // to the thread that starts it: the watcher, which lives as long as it.
                     if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGINT) != 0 {
                         return Err(std::io::Error::last_os_error());
+                    }
+                    if libc::getppid() != parent {
+                        libc::_exit(1); // the app ended before the line above
                     }
                     if let Some(raw) = raw {
                         // dup2 clears close-on-exec on the copy.
@@ -546,7 +594,15 @@ impl Process {
                     closed = true;
                 }
             }
-            let status = child.lock().wait();
+            // Not `wait()` under the lock: `stop` must be able to signal it meanwhile.
+            let status = loop {
+                match child.lock().try_wait() {
+                    Ok(Some(s)) => break Ok(s),
+                    Ok(None) => {}
+                    Err(e) => break Err(e),
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            };
             let _ = err_reader.join();
             let why = tail(&errors);
             let ok = status.as_ref().map(|s| s.success()).unwrap_or(false);
@@ -709,6 +765,7 @@ pub(crate) fn test_recording(dir: &Path, id: &str) -> Option<Recording> {
     let enc = ENCODERS.iter().find(|e| e.element == "vp8enc")?;
     let part = part_path(dir, id, enc.container);
     std::fs::create_dir_all(dir).ok()?;
+    private_file(&part).ok()?;
     let (process, started) = Process::spawn(pipeline(&Source::Test { frames: None }, enc, (320, 240), &part), None, Box::new(|_| {})).ok()?;
     Some(Recording {
         container: enc.container,

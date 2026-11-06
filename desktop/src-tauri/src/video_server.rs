@@ -11,6 +11,11 @@ use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
+/// Requests served at the same time.
+const MAX_OPEN: usize = 16;
+/// The request line and headers: a player sends well under 1 kB.
+const MAX_HEAD: u64 = 16 * 1024;
+
 pub struct Server {
     port: u16,
     key: String,
@@ -26,11 +31,22 @@ impl Server {
         let key: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
         let k2 = key.clone();
         std::thread::Builder::new().name("video-server".into()).spawn(move || {
+            // A player opens a few at a time (a seek closes one); more are refused.
+            let open = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
             for stream in listener.incoming().flatten() {
-                let (dir, key) = (dir.clone(), k2.clone());
-                let _ = std::thread::Builder::new().name("video-request".into()).spawn(move || {
+                use std::sync::atomic::Ordering;
+                if open.fetch_add(1, Ordering::SeqCst) >= MAX_OPEN {
+                    open.fetch_sub(1, Ordering::SeqCst);
+                    continue; // dropped: closed
+                }
+                let (dir, key, done) = (dir.clone(), k2.clone(), open.clone());
+                let spawned = std::thread::Builder::new().name("video-request".into()).spawn(move || {
                     let _ = serve(stream, &dir, &key);
+                    done.fetch_sub(1, Ordering::SeqCst);
                 });
+                if spawned.is_err() {
+                    open.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+                }
             }
         })?;
         Ok(Self { port, key })
@@ -87,7 +103,7 @@ fn range(header: &str, size: u64) -> Option<(u64, u64)> {
 
 fn serve(stream: TcpStream, dir: &Path, key: &str) -> std::io::Result<()> {
     stream.set_read_timeout(Some(std::time::Duration::from_secs(10)))?;
-    let mut reader = BufReader::new(stream.try_clone()?);
+    let mut reader = BufReader::new(stream.try_clone()?.take(MAX_HEAD));
     let mut first = String::new();
     reader.read_line(&mut first)?;
     let mut range_header = None;

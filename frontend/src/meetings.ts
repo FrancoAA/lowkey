@@ -192,6 +192,8 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
   let videoOf: string | null = null;
   /** The transcript paragraph the video is at (marked while it plays); -1: none. */
   let nowPara = -1;
+  /** A play asked for before the video's length was known: done when it is (video seconds). */
+  let pendingSeek: number | null = null;
 
   /** The meeting on screen (live or saved), and the live one (if any). */
   let shown: Meeting | null = null;
@@ -622,6 +624,7 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
     if (videoOf === null) return;
     videoOf = null;
     nowPara = -1;
+    pendingSeek = null;
     player.pause();
     player.removeAttribute("src");
     player.load(); // lets the file go
@@ -655,12 +658,11 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
     if (!shown?.video || !playable(shown)) return;
     const offset = shown.video.offset;
     if (videoCollapsed) setCollapsed(false);
-    const go = () => {
-      player.currentTime = Math.max(0, t - offset);
+    const at = Math.max(0, t - offset);
+    if (player.readyState >= 1) {
+      player.currentTime = at;
       void player.play().catch(() => {});
-    };
-    if (player.readyState >= 1) go();
-    else player.addEventListener("loadedmetadata", go, { once: true });
+    } else pendingSeek = at; // the "loadedmetadata" handler below does it
     ui.announce(t < offset ? `The screen video starts at ${clock(offset)}: playing from its start.` : `Playing the screen video from ${clock(t)}.`);
   }
 
@@ -681,6 +683,12 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
     if (!player.paused && tab === "transcript" && !editing) row.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }
 
+  player.addEventListener("loadedmetadata", () => {
+    if (pendingSeek === null) return;
+    player.currentTime = pendingSeek;
+    pendingSeek = null;
+    void player.play().catch(() => {});
+  });
   player.addEventListener("timeupdate", followVideo);
   player.addEventListener("seeked", followVideo);
 
@@ -1483,6 +1491,8 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
 
   // Also for a meeting started or stopped with the meeting key, in another app.
   api.onLive((l) => {
+    // A late word about a meeting that ended, while another one records: not this one's end.
+    if (l.state === "done" && live && live.state !== "done" && live.meeting.id !== l.meeting.id) return;
     if (l.state === "done") {
       live = null;
       ui.onRecording(false);
