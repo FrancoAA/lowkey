@@ -108,8 +108,6 @@ pub struct Config {
     /// Meetings: tell the others in a call apart by their voices, after Stop (src/voices.rs).
     /// Off by default; turning it on downloads the models (46 MB).
     pub meeting_voices: bool,
-    /// Meetings: record the screen too (src/screen.rs; Linux). Off by default.
-    pub screen_record: bool,
     /// The screen-sharing portal's restore token: the screen chosen last time, so its picker
     /// shows only the first time ("" = ask; Choose the screen again clears it).
     pub screen_token: String,
@@ -145,7 +143,6 @@ impl Default for Config {
             ai_auto: true,
             mcp_recording: false,
             meeting_voices: false,
-            screen_record: false,
             screen_token: String::new(),
             export_dir: String::new(),
             export_auto: true,

@@ -117,17 +117,25 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: transparent;
 /* Recording a meeting: no words in the first row, just the time, the wave and the mute button
    (the collapse button keeps the top-right corner). */
 .overlay[data-mode="meeting"][data-state="recording"] { grid-template-columns: 40px auto 1fr 28px; padding-right: 36px; }
+/* With Record screen: one more button before the mute button. */
+.overlay[data-mode="meeting"][data-state="recording"][data-screen-btn="1"] { grid-template-columns: 40px auto 1fr 28px 28px; }
+.overlay[data-mode="meeting"][data-state="recording"][data-screen-btn="1"] .detail { grid-column: 2 / 6; }
+.overlay[data-mode="meeting"][data-state="recording"][data-screen-btn="1"] .mute { grid-column: 5; }
 .overlay[data-mode="meeting"][data-state="recording"] .label { display: none; }
 .overlay[data-mode="meeting"][data-state="recording"] .timer { grid-column: 2; }
 .overlay[data-mode="meeting"][data-state="recording"] .mwave { grid-column: 3; }
 .overlay[data-mode="meeting"][data-state="recording"] .detail { grid-column: 2 / 5; }
-.mute {
+.mute, .screen-btn {
   display: none; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 8px; place-items: center;
   background: rgba(255, 255, 255, 0.06); color: #e4e4e7; cursor: pointer;
 }
-.mute svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.mute svg, .screen-btn svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .mute .slash { display: none; }
-.mute:hover { background: rgba(255, 255, 255, 0.12); }
+.mute:hover, .screen-btn:hover { background: rgba(255, 255, 255, 0.12); }
+.overlay[data-mode="meeting"][data-state="recording"][data-screen-btn="1"] .screen-btn { display: grid; grid-column: 4; grid-row: 1; align-self: center; }
+/* The screen records: the button is red; the picker is open: it pulses. */
+.overlay[data-screen="on"] .screen-btn { background: rgba(248, 113, 113, 0.18); color: #fca5a5; }
+.overlay[data-screen="waiting"] .screen-btn svg { animation: pulse 1.2s ease-in-out infinite; }
 .overlay[data-mode="meeting"][data-state="recording"] .mute { display: grid; grid-column: 4; grid-row: 1; align-self: center; }
 /* Muted: the button is red with a slash; the row under it says so. */
 .overlay[data-muted="1"] .mute { background: rgba(248, 113, 113, 0.18); color: #fca5a5; }
@@ -139,13 +147,14 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: transparent;
   justify-content: space-between; padding: 0 9px 0 10px; gap: 8px;
 }
 .overlay[data-collapsed="1"][data-collapsed][data-mode="meeting"][data-state="recording"] .mute { display: grid; width: 26px; height: 26px; }
+.overlay[data-collapsed="1"][data-collapsed][data-mode="meeting"][data-state="recording"] .screen-btn { display: none; }
 
 /* A saved meeting: "Open the notes" opens Lowkey on it. */
 .open-link { color: #93c5fd; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; border-radius: 3px; }
 .open-link:hover { color: #bfdbfe; }
 .open-link:focus-visible { outline: 2px solid #93c5fd; outline-offset: 1px; }
 /* The screen is recorded too: a small screen before the time. */
-.overlay[data-mode="meeting"][data-state="recording"][data-screen="1"] .timer::before {
+.overlay[data-mode="meeting"][data-state="recording"][data-screen="on"] .timer::before {
   content: ""; display: inline-block; width: 10px; height: 7px; margin-right: 6px; vertical-align: 1px;
   border: 1.5px solid currentColor; border-radius: 2px; opacity: 0.8;
 }

@@ -67,10 +67,9 @@ const exportParts = [...document.querySelectorAll<HTMLInputElement>(".export-par
 const agentsRecording = $<HTMLInputElement>("agents-recording");
 const voicesOn = $<HTMLInputElement>("voices-on");
 const screenCard = $<HTMLDivElement>("screen-card");
-const screenOn = $<HTMLInputElement>("screen-on");
+const screenCheck = $<HTMLButtonElement>("screen-check");
 const screenStatus = $<HTMLElement>("screen-status");
 const screenForget = $<HTMLButtonElement>("screen-forget");
-let screenSaving = false;
 const voicesStatus = $<HTMLDivElement>("voices-status");
 const voicesStatusText = $<HTMLSpanElement>("voices-status-text");
 const voicesBar = voicesStatus.querySelector<HTMLDivElement>(".model-bar")!;
@@ -1179,31 +1178,36 @@ voicesOn.addEventListener("change", () => {
     .finally(() => (voicesSaving = false));
 });
 
-/** Settings → General → Record the screen with meetings: the switch, what this computer has. */
+/** Settings → General → Screen video: what this computer has, the screen remembered. */
+let screenChecking = false;
 function renderScreen(): void {
   const s = status?.screen;
-  screenCard.hidden = !s || (!s.supported && !s.on);
+  screenCard.hidden = !s?.supported;
   if (!s) return;
-  if (!screenSaving) screenOn.checked = s.on;
-  screenOn.disabled = !s.supported && !s.on;
   const c = s.check;
-  screenStatus.dataset.kind = s.on && c.state === "missing" ? "warn" : "";
-  screenStatus.textContent =
-    c.state === "checking" ? "Looking for GStreamer…" : c.state === "ready" ? `Ready: ${c.encoder}.` : c.problem;
-  screenForget.hidden = !s.on || !s.chosen;
+  const checking = screenChecking || c.state === "checking";
+  screenStatus.dataset.kind = !checking && c.state === "missing" ? "warn" : "";
+  screenStatus.textContent = checking ? "Looking for GStreamer…" : c.state === "ready" ? `Ready: ${c.encoder}.` : c.problem;
+  screenCheck.hidden = c.state !== "missing";
+  screenCheck.disabled = checking;
+  screenForget.hidden = !s.chosen;
 }
 
-screenOn.addEventListener("change", () => {
-  screenSaving = true;
+screenCheck.addEventListener("click", () => {
+  screenChecking = true;
+  renderScreen();
   void backend
-    .saveOptions({ screen_record: screenOn.checked })
-    .then(refreshStatus, (err) => showError(String(err)))
-    .finally(() => (screenSaving = false));
+    .screenCheck()
+    .catch((err) => showError(String(err)))
+    .finally(() => {
+      screenChecking = false;
+      void refreshStatus();
+    });
 });
 
 screenForget.addEventListener("click", () => {
   void backend.screenForget().then(() => {
-    announce("The next meeting asks which screen to share.");
+    announce("The next Record screen asks which screen to share.");
     return refreshStatus();
   }, (err) => showError(String(err)));
 });

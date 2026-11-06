@@ -6,7 +6,7 @@
  * are answered by the same model, and saved with it. The app records, transcribes, writes and
  * saves (desktop/src-tauri/src/meeting.rs, llm.rs); this page shows it and sends the title.
  */
-import type { AiNotesEvent, ChatMessage, Meeting, MeetingLine, MeetingLive, MeetingSummary, VocabTerm } from "./api";
+import type { AiNotesEvent, ChatMessage, Meeting, MeetingLine, MeetingLive, MeetingSummary, MeetingVideo, VocabTerm } from "./api";
 import { confirmDialog } from "./confirm";
 import { highlighted, searchWords } from "./highlight";
 import type { Backend } from "./backend";
@@ -148,7 +148,10 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
   const videoBox = $<HTMLDivElement>("video-box");
   const videoMeta = $<HTMLElement>("video-meta");
   const player = $<HTMLVideoElement>("meeting-player");
-  const screenMark = $<HTMLElement>("meeting-screen-mark");
+  const videoParts = $<HTMLDivElement>("video-parts");
+  const body = $<HTMLDivElement>("meeting-body");
+  const screenBtn = $<HTMLButtonElement>("meeting-screen");
+  const screenBtnText = $<HTMLElement>("meeting-screen-text");
   const pending = $<HTMLElement>("meeting-pending");
   const tabNotes = $<HTMLButtonElement>("tab-notes");
   const tabTranscript = $<HTMLButtonElement>("tab-transcript");
@@ -188,12 +191,16 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
    * and its text (notes written again: a point with other text there stays closed). */
   let openPoint: { id: string; n: number; text: string } | null = null;
 
-  /** The meeting whose screen video is in the player (null: none). */
+  /** The meeting whose screen videos are in the player (null: none), its saved videos, the one
+   * asked for last (-1: none yet) and the one whose file is in the player (-1: none yet). */
   let videoOf: string | null = null;
+  let segs: MeetingVideo[] = [];
+  let seg = -1;
+  let loaded = -1;
   /** The transcript paragraph the video is at (marked while it plays); -1: none. */
   let nowPara = -1;
-  /** A play asked for before the video's length was known: done when it is (video seconds). */
-  let pendingSeek: number | null = null;
+  /** Asked before the video's length was known: done when it is (seconds of that video). */
+  let pendingPlay: { at: number | null; play: boolean } | null = null;
 
   /** The meeting on screen (live or saved), and the live one (if any). */
   let shown: Meeting | null = null;
@@ -289,15 +296,16 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
         who.addEventListener("click", () => startRename(who, person));
       }
       let at: HTMLElement;
-      if (playable(m)) {
-        // With a screen video: the time plays it from there.
+      // With a screen video of that moment: the time plays it from there.
+      const c = playable(m) ? cover(l.start, l.end) : null;
+      if (c) {
         const b = document.createElement("button");
         b.type = "button";
         b.className = "when when-play";
         b.title = "Play the screen video from here";
-        b.setAttribute("aria-label", `Play the screen video from ${clock(l.start)}`);
-        b.addEventListener("click", () => playAt(l.start));
-        b.dataset.start = String(l.start);
+        b.setAttribute("aria-label", `Play the screen video from ${clock(c.t)}`);
+        b.addEventListener("click", () => playAt(c.t));
+        b.dataset.start = String(c.t);
         at = b;
       } else {
         at = document.createElement("span");
@@ -306,15 +314,29 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
       at.textContent = clock(l.start);
       const text = document.createElement("p");
       text.textContent = l.text;
+      if (c) {
+        // A click moves the video to this paragraph (playing or not, as it was); a double click
+        // fixes the text (below).
+        text.classList.add("syncs");
+        text.dataset.start = String(c.t);
+        text.addEventListener("click", () => {
+          if (window.getSelection()?.toString()) return; // text being selected
+          seekTo(c.t, null);
+        });
+      }
       if (!isLive() && !voicesWorking.has(m.id)) {
-        // A saved meeting: a click (or Enter) fixes the paragraph (not while its voices are
-        // told apart: the speakers change then).
+        // A saved meeting: a click (or Enter) fixes the paragraph; with a screen video, a double
+        // click (the click is the video's). Not while its voices are told apart: the speakers
+        // change then.
         text.tabIndex = 0;
-        text.className = "fixable";
-        text.title = "Click to fix the text";
+        text.classList.add("fixable");
+        text.title = c ? "Click: the screen video at this moment. Double-click: fix the text." : "Click to fix the text";
         text.setAttribute("role", "button");
         text.setAttribute("aria-roledescription", "paragraph, press Enter to fix it");
-        text.addEventListener("click", () => startEdit(row, l));
+        text.addEventListener(c ? "dblclick" : "click", () => {
+          window.getSelection()?.removeAllRanges(); // the double click selected a word
+          startEdit(row, l);
+        });
         text.addEventListener("keydown", (e) => {
           if (e.key === "Enter" || e.key === " ") {
             e.preventDefault();
@@ -566,7 +588,7 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
     renderFolderButtons();
     livePanel.hidden = !recording;
     livePanel.dataset.state = live?.state ?? "";
-    screenMark.hidden = !(recording && live?.screen === "on");
+    renderScreenButton();
     renderVideo();
     if (recording && live?.state === "recording") wave.start();
     else wave.stop();
@@ -589,9 +611,35 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
   }
 
   // ---------------------------------------------------------------- the screen video
-  /** The open meeting's video is in the player: its times play it. */
+  // A meeting can have several videos (Record screen, Stop screen, again): the player has one at
+  // a time, and goes to the one of the moment asked for.
+
+  /** The saved videos of meeting `m`, in time order (one whose time is not known last). */
+  function videosOf(m: Meeting): MeetingVideo[] {
+    const at = (v: MeetingVideo) => (v.offset < 0 ? Infinity : v.offset);
+    return (m.videos ?? []).filter((v) => v.bytes > 0).sort((a, b) => at(a) - at(b));
+  }
+
+  /** The open meeting's videos are in the player: the transcript plays them. */
   function playable(m: Meeting): boolean {
-    return !!m.video && videoOf === m.id && !videoWrap.hidden && !isLive();
+    return videoOf === m.id && segs.length > 0 && !videoWrap.hidden && !isLive();
+  }
+
+  /** Where video `i` ends on the meeting's clock (its length is not known after a crash). */
+  function segEnd(i: number): number {
+    const v = segs[i];
+    if (v.duration > 0) return v.offset + v.duration;
+    const next = segs[i + 1]?.offset ?? -1;
+    return next >= 0 ? next : Infinity;
+  }
+
+  /** The video with moment `from`..`to` of the meeting (the first it overlaps), and where. A video
+   * whose time is not known is never one. */
+  function cover(from: number, to = from): { i: number; t: number } | null {
+    for (let i = 0; i < segs.length; i++) {
+      if (segs[i].offset >= 0 && to >= segs[i].offset - 0.5 && from < segEnd(i)) return { i, t: Math.max(from, segs[i].offset) };
+    }
+    return null;
   }
 
   function size(bytes: number): string {
@@ -600,35 +648,88 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
     return mb >= 1000 ? `${(mb / 1000).toFixed(1)} GB` : mb >= 10 ? `${Math.round(mb)} MB` : `${mb.toFixed(1)} MB`;
   }
 
-  /** A saved meeting with a video: in the player (loaded once per meeting). */
+  /** A saved meeting with videos: the first in the player (loaded once per meeting). */
   function renderVideo(): void {
-    const v = shown && !isLive() && shown.video && shown.video.bytes > 0 ? shown.video : null;
-    if (!shown || !v) return unloadVideo();
-    videoMeta.textContent = `${v.codec} · ${size(v.bytes)}`;
-    if (videoOf === shown.id) return;
-    unloadVideo();
+    const list = shown && !isLive() ? videosOf(shown) : [];
+    if (!shown || !list.length) return unloadVideo();
+    const total = list.reduce((n, v) => n + v.bytes, 0);
+    const codecs = [...new Set(list.map((v) => v.codec))].join(", ");
+    videoMeta.textContent = `${list.length > 1 ? `${list.length} parts · ` : ""}${codecs} · ${size(total)}`;
+    const same = (a: MeetingVideo[], b: MeetingVideo[]) => a.length === b.length && a.every((v, i) => v.file === b[i].file);
+    if (videoOf === shown.id && same(list, segs)) return;
     const id = shown.id;
+    // Another meeting, or its videos changed (a crash's video made whole): from the start.
+    unloadVideo();
     videoOf = id;
-    void api.videoUrl(id).then(
-      (url) => {
-        if (videoOf !== id || shown?.id !== id || !url) return; // another meeting, or no file
-        player.src = url;
-        videoWrap.hidden = false;
-        renderTranscript(shown, false); // the times play it now
-      },
-      () => {},
+    segs = list;
+    renderParts();
+    void loadSeg(0, null, false);
+  }
+
+  /** More than one video: a button for each (its time in the meeting). */
+  function renderParts(): void {
+    videoParts.hidden = segs.length < 2;
+    videoParts.replaceChildren(
+      ...segs.map((v, i) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "chip-btn video-part";
+        const end = segEnd(i);
+        b.textContent = v.offset < 0 ? "Time not known" : `${clock(v.offset)}${Number.isFinite(end) ? `–${clock(end)}` : ""}`;
+        b.setAttribute("aria-label", v.offset < 0 ? `Screen video ${i + 1} (its time in the meeting is not known)` : `Screen video ${i + 1}, from ${clock(v.offset)}`);
+        if (i === seg) b.setAttribute("aria-current", "true");
+        b.addEventListener("click", () => void loadSeg(i, 0, true));
+        return b;
+      }),
     );
+  }
+
+  /** Video `i` in the player, at `at` seconds of it (null: its start, paused). */
+  async function loadSeg(i: number, at: number | null, play: boolean): Promise<void> {
+    const id = videoOf;
+    const v = segs[i];
+    if (!id || !v) return;
+    if (i === loaded && seg === i && player.readyState >= 1) {
+      if (at !== null) player.currentTime = at;
+      if (play) void player.play().catch(() => {});
+      return;
+    }
+    pendingPlay = { at, play }; // done when its length is known (the last one asked wins)
+    if (i === seg) return; // its file is on its way
+    seg = i;
+    renderParts();
+    const url = await api.videoUrl(id, v.file).catch(() => null);
+    if (videoOf !== id || seg !== i) return; // another meeting, or another video since
+    if (!url) {
+      // Its file is gone: the player stays on the one it has (or tries the next one).
+      seg = loaded;
+      pendingPlay = null;
+      renderParts();
+      if (loaded < 0 && i + 1 < segs.length) void loadSeg(i + 1, null, false);
+      else ui.announce("This screen video is not on this computer any more.");
+      return;
+    }
+    const first = videoWrap.hidden;
+    loaded = i;
+    player.src = url;
+    videoWrap.hidden = false;
+    body.dataset.video = "1";
+    if (first && shown) renderTranscript(shown, false); // its paragraphs play it now
   }
 
   function unloadVideo(): void {
     if (videoOf === null) return;
     videoOf = null;
+    segs = [];
+    seg = -1;
+    loaded = -1;
     nowPara = -1;
-    pendingSeek = null;
+    pendingPlay = null;
     player.pause();
     player.removeAttribute("src");
     player.load(); // lets the file go
     videoWrap.hidden = true;
+    delete body.dataset.video;
   }
 
   let videoCollapsed = (() => {
@@ -653,44 +754,65 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
   setCollapsed(videoCollapsed);
   videoToggle.addEventListener("click", () => setCollapsed(!videoCollapsed));
 
-  /** Play the video from moment `t` of the meeting (the transcript's time). */
-  function playAt(t: number): void {
-    if (!shown?.video || !playable(shown)) return;
-    const offset = shown.video.offset;
+  /** The video at moment `t` of the meeting (the transcript's time). `play`: true plays it,
+   * false shows that moment paused, null keeps the player as it is (playing or not). */
+  function seekTo(t: number, play: boolean | null): boolean {
+    if (!shown || !playable(shown)) return false;
+    const c = cover(t);
+    if (!c) return false;
     if (videoCollapsed) setCollapsed(false);
-    const at = Math.max(0, t - offset);
-    if (player.readyState >= 1) {
-      player.currentTime = at;
-      void player.play().catch(() => {});
-    } else pendingSeek = at; // the "loadedmetadata" handler below does it
-    ui.announce(t < offset ? `The screen video starts at ${clock(offset)}: playing from its start.` : `Playing the screen video from ${clock(t)}.`);
+    const go = play ?? !player.paused;
+    if (play === false) player.pause();
+    void loadSeg(c.i, Math.max(0, c.t - segs[c.i].offset), go);
+    return true;
   }
 
-  /** While it plays: the paragraph said at that moment is marked, and kept in view. */
-  function followVideo(): void {
-    if (!shown?.video || !playable(shown)) return;
-    const t = player.currentTime + shown.video.offset;
+  function playAt(t: number): void {
+    if (seekTo(t, true)) ui.announce(`Playing the screen video from ${clock(t)}.`);
+  }
+
+  /** When the user scrolled the transcript last: it is not moved under their hands. */
+  let userScrollAt = 0;
+  for (const ev of ["wheel", "touchmove", "keydown"]) {
+    transcript.addEventListener(ev, () => (userScrollAt = performance.now()), { passive: true });
+  }
+
+  /** The paragraph said at the video's moment is marked, and kept in view (while it plays, and
+   * when the video is moved). */
+  function followVideo(e?: Event): void {
+    const v = segs[loaded];
+    if (!shown || !playable(shown) || seg !== loaded || !v || v.offset < 0) return;
+    const t = player.currentTime + v.offset;
     const paras = sourceIndex(shown).paras;
     let i = -1;
     for (let k = 0; k < paras.length && paras[k].start <= t + 0.3; k++) i = k;
     if (i >= 0 && t > paras[i].end + 5) i = -1; // nobody speaks now
-    if (i === nowPara) return;
+    const moved = e?.type === "seeked";
+    if (i === nowPara && !moved) return;
     transcript.querySelector(".tline-now")?.classList.remove("tline-now");
     nowPara = i;
     const row = i >= 0 ? transcript.querySelectorAll<HTMLElement>(".tline")[i] : undefined;
     if (!row) return;
     row.classList.add("tline-now");
-    if (!player.paused && tab === "transcript" && !editing) row.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    const userScrolled = performance.now() - userScrollAt < 4000;
+    if ((moved || !player.paused) && tab === "transcript" && !editing && !userScrolled && !row.contains(document.activeElement)) {
+      row.scrollIntoView({ block: moved ? "center" : "nearest", behavior: "smooth" });
+    }
   }
 
   player.addEventListener("loadedmetadata", () => {
-    if (pendingSeek === null) return;
-    player.currentTime = pendingSeek;
-    pendingSeek = null;
-    void player.play().catch(() => {});
+    const p = pendingPlay;
+    pendingPlay = null;
+    if (!p) return;
+    if (p.at !== null) player.currentTime = Math.min(p.at, Math.max(0, player.duration - 0.1) || p.at);
+    if (p.play) void player.play().catch(() => {});
   });
   player.addEventListener("timeupdate", followVideo);
   player.addEventListener("seeked", followVideo);
+  // The end of one video: the next one goes on.
+  player.addEventListener("ended", () => {
+    if (loaded >= 0 && seg === loaded && loaded + 1 < segs.length) void loadSeg(loaded + 1, 0, true);
+  });
 
   /** Automated tests: what the player does, with where to click (the window's CSS pixels). */
   function testLog(state: string): void {
@@ -701,19 +823,52 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
     };
     const plays = transcript.querySelectorAll<HTMLElement>(".when-play");
     const last = plays[plays.length - 1] ?? null;
+    const para = transcript.querySelector<HTMLElement>("p.syncs");
     void backend.testEvent("page-video", {
       state,
       id: videoOf,
+      part: loaded,
+      parts: segs.length,
       time: player.currentTime,
       duration: player.duration,
       error: player.error ? `${player.error.code} ${player.error.message}` : "",
       tab: at(tabTranscript),
       play: last && at(last) ? [...at(last)!, Number(last.dataset.start)] : null,
+      para: para && at(para) ? [...at(para)!, Number(para.dataset.start)] : null,
+      now: nowPara,
+      // The video beside the transcript: both in view.
+      layout: [at(videoWrap), at(transcriptPanel.hidden ? notesPanel : transcriptPanel)],
     });
   }
   for (const [ev, state] of [["loadedmetadata", "loaded"], ["seeked", "seeked"], ["playing", "playing"], ["error", "error"]] as const) {
     player.addEventListener(ev, () => testLog(state));
   }
+
+  // ---------------------------------------------------------------- Record screen (live)
+  function renderScreenButton(): void {
+    const recording = isLive() && live?.state === "recording";
+    screenBtn.hidden = !recording || !live?.screen_supported;
+    const s = live?.screen ?? "";
+    screenBtn.dataset.screen = s;
+    screenBtn.setAttribute("aria-pressed", String(s === "on"));
+    const [text, tip] =
+      s === "on" ? ["Stop screen", "Stop recording the screen (the video so far is kept; the meeting goes on)"]
+      : s === "waiting" ? ["Choosing…", "Choose what to share in your desktop's dialog. Click to cancel."]
+      : s === "stopping" ? ["Saving…", "The screen video is being saved"]
+      : ["Record screen", "Record the screen, or one window, with the meeting"];
+    screenBtnText.textContent = text;
+    screenBtn.title = tip;
+    screenBtn.disabled = s === "stopping";
+  }
+
+  screenBtn.addEventListener("click", () => {
+    const on = (live?.screen ?? "") === "";
+    screenBtn.disabled = true;
+    void api
+      .screen(on)
+      .catch((err) => showError(String(err)))
+      .finally(renderScreenButton);
+  });
 
   // ---------------------------------------------------------------- Notes | Transcript
   function renderTab(): void {
@@ -950,7 +1105,8 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
       b.setAttribute("aria-label", `Show in transcript: ${who.textContent} at ${at.textContent}`);
       b.setAttribute("aria-describedby", text.id);
       b.addEventListener("click", () => showInTranscript(f.index));
-      if (playable(shown)) {
+      const c = playable(shown) ? cover(p.start, p.end) : null;
+      if (c) {
         // The screen at that moment: next to the place, not inside its button.
         const row = document.createElement("div");
         row.className = "source-row";
@@ -959,8 +1115,8 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
         play.className = "btn btn-ghost btn-sm source-play";
         play.textContent = "Play";
         play.title = "Play the screen video from here";
-        play.setAttribute("aria-label", `Play the screen video from ${clock(p.start)}`);
-        play.addEventListener("click", () => playAt(p.start));
+        play.setAttribute("aria-label", `Play the screen video from ${clock(c.t)}`);
+        play.addEventListener("click", () => playAt(c.t));
         row.append(b, play);
         box.append(row);
       } else box.append(b);
@@ -988,7 +1144,10 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
     void row.offsetWidth; // the animation again, for a second click
     row.classList.add("tline-hit");
     row.querySelector<HTMLElement>("p")?.focus({ preventScroll: true });
-    ui.announce(`The transcript, at ${clock(p.start)}.`);
+    // The screen video shows that moment too (paused: the transcript is read).
+    const c = playable(shown) ? cover(p.start, p.end) : null;
+    if (c) seekTo(c.t, false);
+    ui.announce(`The transcript, at ${clock(p.start)}${c ? ", with the screen video at that moment" : ""}.`);
   }
 
   aiWrite.addEventListener("click", async () => {

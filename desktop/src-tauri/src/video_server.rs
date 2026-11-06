@@ -3,7 +3,7 @@
 //! WebKitGTK plays media only from http(s) and file URLs: through a custom scheme (Tauri's asset
 //! protocol) the player fails with "source not supported", and the page may not read file URLs.
 //! So a small server: loopback only, a random port, a random 128-bit key in every path, GET and
-//! HEAD of `m-<id>.webm|mp4` in the meetings folder only, one byte range per request (the
+//! HEAD of `m-<id>-<n>.webm|mp4` in the meetings folder only, one byte range per request (the
 //! player seeks with ranges). Started when the first video is played.
 
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
@@ -69,16 +69,11 @@ pub fn url(file: &str) -> anyhow::Result<String> {
     Ok(SERVER.get().expect("set above").url(file))
 }
 
-/// A video's name: "m-<digits>.webm" or ".mp4", nothing else (no path).
+/// A video's name ("m-<digits>-<n>.webm" or ".mp4", nothing else: no path) → its type.
 fn video_name(name: &str) -> Option<&'static str> {
-    let (id, ext) = name.rsplit_once('.')?;
-    if !crate::meeting::valid_id(id) {
-        return None;
-    }
-    match ext {
-        "webm" => Some("video/webm"),
-        "mp4" => Some("video/mp4"),
-        _ => None,
+    match crate::screen::video_file(name)?.1 {
+        crate::screen::Container::Webm => Some("video/webm"),
+        crate::screen::Container::Mp4 => Some("video/mp4"),
     }
 }
 
@@ -185,10 +180,10 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let data: Vec<u8> = (0..=255u8).cycle().take(1000).collect();
-        std::fs::write(dir.join("m-12.webm"), &data).unwrap();
+        std::fs::write(dir.join("m-12-1.webm"), &data).unwrap();
         std::fs::write(dir.join("m-12.json"), b"{}").unwrap();
         let s = Server::start(dir.clone()).unwrap();
-        let path = s.url("m-12.webm").split_once(&format!(":{}", s.port)).unwrap().1.to_string();
+        let path = s.url("m-12-1.webm").split_once(&format!(":{}", s.port)).unwrap().1.to_string();
 
         let (head, body) = get(s.port, &path, None);
         assert!(head.starts_with("HTTP/1.1 200") && head.contains("Content-Type: video/webm") && head.contains("Accept-Ranges: bytes"), "{head}");
@@ -198,7 +193,8 @@ mod tests {
         assert_eq!(body, &data[100..200]);
         assert!(get(s.port, &path, Some("bytes=5000-")).0.starts_with("HTTP/1.1 416"));
         // Without the key, another file, or a path out of the folder: nothing.
-        for bad in ["/m-12.webm".to_string(), format!("/{}/m-12.json", s.key), format!("/{}/../m-12.webm", s.key), format!("/{}/m-13.webm", s.key), "/x/m-12.webm".into()] {
+        std::fs::write(dir.join("m-12.webm"), &data).unwrap();
+        for bad in ["/m-12-1.webm".to_string(), format!("/{}/m-12.json", s.key), format!("/{}/../m-12-1.webm", s.key), format!("/{}/m-13-1.webm", s.key), format!("/{}/m-12.webm", s.key), "/x/m-12-1.webm".into()] {
             assert!(get(s.port, &bad, None).0.starts_with("HTTP/1.1 404"), "{bad}");
         }
         let _ = std::fs::remove_dir_all(dir);

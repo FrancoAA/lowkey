@@ -328,7 +328,7 @@ impl App {
             },
             // Settings → General → Screen video; `chosen`: a screen is remembered.
             "screen": {
-                "on": cfg.screen_record, "supported": crate::screen::SUPPORTED, "chosen": !cfg.screen_token.is_empty(),
+                "supported": crate::screen::SUPPORTED, "chosen": !cfg.screen_token.is_empty(),
                 "check": crate::screen::status(),
             },
             // Settings → Note apps; `vault`: the Obsidian vault the folder is in.
@@ -1142,7 +1142,6 @@ struct OptionsIn {
     ai_auto: Option<bool>,
     mcp_recording: Option<bool>,
     meeting_voices: Option<bool>,
-    screen_record: Option<bool>,
     /// Some("") turns the note-app folder off.
     export_dir: Option<String>,
     export_auto: Option<bool>,
@@ -1245,12 +1244,6 @@ fn apply_options(app: &AppRef, options: OptionsIn) -> Result<Value, String> {
             }
             cfg.meeting_voices = on;
         }
-        if let Some(on) = options.screen_record {
-            if on && !crate::screen::SUPPORTED {
-                return Err("The screen video is on Linux only for now.".into());
-            }
-            cfg.screen_record = on;
-        }
         if let Some(d) = options.export_dir {
             let d = d.trim().to_string();
             if !d.is_empty() && !(std::path::Path::new(&d).is_absolute() && std::path::Path::new(&d).is_dir()) {
@@ -1306,14 +1299,6 @@ fn apply_options(app: &AppRef, options: OptionsIn) -> Result<Value, String> {
     // After the other options are valid and saved.
     if let Some(on) = options.start_at_login {
         set_start_at_login(app, on)?;
-    }
-    if options.screen_record == Some(true) {
-        // Look again: GStreamer may have been installed since.
-        let a2 = app.clone();
-        std::thread::spawn(move || {
-            crate::screen::check(true);
-            a2.emit_status();
-        });
     }
     if options.meeting_voices == Some(true) && !crate::voices::present() {
         let a2 = app.clone();
@@ -1481,9 +1466,6 @@ fn meeting_open(app: &AppRef, title: &str) -> Result<meeting::Live, String> {
         return Err(format!("{e:#}"));
     }
     *app.meeting.lock() = Some(session.clone());
-    if app.config.lock().screen_record && crate::screen::SUPPORTED {
-        start_screen(app, &session);
-    }
     app.want_overlay(1, true); // the strip shows the recording, in every app
     app.emit_status();
     // The first piece comes after a few seconds: have the model loaded by then.
@@ -1494,15 +1476,25 @@ fn meeting_open(app: &AppRef, title: &str) -> Result<meeting::Live, String> {
     Ok(session.live())
 }
 
-/// The screen video joins the meeting when the screen is chosen (the picker can take seconds;
-/// the audio records meanwhile). The portal's new token is kept for next time.
-fn start_screen(app: &AppRef, session: &Arc<meeting::Session>) {
-    session.screen_waiting();
-    let (a2, s2) = (app.clone(), session.clone());
+/// Record screen (the live meeting, the strip): the screen video joins the meeting when the
+/// screen is chosen (the picker can take seconds; the audio records meanwhile). The portal's new
+/// token is kept for next time. Stop screen: the video so far is saved.
+#[tauri::command]
+fn meeting_screen(app: State<'_, AppRef>, on: bool) -> Result<(), String> {
+    let session = app.meeting.lock().clone().ok_or("No meeting is being recorded.")?;
+    if !on {
+        // The encoder closes its file: up to 5 s.
+        std::thread::spawn(move || session.stop_screen());
+        return Ok(());
+    }
+    if !crate::screen::SUPPORTED {
+        return Err("The screen video is on Linux only for now.".into());
+    }
+    let stem = session.screen_begin()?;
+    let a2 = app.inner().clone();
     std::thread::spawn(move || {
         let token = a2.config.lock().screen_token.clone();
-        let id = s2.id();
-        match crate::screen::start(&meeting::dir(), &id, Some(&token), s2.screen_end_fn()) {
+        match crate::screen::start(&meeting::dir(), &stem, Some(&token), session.screen_end_fn(&stem)) {
             Ok(started) => {
                 if let Some(t) = started.token {
                     let mut cfg = a2.config.lock();
@@ -1511,17 +1503,18 @@ fn start_screen(app: &AppRef, session: &Arc<meeting::Session>) {
                         let _ = cfg.save();
                     }
                 }
-                if let Err(rec) = s2.attach_video(started.recording) {
-                    rec.discard(); // the meeting stopped before the screen was chosen
+                if let Err(rec) = session.attach_video(started.recording) {
+                    rec.discard(); // the meeting (or the screen) stopped before it was chosen
                 }
                 a2.emit_status();
             }
-            Err(e) => s2.screen_failed(&format!("{e:#}")),
+            Err(e) => session.screen_failed(&stem, &format!("{e:#}")),
         }
     });
+    Ok(())
 }
 
-/// Settings → Choose the screen again: the next meeting shows the screen picker.
+/// Settings → Choose the screen again: the next Record screen shows the screen picker.
 #[tauri::command]
 fn screen_forget(app: State<'_, AppRef>) -> Result<(), String> {
     {
@@ -1533,10 +1526,23 @@ fn screen_forget(app: State<'_, AppRef>) -> Result<(), String> {
     Ok(())
 }
 
-/// Where the page plays the meeting's screen video from (src/video_server.rs), if it has one.
+/// Settings → Check again: what this computer has for the screen video (GStreamer may have been
+/// installed since). Returns when it is known (seconds: each encoder is tried).
 #[tauri::command]
-fn meeting_video_url(id: String) -> Result<Option<String>, String> {
-    let Some(path) = meeting::video_path_in(&meeting::dir(), &id) else { return Ok(None) };
+async fn screen_check(app: State<'_, AppRef>) -> Result<(), String> {
+    let a2 = app.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::screen::check(true);
+        a2.emit_status();
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// Where the page plays screen video `file` of meeting `id` from (src/video_server.rs).
+#[tauri::command]
+fn meeting_video_url(id: String, file: String) -> Result<Option<String>, String> {
+    let Some(path) = meeting::video_path_in(&meeting::dir(), &id, &file) else { return Ok(None) };
     let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     crate::video_server::url(&name).map(Some).map_err(|e| format!("The video cannot be played: {e:#}"))
 }
@@ -2659,6 +2665,8 @@ pub fn run() {
             meeting_video_url,
             test_event,
             screen_forget,
+            screen_check,
+            meeting_screen,
             meeting_markdown,
             meeting_ai_notes,
             ai_notes_cancel,

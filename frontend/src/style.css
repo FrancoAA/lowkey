@@ -455,7 +455,8 @@ mark { background: color-mix(in srgb, var(--brand) 20%, transparent); color: inh
 .who-me::before { background: var(--me); }
 .who-them { color: var(--them); }
 .who-them::before { background: var(--them); }
-.btn-stop { grid-area: stop; background: var(--rec); color: #fff; }
+.live-actions { grid-area: stop; display: flex; align-items: center; gap: 8px; }
+.btn-stop { background: var(--rec); color: #fff; }
 .btn-stop:hover { background: color-mix(in srgb, var(--rec) 88%, black); }
 .stop-square { width: 9px; height: 9px; border-radius: 2px; background: currentColor; }
 @keyframes rec-pulse { 50% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--rec) 18%, transparent); } }
@@ -516,11 +517,19 @@ mark { background: color-mix(in srgb, var(--brand) 20%, transparent); color: inh
 .who-name:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 35%, transparent); }
 .name-field { height: 26px; font-size: 12px; padding: 2px 8px; width: 14em; }
 .transcript-note { display: flex; align-items: center; gap: 8px; color: var(--muted-foreground); font-size: 13px; margin: 0 0 12px; }
-.tline .when { font-size: 11px; color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
+/* Its own width, next to the speaker (a grid item stretches over its whole column: a time that
+   is a button would be as wide as the row). */
+.tline .when { justify-self: start; font-size: 11px; color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
 .tline p { grid-column: 1 / -1; margin: 3px 0 0; line-height: 1.6; overflow-wrap: anywhere; text-wrap: pretty; max-width: 75ch; }
 
 @media (max-width: 560px) {
   .live-legend { gap: 8px; }
+}
+/* Narrow: the buttons keep the first row; the legend goes under it. */
+@container (max-width: 520px) {
+  .meeting-live { grid-template-columns: auto minmax(0, 1fr); grid-template-areas: "clock stop" "legend legend" "wave wave"; }
+  .live-actions { justify-self: end; }
+  .live-legend { justify-self: start; }
 }
 
 /* ───────────────────────────── Notes ───────────────────────────── */
@@ -682,7 +691,8 @@ mark { background: color-mix(in srgb, var(--brand) 20%, transparent); color: inh
 
 /* ───────────────────────────── calls ───────────────────────────── */
 /* Settings → General: the call apps under "Offer to record calls". */
-.calls-settings { display: flex; flex-direction: column; gap: inherit; }
+/* A part of a section that can be hidden: its rows keep the section's spacing. */
+.settings-group { display: flex; flex-direction: column; gap: inherit; }
 .calls-apps { display: flex; flex-direction: column; gap: 8px; }
 .calls-apps:empty, .calls-apps[hidden] { display: none; }
 .calls-app { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 14px; }
@@ -730,17 +740,45 @@ dialog.confirm p { margin: 8px 0 0; color: var(--muted-foreground); font-size: 1
 .vocab-offer span { flex: 1 1 16em; }
 
 /* ───────────────────────────── Screen video ───────────────────────────── */
-/* Above the notes and the transcript: in view while you read (its own height, not theirs). */
-.meeting-video { display: flex; flex-direction: column; gap: 6px; flex: none; }
+/* With a video: the video and the chat on the left, the notes and the transcript on the right,
+   each side scrolls on its own. The video keeps its shape; the chat gets the rest. */
+.meeting-body[data-video] {
+  grid-template-columns: minmax(0, 1.25fr) minmax(320px, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-areas: "video notes" "chat notes";
+}
+.meeting-body[data-video] > .meeting-video { grid-area: video; }
+.meeting-body[data-video] > .notes-pane { grid-area: notes; }
+.meeting-body[data-video] > .chat-pane { grid-area: chat; min-height: 200px; }
+/* Not wide enough for two columns and a usable video: one column, the video on top (it stays in
+   view while the rest scrolls), then the notes and the transcript, then the chat. */
+@container (max-width: 899px) {
+  .meeting-body[data-video] {
+    grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto minmax(420px, auto);
+    grid-template-areas: "video" "notes" "chat"; overflow-y: auto;
+  }
+  .meeting-body[data-video] .ai-body, .meeting-body[data-video] .meeting-transcript { flex: none; overflow: visible; }
+  .meeting-body[data-video] .notes-pane { min-height: auto; }
+  .meeting-body[data-video] > .meeting-video {
+    position: sticky; top: 0; z-index: 2; padding-bottom: 8px; background: var(--background);
+  }
+  .meeting-body[data-video] .video-box video { max-height: 34vh; }
+}
+.meeting-video { display: flex; flex-direction: column; gap: 6px; flex: none; min-width: 0; }
 .video-head { display: flex; align-items: center; gap: 8px; min-height: 28px; }
 .video-toggle { gap: 4px; padding-inline: 6px 10px; }
 .video-toggle .icon { transition: transform 0.15s; }
 .video-toggle[aria-expanded="false"] .icon { transform: rotate(-90deg); }
 .video-meta { font-size: 12px; color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
+.video-box { display: flex; flex-direction: column; gap: 8px; }
 .video-box video {
-  display: block; width: 100%; max-height: 38vh; border-radius: calc(var(--radius) - 2px);
+  display: block; width: 100%; max-height: 58vh; border-radius: calc(var(--radius) - 2px);
   background: #000; border: 1px solid var(--border); object-fit: contain;
 }
+/* More than one video in the meeting: one button each (its time). */
+.video-parts { display: flex; flex-wrap: wrap; gap: 6px; }
+.video-part { font-variant-numeric: tabular-nums; }
+.video-part[aria-current="true"] { background: var(--accent); border-color: var(--ring, var(--border)); }
 /* A transcript time that plays the video. */
 .tline .when-play {
   border: 0; background: transparent; padding: 0 4px; margin-left: -4px; border-radius: 4px; cursor: pointer;
@@ -750,15 +788,19 @@ dialog.confirm p { margin: 8px 0 0; color: var(--muted-foreground); font-size: 1
 .tline .when-play:hover, .tline .when-play:focus-visible { color: var(--foreground); background: var(--muted); }
 .tline .when-play:hover::before, .tline .when-play:focus-visible::before, .tline-now .when-play::before { opacity: 1; }
 .tline .when-play:focus-visible { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--ring) 45%, transparent); }
+/* A paragraph that moves the video to its moment (a double click fixes it). */
+.tline p.syncs { cursor: pointer; }
 /* The paragraph the video is at. */
 .tline.tline-now { border-radius: 6px; box-shadow: -10px 0 0 -7px var(--brand); background: color-mix(in srgb, var(--brand) 7%, transparent); }
 .source-row { display: flex; align-items: flex-start; gap: 2px; }
 .source-row .source { flex: 1; min-width: 0; }
 .source-play { flex: none; margin-top: 2px; }
-/* The live panel: the screen is recorded too. */
-.screen-mark { display: inline-flex; align-items: center; gap: 4px; }
-.screen-mark .icon { width: 12px; height: 12px; }
+/* Record screen in the live panel: red while the screen records, pulsing while the picker is open. */
+.btn-screen[data-screen="on"] {
+  color: var(--rec); border-color: color-mix(in srgb, var(--rec) 45%, var(--border));
+  background: color-mix(in srgb, var(--rec) 8%, var(--background));
+}
+.btn-screen[data-screen="waiting"] .icon { animation: pulse 1.2s ease-in-out infinite; }
 .screen-status:empty { display: none; }
-#screen-forget { margin-top: 8px; }
-.live-legend .screen-mark { color: var(--muted-foreground); }
-.live-legend .screen-mark::before { content: none; }
+.screen-status { margin-top: 4px; }
+

@@ -179,21 +179,46 @@ pub fn repair_pipeline(container: Container, from: &Path, to: &Path) -> Vec<Stri
 }
 
 // ------------------------------------------------------------------ files
-/// The video of meeting `id` while it records.
-pub fn part_path(dir: &Path, id: &str, c: Container) -> PathBuf {
-    dir.join(format!(".{id}.{}.part", c.ext()))
+// A meeting can record the screen more than once (Record screen, Stop screen, again): each time
+// is one file, "<meeting id>-<n>" (n = 1, 2…): its stem.
+
+/// The stem of video `n` of meeting `id`.
+pub fn stem(id: &str, n: u32) -> String {
+    format!("{id}-{n}")
+}
+
+/// "m-<digits>-<n>" → (meeting id, n).
+pub fn parse_stem(stem: &str) -> Option<(&str, u32)> {
+    let (id, n) = stem.rsplit_once('-')?;
+    let n: u32 = n.parse().ok().filter(|n| *n > 0)?;
+    (crate::meeting::valid_id(id) && stem == format!("{id}-{n}")).then_some((id, n))
+}
+
+/// The video with stem `stem` while it records.
+pub fn part_path(dir: &Path, stem: &str, c: Container) -> PathBuf {
+    dir.join(format!(".{stem}.{}.part", c.ext()))
 }
 
 /// The video's name in the meetings folder.
-pub fn file_name(id: &str, c: Container) -> String {
-    format!("{id}.{}", c.ext())
+pub fn file_name(stem: &str, c: Container) -> String {
+    format!("{stem}.{}", c.ext())
+}
+
+/// A video's name ("m-<digits>-<n>.webm|mp4") → its meeting's id and its container.
+pub fn video_file(name: &str) -> Option<(&str, Container)> {
+    let (stem, ext) = name.rsplit_once('.')?;
+    Some((parse_stem(stem)?.0, container_of(ext)?))
 }
 
 /// The videos of meeting `id` (whole or not): deleted with the meeting.
 pub fn delete_files(dir: &Path, id: &str) {
-    for c in [Container::Webm, Container::Mp4] {
-        let _ = std::fs::remove_file(dir.join(file_name(id, c)));
-        let _ = std::fs::remove_file(part_path(dir, id, c));
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    for e in entries.flatten() {
+        let name = e.file_name().to_string_lossy().into_owned();
+        let whole = name.strip_prefix('.').and_then(|n| n.strip_suffix(".part")).unwrap_or(&name);
+        if video_file(whole).is_some_and(|(of, _)| of == id) {
+            let _ = std::fs::remove_file(e.path());
+        }
     }
 }
 
@@ -206,16 +231,25 @@ fn container_of(name: &str) -> Option<Container> {
     }
 }
 
-/// At start, the videos that a crash left as `.part`: (meeting id, part file, container).
-pub fn leftovers(dir: &Path) -> Vec<(String, PathBuf, Container)> {
+/// A video that a crash left as `.part`.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Leftover {
+    pub id: String,
+    pub stem: String,
+    pub part: PathBuf,
+    pub container: Container,
+}
+
+/// At start, the videos that a crash left as `.part`.
+pub fn leftovers(dir: &Path) -> Vec<Leftover> {
     let Ok(entries) = std::fs::read_dir(dir) else { return vec![] };
     let mut out = Vec::new();
     for e in entries.flatten() {
         let name = e.file_name().to_string_lossy().into_owned();
         let Some(rest) = name.strip_prefix('.').and_then(|n| n.strip_suffix(".part")) else { continue };
-        let Some((id, ext)) = rest.rsplit_once('.') else { continue };
-        if let (true, Some(c)) = (crate::meeting::valid_id(id), container_of(ext)) {
-            out.push((id.to_string(), e.path(), c));
+        let Some((stem, ext)) = rest.rsplit_once('.') else { continue };
+        if let (Some((id, _)), Some(c)) = (parse_stem(stem), container_of(ext)) {
+            out.push(Leftover { id: id.to_string(), stem: stem.to_string(), part: e.path(), container: c });
         }
     }
     out.sort();
@@ -224,8 +258,8 @@ pub fn leftovers(dir: &Path) -> Vec<(String, PathBuf, Container)> {
 
 /// A `.part` file that a crash left: whole again under its final name (written again when it
 /// can be read; as it is when not). Returns the final file and its size.
-pub fn finish_part(dir: &Path, id: &str, part: &Path, c: Container, closed: bool) -> anyhow::Result<(PathBuf, u64)> {
-    let out = dir.join(file_name(id, c));
+pub fn finish_part(dir: &Path, stem: &str, part: &Path, c: Container, closed: bool) -> anyhow::Result<(PathBuf, u64)> {
+    let out = dir.join(file_name(stem, c));
     if !closed && repair(c, part, &out).is_ok() {
         let _ = std::fs::remove_file(part);
     } else {
@@ -406,7 +440,8 @@ pub struct Recording {
     pub size: (u32, u32),
     /// When the video's first frame was taken (its time 0), about ±0.3 s.
     pub started: Instant,
-    /// The file while it records.
+    /// Its file's stem ("<meeting id>-<n>") and the file while it records.
+    pub stem: String,
     pub part: PathBuf,
     process: Process,
     #[cfg(target_os = "linux")]
@@ -420,6 +455,8 @@ pub struct Ended {
     pub closed: bool,
     /// Why it ended by itself (e.g. the screen sharing was stopped); "" after `stop`.
     pub why: String,
+    /// When the stream ended: the video's length is `at - started`.
+    pub at: Instant,
 }
 
 /// What to record with: the portal's screen (or the test picture), and its new restore token.
@@ -429,21 +466,22 @@ pub struct Started {
     pub token: Option<String>,
 }
 
-/// Start recording meeting `id`'s screen into the meetings folder `dir`. Opens the portal's
-/// picker unless `token` chooses the screen (blocking: as long as the picker is open).
-/// `on_end`: the recording ended by itself (not by `stop`), with the reason.
-pub fn start(dir: &Path, id: &str, token: Option<&str>, on_end: Box<dyn FnOnce(String) + Send>) -> anyhow::Result<Started> {
+/// Start recording a screen video (file stem `stem`, see `stem`) into the meetings folder `dir`.
+/// Opens the portal's picker unless `token` chooses the screen (blocking: as long as the picker
+/// is open). `on_end`: the recording ended by itself (not by `stop`), with the reason.
+pub fn start(dir: &Path, stem: &str, token: Option<&str>, on_end: Box<dyn FnOnce(String) + Send>) -> anyhow::Result<Started> {
     anyhow::ensure!(SUPPORTED, "The screen video is on Linux only for now.");
     let enc = encoder()?;
     std::fs::create_dir_all(dir)?;
-    let part = part_path(dir, id, enc.container);
+    let part = part_path(dir, stem, enc.container);
+    let stem = stem.to_string();
     private_file(&part)?;
     #[cfg(target_os = "linux")]
     {
         if fake() {
             let size = video_size(FAKE_SIZE.0, FAKE_SIZE.1);
             let (process, started) = Process::spawn(pipeline(&Source::Test { frames: None }, enc, size, &part), None, on_end)?;
-            return Ok(Started { recording: Recording { container: enc.container, codec: enc.codec, size, started, part, process, portal: None }, token: None });
+            return Ok(Started { recording: Recording { container: enc.container, codec: enc.codec, size, started, stem, part, process, portal: None }, token: None });
         }
         let (cast, token) = match portal::Cast::open(token) {
             Ok(c) => c,
@@ -461,11 +499,11 @@ pub fn start(dir: &Path, id: &str, token: Option<&str>, on_end: Box<dyn FnOnce(S
                 return Err(e);
             }
         };
-        Ok(Started { recording: Recording { container: enc.container, codec: enc.codec, size, started, part, process, portal: Some(cast) }, token })
+        Ok(Started { recording: Recording { container: enc.container, codec: enc.codec, size, started, stem, part, process, portal: Some(cast) }, token })
     }
     #[cfg(not(target_os = "linux"))]
     {
-        let _ = (token, on_end, part);
+        let _ = (token, on_end, part, stem);
         anyhow::bail!("The screen video is on Linux only for now.")
     }
 }
@@ -479,6 +517,11 @@ impl Recording {
             c.close();
         }
         ended
+    }
+
+    /// GStreamer still records (it did not end by itself).
+    pub fn running(&self) -> bool {
+        self.process.watcher.as_ref().is_some_and(|w| !w.is_finished())
     }
 
     /// Stop and delete the file (the meeting ended before the screen was chosen).
@@ -566,7 +609,7 @@ impl Process {
                 Ok(c) => c,
                 Err(e) => {
                     let _ = tx.send(Msg::Failed(anyhow::anyhow!("could not start {GST_LAUNCH}: {e}")));
-                    return Ended { closed: false, why: String::new() };
+                    return Ended { closed: false, why: String::new(), at: Instant::now() };
                 }
             };
             let (out, err) = (child.stdout.take(), child.stderr.take());
@@ -594,6 +637,7 @@ impl Process {
                     closed = true;
                 }
             }
+            let at = Instant::now(); // its output closed: it ends
             // Not `wait()` under the lock: `stop` must be able to signal it meanwhile.
             let status = loop {
                 match child.lock().try_wait() {
@@ -608,7 +652,7 @@ impl Process {
             let ok = status.as_ref().map(|s| s.success()).unwrap_or(false);
             if !playing {
                 let _ = tx.send(Msg::Failed(anyhow::anyhow!("{}", if why.is_empty() { "GStreamer stopped at once" } else { why.as_str() })));
-                return Ended { closed: false, why };
+                return Ended { closed: false, why, at };
             }
             let why = if stop2.load(Ordering::SeqCst) {
                 String::new()
@@ -620,7 +664,7 @@ impl Process {
             if !why.is_empty() {
                 on_end(why.clone());
             }
-            Ended { closed: closed && ok, why }
+            Ended { closed: closed && ok, why, at }
         })?;
         let until = Instant::now() + Duration::from_secs(15);
         let mut child = None;
@@ -652,6 +696,7 @@ impl Process {
     fn stop(mut self) -> Ended {
         use std::sync::atomic::Ordering;
         self.stopping.store(true, Ordering::SeqCst);
+        let asked = Instant::now();
         signal(&self.child, Signal::Interrupt);
         let w = self.watcher.take().expect("one stop");
         let until = Instant::now() + Duration::from_secs(5);
@@ -661,7 +706,11 @@ impl Process {
         if !w.is_finished() {
             signal(&self.child, Signal::Kill);
         }
-        w.join().unwrap_or(Ended { closed: false, why: String::new() })
+        let mut end = w.join().unwrap_or_else(|_| Ended { closed: false, why: String::new(), at: asked });
+        if !end.closed {
+            end.at = end.at.min(asked); // killed: the video ends about when Stop was asked
+        }
+        end
     }
 }
 
@@ -758,12 +807,12 @@ mod portal {
 
 /// For tests: a test picture recorded as meeting `id`'s video (None without GStreamer's vp8enc).
 #[cfg(test)]
-pub(crate) fn test_recording(dir: &Path, id: &str) -> Option<Recording> {
+pub(crate) fn test_recording(dir: &Path, stem: &str) -> Option<Recording> {
     if !has("videotestsrc") || !has("webmmux") || !has("vp8enc") {
         return None;
     }
     let enc = ENCODERS.iter().find(|e| e.element == "vp8enc")?;
-    let part = part_path(dir, id, enc.container);
+    let part = part_path(dir, stem, enc.container);
     std::fs::create_dir_all(dir).ok()?;
     private_file(&part).ok()?;
     let (process, started) = Process::spawn(pipeline(&Source::Test { frames: None }, enc, (320, 240), &part), None, Box::new(|_| {})).ok()?;
@@ -772,6 +821,7 @@ pub(crate) fn test_recording(dir: &Path, id: &str) -> Option<Recording> {
         codec: enc.codec,
         size: (320, 240),
         started,
+        stem: stem.into(),
         part,
         process,
         #[cfg(target_os = "linux")]
@@ -831,28 +881,44 @@ mod tests {
     #[test]
     fn leftovers_are_found_and_deleted_with_the_meeting() {
         let d = temp("left");
-        for f in [".m-12.webm.part", ".m-13.mp4.part", ".m-x.webm.part", ".m-14.them.pcm", "m-12.json", "m-15.webm", ".m-16.mkv.part"] {
+        for f in [".m-12-1.webm.part", ".m-12-2.webm.part", ".m-13-1.mp4.part", ".m-x-1.webm.part", ".m-12.webm.part", ".m-14.them.pcm", "m-12.json", "m-15-1.webm", "m-15-2.mp4", "m-150-1.webm", ".m-16-1.mkv.part", ".m-17-01.webm.part"] {
             std::fs::write(d.join(f), b"x").unwrap();
         }
-        let found: Vec<(String, Container)> = leftovers(&d).into_iter().map(|(id, _, c)| (id, c)).collect();
-        assert_eq!(found, vec![("m-12".to_string(), Container::Webm), ("m-13".to_string(), Container::Mp4)]);
+        let found: Vec<(String, String, Container)> = leftovers(&d).into_iter().map(|l| (l.id, l.stem, l.container)).collect();
+        let want = [("m-12", "m-12-1", Container::Webm), ("m-12", "m-12-2", Container::Webm), ("m-13", "m-13-1", Container::Mp4)];
+        assert_eq!(found, want.map(|(a, b, c)| (a.to_string(), b.to_string(), c)));
         delete_files(&d, "m-15");
         delete_files(&d, "m-13");
-        assert!(!d.join("m-15.webm").exists() && !d.join(".m-13.mp4.part").exists());
-        assert!(d.join(".m-12.webm.part").exists() && d.join("m-12.json").exists());
+        assert!(!d.join("m-15-1.webm").exists() && !d.join("m-15-2.mp4").exists() && !d.join(".m-13-1.mp4.part").exists());
+        assert!(d.join("m-150-1.webm").exists(), "only that meeting's");
+        assert!(d.join(".m-12-1.webm.part").exists() && d.join("m-12.json").exists());
         let _ = std::fs::remove_dir_all(d);
+    }
+
+    #[test]
+    fn a_video_name_is_its_meeting_and_its_number() {
+        assert_eq!(stem("m-12", 3), "m-12-3");
+        assert_eq!(parse_stem("m-12-3"), Some(("m-12", 3)));
+        for bad in ["m-12", "m-12-0", "m-12-03", "m-12-", "m--1", "x-12-1", "m-12-1-1", "m-12-+1"] {
+            assert_eq!(parse_stem(bad), None, "{bad}");
+        }
+        assert_eq!(video_file("m-12-3.webm"), Some(("m-12", Container::Webm)));
+        assert_eq!(video_file("m-12-3.mp4"), Some(("m-12", Container::Mp4)));
+        for bad in ["m-12.webm", "m-12-3.json", "../m-12-3.webm", "m-12-3"] {
+            assert_eq!(video_file(bad), None, "{bad}");
+        }
     }
 
     #[test]
     fn a_closed_part_is_renamed() {
         let d = temp("finish");
-        let part = part_path(&d, "m-7", Container::Webm);
+        let part = part_path(&d, "m-7-1", Container::Webm);
         std::fs::write(&part, b"video").unwrap();
-        let (out, size) = finish_part(&d, "m-7", &part, Container::Webm, true).unwrap();
-        assert_eq!((out.file_name().unwrap().to_str().unwrap(), size), ("m-7.webm", 5));
+        let (out, size) = finish_part(&d, "m-7-1", &part, Container::Webm, true).unwrap();
+        assert_eq!((out.file_name().unwrap().to_str().unwrap(), size), ("m-7-1.webm", 5));
         assert!(!part.exists());
         std::fs::write(&part, b"").unwrap();
-        assert!(finish_part(&d, "m-7", &part, Container::Webm, true).is_err(), "an empty video is no video");
+        assert!(finish_part(&d, "m-7-1", &part, Container::Webm, true).is_err(), "an empty video is no video");
         let _ = std::fs::remove_dir_all(d);
     }
 
@@ -865,14 +931,14 @@ mod tests {
         let d = temp("portal");
         let token = std::env::var("OW_SCREEN_TOKEN").ok();
         let asked = Instant::now();
-        let started = start(&d, "m-1", token.as_deref(), Box::new(|w| eprintln!("ended by itself: {w}"))).unwrap();
+        let started = start(&d, "m-1-1", token.as_deref(), Box::new(|w| eprintln!("ended by itself: {w}"))).unwrap();
         let r = &started.recording;
         eprintln!("chosen after {:?}; token {:?}; {:?} {} {:?}", asked.elapsed(), started.token, r.size, r.codec, r.container);
         std::thread::sleep(Duration::from_secs(4));
         let (part, c) = (started.recording.part.clone(), started.recording.container);
         let end = started.recording.stop();
         assert!(end.closed, "{end:?}");
-        let (out, size) = finish_part(&d, "m-1", &part, c, end.closed).unwrap();
+        let (out, size) = finish_part(&d, "m-1-1", &part, c, end.closed).unwrap();
         eprintln!("{} bytes: {}", size, out.display());
         assert!(size > 1000);
         let keep = std::env::temp_dir().join(format!("ow-portal-video.{}", c.ext()));
@@ -890,7 +956,7 @@ mod tests {
         }
         let d = temp("rec");
         let vp8 = ENCODERS.iter().find(|e| e.element == "vp8enc").unwrap();
-        let part = part_path(&d, "m-1", Container::Webm);
+        let part = part_path(&d, "m-1-1", Container::Webm);
         let ended = std::sync::Arc::new(Mutex::new(None::<String>));
         let e2 = ended.clone();
         let (p, at) = Process::spawn(pipeline(&Source::Test { frames: None }, vp8, (320, 240), &part), None, Box::new(move |w| *e2.lock() = Some(w))).unwrap();
@@ -899,7 +965,7 @@ mod tests {
         let end = p.stop();
         assert!(end.closed && end.why.is_empty(), "{end:?}");
         assert!(ended.lock().is_none(), "a stop is not news");
-        let (out, size) = finish_part(&d, "m-1", &part, Container::Webm, end.closed).unwrap();
+        let (out, size) = finish_part(&d, "m-1-1", &part, Container::Webm, end.closed).unwrap();
         assert!(size > 1000, "{size}");
         let _ = std::fs::remove_file(out);
 
@@ -909,7 +975,7 @@ mod tests {
         signal(&p.child, Signal::Kill);
         let end = p.stop();
         assert!(!end.closed, "{end:?}");
-        let (out, size) = finish_part(&d, "m-1", &part, Container::Webm, end.closed).unwrap();
+        let (out, size) = finish_part(&d, "m-1-1", &part, Container::Webm, end.closed).unwrap();
         assert!(size > 1000 && !part.exists(), "{size}");
         let _ = std::fs::remove_file(out);
 
