@@ -311,6 +311,11 @@ impl App {
                 "download": crate::voices::download_state(),
                 "working": *self.voices_working.lock(),
             },
+            // Settings → General → Screen video; `chosen`: a screen is remembered.
+            "screen": {
+                "on": cfg.screen_record, "supported": crate::screen::SUPPORTED, "chosen": !cfg.screen_token.is_empty(),
+                "check": crate::screen::status(),
+            },
             // Settings → Note apps; `vault`: the Obsidian vault the folder is in.
             "export": {
                 "dir": cfg.export_dir, "auto": cfg.export_auto, "parts": cfg.export_parts,
@@ -1122,6 +1127,7 @@ struct OptionsIn {
     ai_auto: Option<bool>,
     mcp_recording: Option<bool>,
     meeting_voices: Option<bool>,
+    screen_record: Option<bool>,
     /// Some("") turns the note-app folder off.
     export_dir: Option<String>,
     export_auto: Option<bool>,
@@ -1224,6 +1230,12 @@ fn apply_options(app: &AppRef, options: OptionsIn) -> Result<Value, String> {
             }
             cfg.meeting_voices = on;
         }
+        if let Some(on) = options.screen_record {
+            if on && !crate::screen::SUPPORTED {
+                return Err("The screen video is on Linux only for now.".into());
+            }
+            cfg.screen_record = on;
+        }
         if let Some(d) = options.export_dir {
             let d = d.trim().to_string();
             if !d.is_empty() && !(std::path::Path::new(&d).is_absolute() && std::path::Path::new(&d).is_dir()) {
@@ -1279,6 +1291,14 @@ fn apply_options(app: &AppRef, options: OptionsIn) -> Result<Value, String> {
     // After the other options are valid and saved.
     if let Some(on) = options.start_at_login {
         set_start_at_login(app, on)?;
+    }
+    if options.screen_record == Some(true) {
+        // Look again: GStreamer may have been installed since.
+        let a2 = app.clone();
+        std::thread::spawn(move || {
+            crate::screen::check(true);
+            a2.emit_status();
+        });
     }
     if options.meeting_voices == Some(true) && !crate::voices::present() {
         let a2 = app.clone();
@@ -1446,6 +1466,9 @@ fn meeting_open(app: &AppRef, title: &str) -> Result<meeting::Live, String> {
         return Err(format!("{e:#}"));
     }
     *app.meeting.lock() = Some(session.clone());
+    if app.config.lock().screen_record && crate::screen::SUPPORTED {
+        start_screen(app, &session);
+    }
     app.want_overlay(1, true); // the strip shows the recording, in every app
     app.emit_status();
     // The first piece comes after a few seconds: have the model loaded by then.
@@ -1454,6 +1477,51 @@ fn meeting_open(app: &AppRef, title: &str) -> Result<meeting::Live, String> {
         let _ = e2.prepare(&model);
     });
     Ok(session.live())
+}
+
+/// The screen video joins the meeting when the screen is chosen (the picker can take seconds;
+/// the audio records meanwhile). The portal's new token is kept for next time.
+fn start_screen(app: &AppRef, session: &Arc<meeting::Session>) {
+    session.screen_waiting();
+    let (a2, s2) = (app.clone(), session.clone());
+    std::thread::spawn(move || {
+        let token = a2.config.lock().screen_token.clone();
+        let id = s2.id();
+        match crate::screen::start(&meeting::dir(), &id, Some(&token), s2.screen_end_fn()) {
+            Ok(started) => {
+                if let Some(t) = started.token {
+                    let mut cfg = a2.config.lock();
+                    if cfg.screen_token != t {
+                        cfg.screen_token = t;
+                        let _ = cfg.save();
+                    }
+                }
+                if let Err(rec) = s2.attach_video(started.recording) {
+                    rec.discard(); // the meeting stopped before the screen was chosen
+                }
+                a2.emit_status();
+            }
+            Err(e) => s2.screen_failed(&format!("{e:#}")),
+        }
+    });
+}
+
+/// Settings → Choose the screen again: the next meeting shows the screen picker.
+#[tauri::command]
+fn screen_forget(app: State<'_, AppRef>) -> Result<(), String> {
+    {
+        let mut cfg = app.config.lock();
+        cfg.screen_token.clear();
+        cfg.save().map_err(|e| e.to_string())?;
+    }
+    app.emit_status();
+    Ok(())
+}
+
+/// The meeting's screen video file (the page plays it through the asset protocol), if any.
+#[tauri::command]
+fn meeting_video_path(id: String) -> Option<String> {
+    meeting::video_path_in(&meeting::dir(), &id).map(|p| p.to_string_lossy().into_owned())
 }
 
 /// Stop, transcribe the last seconds, save. Returns the saved meeting.
@@ -2571,6 +2639,8 @@ pub fn run() {
             meeting_get,
             meeting_update,
             meeting_delete,
+            meeting_video_path,
+            screen_forget,
             meeting_markdown,
             meeting_ai_notes,
             ai_notes_cancel,
@@ -2598,6 +2668,10 @@ pub fn run() {
             let handle = tauri_app.handle().clone();
             // The others' sound of a meeting that did not end (the app was killed): never kept.
             crate::voices::delete_leftovers(&meeting::dir());
+            // Its screen video: kept, made whole (seconds for a long one: not in the way).
+            // The page plays videos from the meetings folder only.
+            let _ = handle.asset_protocol_scope().allow_directory(meeting::dir(), false);
+            std::thread::spawn(|| meeting::recover_videos(&meeting::dir()));
             let config = Config::load();
             set_window_theme(&handle, &config.theme);
             // The strip opens where the user left it (the rule that keys add uses this place).
@@ -2699,6 +2773,14 @@ pub fn run() {
             // Files from the command line: queued before the page exists, so it always finds them.
             app.open_files.lock().extend(cli.files.iter().filter(|p| p.is_file()).cloned());
             tauri_app.manage(app.clone());
+            // Settings → Screen video: what this computer has (a second or two; once).
+            if crate::screen::SUPPORTED {
+                let a2 = app.clone();
+                std::thread::spawn(move || {
+                    crate::screen::check(false);
+                    a2.emit_status();
+                });
+            }
 
             // Windows: the main window, and the dictation overlay (hidden; never focused).
             let background = cli.background || cli.dictate.is_some() || cli.meeting.is_some();

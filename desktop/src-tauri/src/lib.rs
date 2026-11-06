@@ -21,6 +21,7 @@ pub mod models;
 pub mod output;
 pub mod preview;
 pub mod rename;
+pub mod screen;
 pub mod system_audio;
 pub mod tray;
 pub mod vocabulary;

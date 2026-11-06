@@ -78,8 +78,14 @@ pub fn save_meeting(meetings: &Path, id: &str, dir: &Path, parts: Parts, offset_
 /// The file: front matter, then the chosen parts (title and time always).
 pub fn file_text(m: &Meeting, parts: Parts, offset_min: i32) -> String {
     let date = format!("{}:00{}", meeting::local_time(m.started_at, offset_min).replace(' ', "T"), offset_text(offset_min));
+    // The screen video stays in the app's folder: the note links to it (a big file in a synced
+    // vault is not wanted).
+    let video = match &m.video {
+        Some(v) if v.bytes > 0 => format!("video: {}\n", yaml_str(&meeting::dir().join(&v.file).to_string_lossy())),
+        _ => String::new(),
+    };
     let front = format!(
-        "---\ntitle: {}\ndate: {date}\nduration_min: {}\ntags: [meeting]\nlowkey_id: {}\n---\n\n",
+        "---\ntitle: {}\ndate: {date}\nduration_min: {}\ntags: [meeting]\nlowkey_id: {}\n{video}---\n\n",
         yaml_str(&m.title),
         (m.duration / 60.0).round() as u64,
         m.id
@@ -263,6 +269,14 @@ mod tests {
         assert!(t.contains("## Notes\n\nAsk about the budget") && t.contains("## Transcript") && !t.contains("AI notes"), "{t}");
         let only_notes = file_text(&doc(), parts(&["notes".into()]), 0);
         assert!(!only_notes.contains("## Transcript"), "{only_notes}");
+        // The screen video: its path, once it is saved.
+        let mut m = doc();
+        m.video = Some(crate::meeting::Video { file: "m-1793800000000.webm".into(), bytes: 0, ..Default::default() });
+        assert!(!file_text(&m, parts(&["notes".into()]), 0).contains("video:"), "not while it records");
+        m.video.as_mut().unwrap().bytes = 9;
+        let path = meeting::dir().join("m-1793800000000.webm");
+        let t = file_text(&m, parts(&["notes".into()]), 0);
+        assert!(t.contains(&format!("lowkey_id: m-1793800000000\nvideo: \"{}\"\n---", path.display())), "{t}");
     }
 
     #[test]
