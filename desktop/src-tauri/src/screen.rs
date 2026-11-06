@@ -799,6 +799,30 @@ mod tests {
         let _ = std::fs::remove_dir_all(d);
     }
 
+    /// The real portal: the desktop's picker opens (unless OW_SCREEN_TOKEN, a token printed by
+    /// an earlier run, chooses the screen). Run by hand only:
+    /// `cargo test --lib real_portal -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "opens the desktop's screen picker"]
+    fn the_real_portal_records_the_screen() {
+        let d = temp("portal");
+        let token = std::env::var("OW_SCREEN_TOKEN").ok();
+        let asked = Instant::now();
+        let started = start(&d, "m-1", token.as_deref(), Box::new(|w| eprintln!("ended by itself: {w}"))).unwrap();
+        let r = &started.recording;
+        eprintln!("chosen after {:?}; token {:?}; {:?} {} {:?}", asked.elapsed(), started.token, r.size, r.codec, r.container);
+        std::thread::sleep(Duration::from_secs(4));
+        let (part, c) = (started.recording.part.clone(), started.recording.container);
+        let end = started.recording.stop();
+        assert!(end.closed, "{end:?}");
+        let (out, size) = finish_part(&d, "m-1", &part, c, end.closed).unwrap();
+        eprintln!("{} bytes: {}", size, out.display());
+        assert!(size > 1000);
+        let keep = std::env::temp_dir().join(format!("ow-portal-video.{}", c.ext()));
+        let _ = std::fs::rename(&out, &keep);
+        eprintln!("kept: {}", keep.display());
+    }
+
     /// With GStreamer installed: a test picture recorded for 2 s, stopped with SIGINT, is a whole
     /// file; one killed is made whole again.
     #[test]

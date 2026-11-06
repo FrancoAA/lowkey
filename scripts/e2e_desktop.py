@@ -5,9 +5,11 @@ their own XDG_RUNTIME_DIR, XDG_STATE_HOME, XDG_CONFIG_HOME, XDG_DATA_HOME and a 
 session bus that starts no services (no portals), so nothing reaches your desktop, your config
 or your notifications.
 
-The app runs with three test seams: OPENWHISPER_FAKE_MIC (a speech file instead of the mic),
-OPENWHISPER_FAKE_SYSTEM (another speech file instead of the computer's sound, for Meetings) and
-OPENWHISPER_TEST_LOG (UI events appended to a file, because the webview has no WebDriver here).
+The app runs with four test seams: OPENWHISPER_FAKE_MIC (a speech file instead of the mic),
+OPENWHISPER_FAKE_SYSTEM (another speech file instead of the computer's sound, for Meetings),
+OPENWHISPER_FAKE_SCREEN (a test picture instead of the screen: no portal) and
+OPENWHISPER_TEST_LOG (UI events appended to a file, because the webview has no WebDriver here;
+the page adds its video player's events as "page-video").
 Hyprland ignores binds from virtual keyboards, so the key bind's command is run through
 Hyprland's own exec dispatcher, exactly as a key press/release would.
 
@@ -227,6 +229,7 @@ esac
         "LIBSEAT_BACKEND": "seatd",
         "OPENWHISPER_FAKE_MIC": str(mic),
         "OPENWHISPER_FAKE_SYSTEM": str(them),  # never your real sound
+        "OPENWHISPER_FAKE_SCREEN": "1",  # never your real screen (and no portal picker)
         "OPENWHISPER_PACTL": str(pactl),
         "OPENWHISPER_TEST_LOG": str(log),
         "OPENWHISPER_MODELS_DIR": str(models),
@@ -448,6 +451,44 @@ esac
             wait(lambda: win("lowkey-overlay") is None, 5, "the strip goes after the click")
             wait(lambda: (hj("activewindow") or {}).get("title") == "Lowkey", 5, "the window in front")
             print("  ok  the strip closed and the window came to the front")
+            video_step(saved)
+
+        def video_step(saved) -> None:
+            """The meeting's screen video (a test picture): saved with it, and played in the window
+            from a time in the transcript (the asset protocol, WebKitGTK's GStreamer, a seek)."""
+            m = saved["meeting"]
+            v = m.get("video") or {}
+            path = tmp / "data" / "lowkey" / "meetings" / v.get("file", "-")
+            check(v.get("bytes", 0) > 0 and path.is_file() and path.stat().st_size == v["bytes"],
+                  f"the screen video is saved with the meeting ({v.get('file')}, {v.get('bytes')} bytes, {v.get('codec')})")
+            check(0 <= v["offset"] < 5, f"the video starts {v['offset']:.2f} s after the meeting")
+            check(not list(path.parent.glob(".*.part")), "no unfinished video is left")
+
+            def page():
+                return [e for e in events("page-video") if e.get("id") == m["id"]]
+
+            loaded = wait(lambda: next((e for e in page() if e["state"] in ("loaded", "error")), None), 20, "the video in the window")
+            check(loaded["state"] == "loaded" and abs(loaded["duration"] - (m["duration"] - v["offset"])) < 2.5,
+                  f"the window loads it ({loaded['duration']:.1f} s of {m['duration']:.1f} s; {loaded['error'] or 'no error'})")
+            wx, wy = win("Lowkey")["at"]
+            n = len(page())
+            pointer(f"abs:{wx + loaded['tab'][0]},{wy + loaded['tab'][1]},{{W}},{{H}}", "sleep:200", "click")
+            tab = wait(lambda: next((e for e in page()[n:] if e["state"] == "tab"), None), 5, "the transcript tab")
+            if not tab["play"]:
+                print("  note: the meeting has no transcript lines: the seek is not checked")
+                return
+            px, py, start = tab["play"]
+            n = len(page())
+            pointer(f"abs:{wx + px},{wy + py},{{W}},{{H}}", "sleep:200", "click")
+            seeked = wait(lambda: next((e for e in page()[n:] if e["state"] in ("seeked", "error")), None), 10, "the seek")
+            want = max(0.0, start - v["offset"])
+            check(seeked["state"] == "seeked" and abs(seeked["time"] - want) < 0.6,
+                  f"a click on a transcript time ({start:.1f} s) plays the video from there ({seeked['time']:.2f} s of the video)")
+            wait(lambda: next((e for e in page()[n:] if e["state"] == "playing"), None), 10, "playing")
+            time.sleep(1.2)
+            (mx, my), (mw, mh) = win("Lowkey")["at"], win("Lowkey")["size"]
+            run(["grim", "-g", f"{mx},{my} {mw}x{mh}", SHOTS / "40-desktop-meeting-video.png"], env)
+            print("  screenshot docs/screenshots/40-desktop-meeting-video.png")
 
         print(f"nested Hyprland {inst['wl_socket']} on {OUTPUT}; private runtime, config, data and D-Bus")
 
@@ -471,7 +512,7 @@ esac
         (tmp / "vault" / ".obsidian").mkdir()
         (tmp / "config" / "open-whisper" / "config.toml").write_text(
             f'idle_unload_minutes = 5\npreview_engine = "{PREVIEW}"\nai_auto = {ai_auto}\nexport_dir = "{vault_notes}"\n'
-            f'meeting_voices = {"true" if voices else "false"}\n\n'
+            f'meeting_voices = {"true" if voices else "false"}\nscreen_record = true\n\n'
             '[[vocabulary]]\nterm = "OpenWhisper"\nsounds_like = ["open whisper", "Open Wish"]\n')
         app = subprocess.Popen([APP], env=env, stdout=open(tmp / "app.log", "w"), stderr=subprocess.STDOUT)
         main_win = wait(lambda: win("Lowkey"), 30, "main window")

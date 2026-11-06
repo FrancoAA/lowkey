@@ -248,9 +248,10 @@ pub fn delete_in(dir: &Path, id: &str) -> anyhow::Result<()> {
 
 /// At start: the screen videos that a crash left unfinished get their final name (written again
 /// whole when they can be), and their size in the meeting. A video without its meeting is
-/// deleted.
-pub fn recover_videos(dir: &Path) {
-    for (id, part, c) in crate::screen::leftovers(dir) {
+/// deleted. `left`: `screen::leftovers`, listed before any meeting can start (a new meeting's
+/// `.part` is never taken for a leftover).
+pub fn recover_videos(dir: &Path, left: Vec<(String, PathBuf, crate::screen::Container)>) {
+    for (id, part, c) in left {
         if load_in(dir, &id).is_err() {
             let _ = std::fs::remove_file(&part);
             continue;
@@ -1352,7 +1353,7 @@ mod tests {
         rec.discard();
         std::fs::rename(&kept, &part).unwrap();
         std::fs::write(crate::screen::part_path(&dir, "m-404", crate::screen::Container::Webm), b"x").unwrap();
-        recover_videos(&dir);
+        recover_videos(&dir, crate::screen::leftovers(&dir));
         let v = load_in(&dir, &id).unwrap().video.unwrap();
         assert!(v.bytes > 0 && dir.join(&v.file).is_file(), "{v:?}");
         assert!(crate::screen::leftovers(&dir).is_empty(), "a video without its meeting is deleted");

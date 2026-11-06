@@ -43,11 +43,16 @@ export interface Status {
   calls?: { detect: boolean; available: boolean; apps: { key: string; label: string; policy: "ask" | "always" | "never" }[] };
   /** A meeting is being recorded. */
   recording?: boolean;
+  /** An automated test runs (OPENWHISPER_TEST_LOG): the page reports its player's events. */
+  test?: boolean;
   /** Settings → AI agents: agents may start and stop recordings; the program they start. */
   agents?: { recording: boolean; program: string };
   /** Settings → Models → Tell the other voices apart: on, this build can, the models are on
    * disk, their download (state "" | downloading | error), and the meetings being worked on. */
   voices?: { on: boolean; supported: boolean; present: boolean; download: { state: string; progress: number; error: string }; working: string[] };
+  /** Settings → General → Screen video: on, this build can, a screen is remembered, and what this
+   * computer has (state checking | ready | missing; the encoder; what to install). */
+  screen?: { on: boolean; supported: boolean; chosen: boolean; check: { state: "checking" | "ready" | "missing"; encoder: string; problem: string } };
   /** Settings → Note apps: the folder ("" = off), by itself, the parts, the Obsidian vault it is in. */
   export?: { dir: string; auto: boolean; parts: string[]; vault: string | null };
   /** AI notes settings (the API key itself never comes to the page). */
@@ -150,6 +155,20 @@ export interface Meeting {
   ai_version?: number;
   /** Names of the others found by voice: people[n - 1] names person n ("" = "Speaker n"). */
   people?: string[];
+  /** The screen video, recorded with the meeting. */
+  video?: MeetingVideo;
+}
+
+export interface MeetingVideo {
+  /** Its file in the meetings folder. */
+  file: string;
+  /** Seconds from the meeting's start to the video's start: transcript time t is t - offset in it. */
+  offset: number;
+  width: number;
+  height: number;
+  codec: string;
+  /** Bytes on disk; 0 while it records. */
+  bytes: number;
 }
 
 export interface ChatMessage {
@@ -179,6 +198,8 @@ export interface MeetingLive {
   notices: string[];
   /** Your microphone is muted (the strip's button): silence goes in its place. */
   muted?: boolean;
+  /** The screen video: "" (not recorded) | waiting (the screen picker is open) | on | stopped. */
+  screen?: "" | "waiting" | "on" | "stopped";
 }
 
 export interface MeetingSummary {

@@ -56,6 +56,8 @@ export interface MeetingsUi {
   refreshStatus(): void;
   /** The meetings whose voices are being told apart now (from the app's status). */
   voicesWorking(): string[];
+  /** An automated test runs: the player's events go to its log. */
+  testing(): boolean;
 }
 
 /** "Me", "Them", or the name of one of the others found by voice ("Speaker 2" before one). */
@@ -141,6 +143,12 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
   const obsidianBtn = $<HTMLButtonElement>("meeting-obsidian");
   const notices = $<HTMLUListElement>("meeting-notices");
   const transcript = $<HTMLDivElement>("meeting-transcript");
+  const videoWrap = $<HTMLDivElement>("meeting-video");
+  const videoToggle = $<HTMLButtonElement>("video-toggle");
+  const videoBox = $<HTMLDivElement>("video-box");
+  const videoMeta = $<HTMLElement>("video-meta");
+  const player = $<HTMLVideoElement>("meeting-player");
+  const screenMark = $<HTMLElement>("meeting-screen-mark");
   const pending = $<HTMLElement>("meeting-pending");
   const tabNotes = $<HTMLButtonElement>("tab-notes");
   const tabTranscript = $<HTMLButtonElement>("tab-transcript");
@@ -179,6 +187,11 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
   /** The point whose places in the transcript are open: its meeting, its place among the points
    * and its text (notes written again: a point with other text there stays closed). */
   let openPoint: { id: string; n: number; text: string } | null = null;
+
+  /** The meeting whose screen video is in the player (null: none). */
+  let videoOf: string | null = null;
+  /** The transcript paragraph the video is at (marked while it plays); -1: none. */
+  let nowPara = -1;
 
   /** The meeting on screen (live or saved), and the live one (if any). */
   let shown: Meeting | null = null;
@@ -273,8 +286,21 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
         const person = l.person!;
         who.addEventListener("click", () => startRename(who, person));
       }
-      const at = document.createElement("span");
-      at.className = "when";
+      let at: HTMLElement;
+      if (playable(m)) {
+        // With a screen video: the time plays it from there.
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "when when-play";
+        b.title = "Play the screen video from here";
+        b.setAttribute("aria-label", `Play the screen video from ${clock(l.start)}`);
+        b.addEventListener("click", () => playAt(l.start));
+        b.dataset.start = String(l.start);
+        at = b;
+      } else {
+        at = document.createElement("span");
+        at.className = "when";
+      }
       at.textContent = clock(l.start);
       const text = document.createElement("p");
       text.textContent = l.text;
@@ -297,6 +323,7 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
       row.append(who, at, text);
       transcript.append(row);
     }
+    if (playable(m) && nowPara >= 0) transcript.querySelectorAll(".tline")[nowPara]?.classList.add("tline-now");
     if (follow && nearEnd) transcript.scrollTop = transcript.scrollHeight;
   }
 
@@ -509,9 +536,11 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
     if (isLive() && live) {
       const elapsed = live.state === "recording" ? live.elapsed + (performance.now() - liveAt) / 1000 : live.elapsed;
       const mic = live.muted ? "your microphone (muted)" : "your microphone";
-      const inputs = live.meeting.system_audio ? `${mic} and the computer's sound` : `${mic} only`;
+      const parts = [mic, ...(live.meeting.system_audio ? ["the computer's sound"] : []), ...(live.screen === "on" ? ["the screen"] : [])];
+      const inputs = parts.length > 1 ? `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}` : `${mic} only`;
+      const picker = live.screen === "waiting" ? " · choose what to share in your desktop's dialog" : "";
       meta.dataset.live = live.state;
-      meta.textContent = live.state === "finishing" ? "Saving: transcribing the last seconds…" : `${when(live.meeting.started_at)} · ${inputs}`;
+      meta.textContent = live.state === "finishing" ? "Saving: transcribing the last seconds…" : `${when(live.meeting.started_at)} · ${inputs}${picker}`;
       liveClock.textContent = clock(elapsed);
     } else {
       delete meta.dataset.live;
@@ -535,6 +564,8 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
     renderFolderButtons();
     livePanel.hidden = !recording;
     livePanel.dataset.state = live?.state ?? "";
+    screenMark.hidden = !(recording && live?.screen === "on");
+    renderVideo();
     if (recording && live?.state === "recording") wave.start();
     else wave.stop();
     const items = recording && live ? live.notices : [];
@@ -553,6 +584,127 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
     renderTab();
     renderAi();
     renderChat();
+  }
+
+  // ---------------------------------------------------------------- the screen video
+  /** The open meeting's video is in the player: its times play it. */
+  function playable(m: Meeting): boolean {
+    return !!m.video && videoOf === m.id && !videoWrap.hidden && !isLive();
+  }
+
+  function size(bytes: number): string {
+    const mb = bytes / 1e6;
+    if (mb < 1) return `${Math.max(1, Math.round(bytes / 1e3))} kB`;
+    return mb >= 1000 ? `${(mb / 1000).toFixed(1)} GB` : mb >= 10 ? `${Math.round(mb)} MB` : `${mb.toFixed(1)} MB`;
+  }
+
+  /** A saved meeting with a video: in the player (loaded once per meeting). */
+  function renderVideo(): void {
+    const v = shown && !isLive() && shown.video && shown.video.bytes > 0 ? shown.video : null;
+    if (!shown || !v) return unloadVideo();
+    videoMeta.textContent = `${v.codec} · ${size(v.bytes)}`;
+    if (videoOf === shown.id) return;
+    unloadVideo();
+    const id = shown.id;
+    videoOf = id;
+    void api.videoUrl(id).then(
+      (url) => {
+        if (videoOf !== id || shown?.id !== id || !url) return; // another meeting, or no file
+        player.src = url;
+        videoWrap.hidden = false;
+        renderTranscript(shown, false); // the times play it now
+      },
+      () => {},
+    );
+  }
+
+  function unloadVideo(): void {
+    if (videoOf === null) return;
+    videoOf = null;
+    nowPara = -1;
+    player.pause();
+    player.removeAttribute("src");
+    player.load(); // lets the file go
+    videoWrap.hidden = true;
+  }
+
+  let videoCollapsed = (() => {
+    try {
+      return localStorage.getItem("lowkey.video-collapsed") === "1";
+    } catch {
+      return false;
+    }
+  })();
+
+  function setCollapsed(c: boolean): void {
+    videoCollapsed = c;
+    videoBox.hidden = c;
+    videoToggle.setAttribute("aria-expanded", String(!c));
+    if (c) player.pause();
+    try {
+      localStorage.setItem("lowkey.video-collapsed", c ? "1" : "0");
+    } catch {
+      // private mode: only for now
+    }
+  }
+  setCollapsed(videoCollapsed);
+  videoToggle.addEventListener("click", () => setCollapsed(!videoCollapsed));
+
+  /** Play the video from moment `t` of the meeting (the transcript's time). */
+  function playAt(t: number): void {
+    if (!shown?.video || !playable(shown)) return;
+    const offset = shown.video.offset;
+    if (videoCollapsed) setCollapsed(false);
+    const go = () => {
+      player.currentTime = Math.max(0, t - offset);
+      void player.play().catch(() => {});
+    };
+    if (player.readyState >= 1) go();
+    else player.addEventListener("loadedmetadata", go, { once: true });
+    ui.announce(t < offset ? `The screen video starts at ${clock(offset)}: playing from its start.` : `Playing the screen video from ${clock(t)}.`);
+  }
+
+  /** While it plays: the paragraph said at that moment is marked, and kept in view. */
+  function followVideo(): void {
+    if (!shown?.video || !playable(shown)) return;
+    const t = player.currentTime + shown.video.offset;
+    const paras = sourceIndex(shown).paras;
+    let i = -1;
+    for (let k = 0; k < paras.length && paras[k].start <= t + 0.3; k++) i = k;
+    if (i >= 0 && t > paras[i].end + 5) i = -1; // nobody speaks now
+    if (i === nowPara) return;
+    transcript.querySelector(".tline-now")?.classList.remove("tline-now");
+    nowPara = i;
+    const row = i >= 0 ? transcript.querySelectorAll<HTMLElement>(".tline")[i] : undefined;
+    if (!row) return;
+    row.classList.add("tline-now");
+    if (!player.paused && tab === "transcript" && !editing) row.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }
+
+  player.addEventListener("timeupdate", followVideo);
+  player.addEventListener("seeked", followVideo);
+
+  /** Automated tests: what the player does, with where to click (the window's CSS pixels). */
+  function testLog(state: string): void {
+    if (!ui.testing()) return;
+    const at = (e: HTMLElement | null) => {
+      const r = e?.getBoundingClientRect();
+      return r && r.width ? [Math.round(r.x + r.width / 2), Math.round(r.y + r.height / 2)] : null;
+    };
+    const plays = transcript.querySelectorAll<HTMLElement>(".when-play");
+    const last = plays[plays.length - 1] ?? null;
+    void backend.testEvent("page-video", {
+      state,
+      id: videoOf,
+      time: player.currentTime,
+      duration: player.duration,
+      error: player.error ? `${player.error.code} ${player.error.message}` : "",
+      tab: at(tabTranscript),
+      play: last && at(last) ? [...at(last)!, Number(last.dataset.start)] : null,
+    });
+  }
+  for (const [ev, state] of [["loadedmetadata", "loaded"], ["seeked", "seeked"], ["playing", "playing"], ["error", "error"]] as const) {
+    player.addEventListener(ev, () => testLog(state));
   }
 
   // ---------------------------------------------------------------- Notes | Transcript
@@ -581,6 +733,7 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
     if (focus) (t === "notes" ? tabNotes : tabTranscript).focus();
     // The transcript opens at its end while it records (the newest words), else at the start.
     if (changed && t === "transcript" && isLive()) transcript.scrollTop = transcript.scrollHeight;
+    if (changed && videoOf) testLog("tab");
   }
 
   tabNotes.addEventListener("click", () => setTab("notes"));
@@ -789,7 +942,20 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
       b.setAttribute("aria-label", `Show in transcript: ${who.textContent} at ${at.textContent}`);
       b.setAttribute("aria-describedby", text.id);
       b.addEventListener("click", () => showInTranscript(f.index));
-      box.append(b);
+      if (playable(shown)) {
+        // The screen at that moment: next to the place, not inside its button.
+        const row = document.createElement("div");
+        row.className = "source-row";
+        const play = document.createElement("button");
+        play.type = "button";
+        play.className = "btn btn-ghost btn-sm source-play";
+        play.textContent = "Play";
+        play.title = "Play the screen video from here";
+        play.setAttribute("aria-label", `Play the screen video from ${clock(p.start)}`);
+        play.addEventListener("click", () => playAt(p.start));
+        row.append(b, play);
+        box.append(row);
+      } else box.append(b);
     }
     point.after(box);
     point.setAttribute("aria-expanded", "true");
@@ -1100,6 +1266,7 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
     await flush();
     editing = null;
     shown = null;
+    unloadVideo();
     view.hidden = true;
     home.hidden = false;
     await renderList();

@@ -138,15 +138,28 @@ static EARLY_ARGS: Mutex<Vec<Vec<String>>> = Mutex::new(Vec::new());
 /// Test seam: OPENWHISPER_TEST_LOG=<file> appends every UI event as a JSON line, so automated
 /// tests can follow the app without a WebDriver. No effect when unset.
 fn emit_logged<S: serde::Serialize + Clone>(handle: &AppHandle, event: &str, payload: S) {
+    test_log(event, &payload);
+    let _ = handle.emit(event, payload);
+}
+
+fn test_log<S: serde::Serialize>(event: &str, payload: &S) {
     if let Some(path) = std::env::var_os("OPENWHISPER_TEST_LOG") {
         use std::io::Write;
         static LOG: Mutex<()> = Mutex::new(()); // one line at a time from all threads
         let _guard = LOG.lock();
         if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
-            let _ = f.write_all(format!("{}\n", json!({"event": event, "payload": payload.clone()})).as_bytes());
+            let _ = f.write_all(format!("{}\n", json!({"event": event, "payload": payload})).as_bytes());
         }
     }
-    let _ = handle.emit(event, payload);
+}
+
+/// The same test seam for what only the page sees (the video player): "page-…" events. The page
+/// sends them only when the status says `test`.
+#[tauri::command]
+fn test_event(event: String, payload: Value) {
+    if event.starts_with("page-") {
+        test_log(&event, &payload);
+    }
 }
 
 impl App {
@@ -297,6 +310,8 @@ impl App {
                 "apps": self.call_apps(&cfg),
             },
             "recording": self.meeting.lock().is_some(),
+            // OPENWHISPER_TEST_LOG: the page reports its player's events (`test_event`).
+            "test": std::env::var_os("OPENWHISPER_TEST_LOG").is_some(),
             "ai": {
                 "engine": cfg.ai_engine, "url": cfg.ai_url, "model": cfg.ai_model, "has_key": !cfg.ai_key.is_empty(),
                 "auto": cfg.ai_auto,
@@ -1518,10 +1533,12 @@ fn screen_forget(app: State<'_, AppRef>) -> Result<(), String> {
     Ok(())
 }
 
-/// The meeting's screen video file (the page plays it through the asset protocol), if any.
+/// Where the page plays the meeting's screen video from (src/video_server.rs), if it has one.
 #[tauri::command]
-fn meeting_video_path(id: String) -> Option<String> {
-    meeting::video_path_in(&meeting::dir(), &id).map(|p| p.to_string_lossy().into_owned())
+fn meeting_video_url(id: String) -> Result<Option<String>, String> {
+    let Some(path) = meeting::video_path_in(&meeting::dir(), &id) else { return Ok(None) };
+    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    crate::video_server::url(&name).map(Some).map_err(|e| format!("The video cannot be played: {e:#}"))
 }
 
 /// Stop, transcribe the last seconds, save. Returns the saved meeting.
@@ -2639,7 +2656,8 @@ pub fn run() {
             meeting_get,
             meeting_update,
             meeting_delete,
-            meeting_video_path,
+            meeting_video_url,
+            test_event,
             screen_forget,
             meeting_markdown,
             meeting_ai_notes,
@@ -2669,9 +2687,8 @@ pub fn run() {
             // The others' sound of a meeting that did not end (the app was killed): never kept.
             crate::voices::delete_leftovers(&meeting::dir());
             // Its screen video: kept, made whole (seconds for a long one: not in the way).
-            // The page plays videos from the meetings folder only.
-            let _ = handle.asset_protocol_scope().allow_directory(meeting::dir(), false);
-            std::thread::spawn(|| meeting::recover_videos(&meeting::dir()));
+            let left = crate::screen::leftovers(&meeting::dir()); // now: no meeting records yet
+            std::thread::spawn(move || meeting::recover_videos(&meeting::dir(), left));
             let config = Config::load();
             set_window_theme(&handle, &config.theme);
             // The strip opens where the user left it (the rule that keys add uses this place).

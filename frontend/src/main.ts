@@ -66,6 +66,11 @@ const exportAuto = $<HTMLInputElement>("export-auto");
 const exportParts = [...document.querySelectorAll<HTMLInputElement>(".export-parts input")];
 const agentsRecording = $<HTMLInputElement>("agents-recording");
 const voicesOn = $<HTMLInputElement>("voices-on");
+const screenCard = $<HTMLDivElement>("screen-card");
+const screenOn = $<HTMLInputElement>("screen-on");
+const screenStatus = $<HTMLElement>("screen-status");
+const screenForget = $<HTMLButtonElement>("screen-forget");
+let screenSaving = false;
 const voicesStatus = $<HTMLDivElement>("voices-status");
 const voicesStatusText = $<HTMLSpanElement>("voices-status-text");
 const voicesBar = voicesStatus.querySelector<HTMLDivElement>(".model-bar")!;
@@ -326,6 +331,7 @@ function applyStatus(next: Status): void {
   renderAi();
   renderAgents();
   renderVoices();
+  renderScreen();
   renderExport();
   meetingsView?.refreshExport();
   renderAbout();
@@ -1173,6 +1179,35 @@ voicesOn.addEventListener("change", () => {
     .finally(() => (voicesSaving = false));
 });
 
+/** Settings → General → Record the screen with meetings: the switch, what this computer has. */
+function renderScreen(): void {
+  const s = status?.screen;
+  screenCard.hidden = !s || (!s.supported && !s.on);
+  if (!s) return;
+  if (!screenSaving) screenOn.checked = s.on;
+  screenOn.disabled = !s.supported && !s.on;
+  const c = s.check;
+  screenStatus.dataset.kind = s.on && c.state === "missing" ? "warn" : "";
+  screenStatus.textContent =
+    c.state === "checking" ? "Looking for GStreamer…" : c.state === "ready" ? `Ready: ${c.encoder}.` : c.problem;
+  screenForget.hidden = !s.on || !s.chosen;
+}
+
+screenOn.addEventListener("change", () => {
+  screenSaving = true;
+  void backend
+    .saveOptions({ screen_record: screenOn.checked })
+    .then(refreshStatus, (err) => showError(String(err)))
+    .finally(() => (screenSaving = false));
+});
+
+screenForget.addEventListener("click", () => {
+  void backend.screenForget().then(() => {
+    announce("The next meeting asks which screen to share.");
+    return refreshStatus();
+  }, (err) => showError(String(err)));
+});
+
 function renderAbout(): void {
   if (!status) return;
   $<HTMLElement>("about-version").textContent = status.version ?? "–";
@@ -1208,6 +1243,7 @@ void getBackend().then((b) => {
     exportInfo: () => ({ dir: status?.export?.dir ?? "", vault: status?.export?.vault ?? null }),
     refreshStatus: () => void refreshStatus(),
     voicesWorking: () => status?.voices?.working ?? [],
+    testing: () => !!status?.test,
   });
   void loadLanguages();
   void refreshStatus();

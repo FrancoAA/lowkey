@@ -728,3 +728,37 @@ dialog.confirm p { margin: 8px 0 0; color: var(--muted-foreground); font-size: 1
   background: var(--muted); font-size: 13px; position: sticky; top: 0; z-index: 1;
 }
 .vocab-offer span { flex: 1 1 16em; }
+
+/* ───────────────────────────── Screen video ───────────────────────────── */
+/* Above the notes and the transcript: in view while you read (its own height, not theirs). */
+.meeting-video { display: flex; flex-direction: column; gap: 6px; flex: none; }
+.video-head { display: flex; align-items: center; gap: 8px; min-height: 28px; }
+.video-toggle { gap: 4px; padding-inline: 6px 10px; }
+.video-toggle .icon { transition: transform 0.15s; }
+.video-toggle[aria-expanded="false"] .icon { transform: rotate(-90deg); }
+.video-meta { font-size: 12px; color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
+.video-box video {
+  display: block; width: 100%; max-height: 38vh; border-radius: calc(var(--radius) - 2px);
+  background: #000; border: 1px solid var(--border); object-fit: contain;
+}
+/* A transcript time that plays the video. */
+.tline .when-play {
+  border: 0; background: transparent; padding: 0 4px; margin-left: -4px; border-radius: 4px; cursor: pointer;
+  font: inherit; font-size: 11px; color: var(--muted-foreground); font-variant-numeric: tabular-nums;
+}
+.tline .when-play::before { content: "▶ "; font-size: 8px; vertical-align: 1px; opacity: 0; transition: opacity 0.12s; }
+.tline .when-play:hover, .tline .when-play:focus-visible { color: var(--foreground); background: var(--muted); }
+.tline .when-play:hover::before, .tline .when-play:focus-visible::before, .tline-now .when-play::before { opacity: 1; }
+.tline .when-play:focus-visible { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--ring) 45%, transparent); }
+/* The paragraph the video is at. */
+.tline.tline-now { border-radius: 6px; box-shadow: -10px 0 0 -7px var(--brand); background: color-mix(in srgb, var(--brand) 7%, transparent); }
+.source-row { display: flex; align-items: flex-start; gap: 2px; }
+.source-row .source { flex: 1; min-width: 0; }
+.source-play { flex: none; margin-top: 2px; }
+/* The live panel: the screen is recorded too. */
+.screen-mark { display: inline-flex; align-items: center; gap: 4px; }
+.screen-mark .icon { width: 12px; height: 12px; }
+.screen-status:empty { display: none; }
+#screen-forget { margin-top: 8px; }
+.live-legend .screen-mark { color: var(--muted-foreground); }
+.live-legend .screen-mark::before { content: none; }

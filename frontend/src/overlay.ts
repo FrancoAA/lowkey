@@ -37,6 +37,8 @@ interface MeetingLive {
   pending: number;
   /** Your microphone is muted (silence goes in its place). */
   muted?: boolean;
+  /** The screen video: "" | waiting | on | stopped. */
+  screen?: string;
 }
 
 /** Me above the line, Them below, in their colours (overlay.css --me / --them). */
@@ -265,6 +267,7 @@ function renderMeeting(now: number): void {
   root.dataset.state = m.state === "recording" ? "recording" : m.state === "finishing" ? "transcribing" : "done";
   const last = m.meeting.lines[m.meeting.lines.length - 1];
   renderMute(m.state === "recording" && !!m.muted);
+  root.dataset.screen = m.state === "recording" && m.screen === "on" ? "1" : "";
   if (m.state === "recording") {
     label.textContent = ""; // the time, the wave and the mute button say it (no "Recording")
     timer.textContent = clock(elapsed * 1000); // aria-hidden: no announcement every second
@@ -273,11 +276,17 @@ function renderMeeting(now: number): void {
       const tag = document.createElement("span");
       tag.className = "muted-note";
       tag.textContent = "Mic muted";
-      detail.replaceChildren(tag, m.meeting.system_audio ? " · only the computer's sound is recorded" : "");
+      const rest = m.meeting.system_audio
+        ? m.screen === "on" ? " · only the computer's sound and the screen are recorded" : " · only the computer's sound is recorded"
+        : m.screen === "on" ? " · only the screen is recorded" : "";
+      detail.replaceChildren(tag, rest);
     } else if (note?.state === "ended") detail.textContent = `The ${note.label} call ended${note.key ? ` · ${prettyKey(note.key)} stops` : ""}`;
     else if (note?.state === "auto") detail.textContent = `Started automatically · ${note.label} call`;
     else if (last) speakerLine(last.speaker, last.text);
-    else detail.textContent = `${m.meeting.system_audio ? "Your mic and the computer's sound" : "Your mic only"}${stop}`;
+    else {
+      const what = m.meeting.system_audio ? "Your mic and the computer's sound" : "Your mic only";
+      detail.textContent = `${m.screen === "on" ? what.replace(" and ", ", ").replace(" only", "") + " and the screen" : what}${stop}`;
+    }
   } else if (m.state === "finishing") {
     label.textContent = "Saving the meeting…";
     detail.textContent = m.pending ? `${m.pending} part${m.pending > 1 ? "s" : ""} to transcribe` : "One moment";

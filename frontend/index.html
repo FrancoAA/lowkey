@@ -178,6 +178,9 @@
               <div class="live-legend" aria-hidden="true">
                 <span class="who-me">Me</span>
                 <span class="who-them">Them</span>
+                <span id="meeting-screen-mark" class="screen-mark" hidden>
+                  <svg class="icon" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2" /><path d="M8 20h8M12 16v4" /></svg>Screen
+                </span>
               </div>
               <button id="meeting-stop" type="button" class="btn btn-default btn-sm btn-stop"><span class="stop-square" aria-hidden="true"></span>Stop</button>
             </div>
@@ -185,6 +188,19 @@
             <div class="meeting-body">
               <!-- Left: the notes, or the transcript in their place (the switch). -->
               <section class="notes-pane" aria-label="Notes and transcript">
+                <!-- The screen video (recorded with the meeting): stays in view while you read. -->
+                <div id="meeting-video" class="meeting-video" hidden>
+                  <div class="video-head">
+                    <button id="video-toggle" type="button" class="btn btn-ghost btn-sm video-toggle" aria-expanded="true" aria-controls="video-box">
+                      <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
+                      Screen video
+                    </button>
+                    <span id="video-meta" class="video-meta"></span>
+                  </div>
+                  <div id="video-box" class="video-box">
+                    <video id="meeting-player" controls preload="metadata" playsinline aria-label="Screen video of the meeting"></video>
+                  </div>
+                </div>
                 <div class="notes-head">
                   <div class="seg" role="tablist" aria-label="Show">
                     <button id="tab-notes" type="button" role="tab" class="seg-item" aria-selected="true" aria-controls="notes-panel">Notes</button>
@@ -306,6 +322,18 @@
               <input id="calls-detect" type="checkbox" role="switch" class="switch" />
             </div>
             <div id="calls-apps" class="calls-apps"></div>
+          </div>
+          <div id="screen-card" hidden>
+            <div class="separator"></div>
+            <div class="field">
+              <div class="field-text">
+                <label for="screen-on">Record the screen with meetings</label>
+                <p class="field-desc">The screen, or one window, is saved as a video with the meeting (10 frames a second, about 450 MB for one hour). A time in the transcript, or a place under a point of the notes, plays it from there. The first time, your desktop asks what to share.</p>
+                <p id="screen-status" class="field-desc screen-status" aria-live="polite"></p>
+                <button id="screen-forget" type="button" class="btn btn-outline btn-sm" hidden>Choose the screen again</button>
+              </div>
+              <input id="screen-on" type="checkbox" role="switch" class="switch" />
+            </div>
           </div>
           <div class="separator"></div>
           <div class="field field-stacked">

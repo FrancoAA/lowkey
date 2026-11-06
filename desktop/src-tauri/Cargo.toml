@@ -19,9 +19,7 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 # macos-private-api: transparent windows on macOS (the rounded dictation overlay).
-# protocol-asset: the meeting's screen video plays from the meetings folder (only that folder:
-# src/app.rs allows it at start).
-tauri = { version = "2", features = ["tray-icon", "image-png", "macos-private-api", "protocol-asset"] }
+tauri = { version = "2", features = ["tray-icon", "image-png", "macos-private-api"] }
 tauri-plugin-single-instance = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-global-shortcut = "2"

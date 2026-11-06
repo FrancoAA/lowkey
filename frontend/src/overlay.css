@@ -144,3 +144,8 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: transparent;
 .open-link { color: #93c5fd; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; border-radius: 3px; }
 .open-link:hover { color: #bfdbfe; }
 .open-link:focus-visible { outline: 2px solid #93c5fd; outline-offset: 1px; }
+/* The screen is recorded too: a small screen before the time. */
+.overlay[data-mode="meeting"][data-state="recording"][data-screen="1"] .timer::before {
+  content: ""; display: inline-block; width: 10px; height: 7px; margin-right: 6px; vertical-align: 1px;
+  border: 1.5px solid currentColor; border-radius: 2px; opacity: 0.8;
+}

@@ -24,6 +24,7 @@ pub mod rename;
 pub mod screen;
 pub mod system_audio;
 pub mod tray;
+pub mod video_server;
 pub mod vocabulary;
 pub mod voices;
 pub mod whisper_tokens;
