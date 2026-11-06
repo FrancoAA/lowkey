@@ -58,6 +58,11 @@ macOS and Windows, a prompt when a call starts, and questions over past meetings
   the topic's heading and the point above a sub-point help with less weight; a time such as
   (04:19) picks its paragraph first. Nothing found: "No part of the transcript matches this
   point", a cue to check it.
+- With a screen video (Settings → General → Record the screen with meetings): a player above
+  the notes, which can be collapsed (the choice is kept); its codec and size next to it. Each
+  transcript time is a button that plays the video from there; the places under a point of the
+  notes get **Play**. While it plays, the paragraph said at that moment is marked, and kept in
+  view in the Transcript tab. See [screen.md](screen.md).
 - There is no notes field: the AI notes take its place. Notes typed in older versions stay in
   the file, in the export and in what the model reads.
 
@@ -103,6 +108,9 @@ others spoke stay. Chinese and Japanese count each character as a word.
 - Files: `~/.local/share/lowkey/meetings/m-<unix ms>.json` (the folder is 0700). The id
   is `m-` plus digits only, so a command never names a path outside the folder.
 - Quitting the app during a recording keeps what is transcribed and does not wait for the rest.
+- The screen video: `m-<unix ms>.webm` (or `.mp4`) next to the JSON, mode 0600; the meeting's
+  `video` field has its name, its offset from the meeting's start, its size in pixels, its
+  codec and its bytes. Deleting the meeting deletes it.
 - **Export .md** and **Copy**: the title, the date in your time zone, the length, your notes,
   then the transcript in paragraphs (`**Me** (00:12): …`).
 
