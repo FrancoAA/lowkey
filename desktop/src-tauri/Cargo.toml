@@ -68,8 +68,12 @@ whisper-rs = { version = "0.16", features = ["vulkan", "openmp"] }
 gtk = "0.18"
 webkit2gtk = "2.0"
 # Screen video with meetings: the ScreenCast portal (async-io, as the zbus of single-instance:
-# no second D-Bus runtime), and the encoder process's file descriptor and signals.
+# no second D-Bus runtime) (its file descriptor and signals: libc, below).
 ashpd = { version = "0.12", default-features = false, features = ["async-std"] }
+
+# The screen video's encoder process (Linux), and the end of the app: _exit, after everything
+# is saved (see `exit_now` in src/app.rs).
+[target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
 [target.'cfg(not(target_os = "linux"))'.dependencies]

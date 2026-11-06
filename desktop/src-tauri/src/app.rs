@@ -85,6 +85,10 @@ pub struct App {
     ai_job: Mutex<Option<String>>,
     /// The meeting whose question is being answered.
     chat_job: Mutex<Option<String>>,
+    /// Exit asks what to do with the work in progress (one question at a time), or waits for
+    /// that work to end (Quit when done).
+    quit_asking: AtomicBool,
+    quit_waiting: Arc<AtomicBool>,
     /// The tray menu as last built (it is built again only when this changes).
     tray_menu: Mutex<Vec<crate::tray::Entry>>,
     /// The dictation's state, for the tray (kept here: the dictation reports it while it
@@ -442,7 +446,7 @@ impl App {
                 });
             }
             Action::Open => self.show_main(),
-            Action::Exit => self.handle.exit(0),
+            Action::Exit => self.request_quit(),
         }
         // A click on a check item ticks it by itself: always build the menu again.
         self.tray_menu.lock().clear();
@@ -933,6 +937,105 @@ impl App {
         }
     }
 
+    /// The work that quitting now would stop, one line each (with what is lost).
+    fn work_in_progress(&self) -> Vec<String> {
+        let title = |id: &str| {
+            let t = meeting::load_in(&meeting::dir(), id).map(|m| m.title).unwrap_or_default();
+            if t.trim().is_empty() { "a meeting".to_string() } else { format!("“{}”", t.trim()) }
+        };
+        let mut out = Vec::new();
+        if self.meeting.lock().is_some() {
+            out.push(if self.meeting_stopping.load(Ordering::SeqCst) {
+                "Saving a meeting: its last seconds may not be transcribed.".to_string()
+            } else {
+                "Recording a meeting: it is saved as it is now.".to_string()
+            });
+        }
+        for id in self.voices_working.lock().iter() {
+            let last_try = crate::voices::retry_path(&meeting::dir(), id).exists();
+            out.push(if last_try {
+                format!("Telling the voices apart in {}: the others stay “Them”.", title(id))
+            } else {
+                format!("Telling the voices apart in {}: it goes on the next time Lowkey starts.", title(id))
+            });
+        }
+        if let Some(id) = self.ai_job.lock().clone() {
+            out.push(format!("Writing the notes of {}: Write notes writes them later.", title(&id)));
+        }
+        if let Some(id) = self.chat_job.lock().clone() {
+            out.push(format!("Answering a question about {}.", title(&id)));
+        }
+        match self.jobs.pending() {
+            0 => {}
+            1 => out.push("Transcribing a file.".into()),
+            n => out.push(format!("Transcribing {n} files.")),
+        }
+        out
+    }
+
+    /// Exit (the tray menu, the side menu): at once when nothing is at work. Else the user
+    /// chooses: quit when the work is done, quit now (the work stops), or keep running.
+    fn request_quit(self: &Arc<Self>) {
+        let work = self.work_in_progress();
+        if work.is_empty() {
+            self.handle.exit(0);
+            return;
+        }
+        if self.quit_asking.swap(true, Ordering::SeqCst) {
+            return; // the question is on screen
+        }
+        use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind, MessageDialogResult};
+        const WHEN_DONE: &str = "Quit when done";
+        const NOW: &str = "Quit now";
+        let text = format!(
+            "Lowkey is still at work:\n\n• {}\n\nQuit when done waits for it, then quits (a meeting being recorded is stopped and saved first).",
+            work.join("\n• ")
+        );
+        let me = self.clone();
+        self.handle
+            .dialog()
+            .message(text)
+            .title("Quit Lowkey?")
+            .kind(MessageDialogKind::Warning)
+            .buttons(MessageDialogButtons::YesNoCancelCustom(WHEN_DONE.into(), NOW.into(), "Keep running".into()))
+            .show_with_result(move |r| {
+                me.quit_asking.store(false, Ordering::SeqCst);
+                match r {
+                    MessageDialogResult::Custom(b) if b == NOW => me.handle.exit(0),
+                    MessageDialogResult::Custom(b) if b == WHEN_DONE => me.quit_when_done(),
+                    _ => me.quit_waiting.store(false, Ordering::SeqCst), // Keep running: also no quit later
+                }
+            });
+    }
+
+    /// Quit when done: a meeting being recorded is stopped and saved; then, when nothing has
+    /// been at work for 2 s (the notes start right after the voices), the app quits.
+    fn quit_when_done(self: &Arc<Self>) {
+        if self.quit_waiting.swap(true, Ordering::SeqCst) {
+            return; // waiting already
+        }
+        output::notify("Lowkey quits when its work is done.");
+        let me = self.clone();
+        std::thread::spawn(move || {
+            if me.meeting.lock().is_some() && !me.meeting_stopping.load(Ordering::SeqCst) {
+                let _ = stop_meeting(&me);
+            }
+            let mut idle_since: Option<Instant> = None;
+            while me.quit_waiting.load(Ordering::SeqCst) {
+                if me.work_in_progress().is_empty() {
+                    let at = *idle_since.get_or_insert_with(Instant::now);
+                    if at.elapsed() >= Duration::from_secs(2) {
+                        me.handle.exit(0);
+                        return;
+                    }
+                } else {
+                    idle_since = None;
+                }
+                std::thread::sleep(Duration::from_millis(250));
+            }
+        });
+    }
+
     fn shutdown(&self) {
         if self.handle.get_webview_window("overlay").and_then(|w| w.is_visible().ok()).unwrap_or(false) {
             self.remember_overlay_place();
@@ -954,8 +1057,8 @@ impl App {
         }
         self.ai_cancel.store(true, Ordering::SeqCst);
         llm::stop_builtin();
-        // The others' sound of a meeting whose voices were being told apart: not kept.
-        crate::voices::delete_leftovers(&meeting::dir());
+        // The others' sound of a meeting whose voices were being told apart stays: the next
+        // start tells them apart (`resume_voices`).
         let f = runtime_dir().join("desktop.json");
         if std::fs::read_to_string(&f).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()).and_then(|v| v["pid"].as_u64())
             == Some(std::process::id() as u64)
@@ -1630,6 +1733,46 @@ fn tell_voices_apart(app: &AppRef, id: &str, tape: &std::path::Path) {
     }
 }
 
+/// At start: the meetings whose voices were not told apart (the app quit or crashed first), one
+/// after the other, then what comes after Stop (the note app; the AI notes if it has none). A
+/// file whose meeting is gone, has no "Them", or has its people already, is deleted; with Who
+/// is speaking on but its models not downloaded yet, it waits for a later start.
+fn resume_voices(app: &AppRef, left: Vec<(String, PathBuf)>) {
+    let on = app.config.lock().meeting_voices && crate::voices::SUPPORTED;
+    let mut todo = Vec::new();
+    for (id, tape) in left {
+        let wanted = on
+            && meeting::load_in(&meeting::dir(), &id)
+                .is_ok_and(|m| m.people.is_empty() && m.lines.iter().any(|l| l.speaker == meeting::Speaker::Them));
+        if !wanted {
+            let _ = std::fs::remove_file(&tape);
+        } else if crate::voices::present() {
+            // Its last try (see `voices::retry_path`).
+            let retry = crate::voices::retry_path(&meeting::dir(), &id);
+            if std::fs::rename(&tape, &retry).is_ok() {
+                app.voices_working.lock().insert(id.clone()); // Export, Write notes and fixes wait
+                todo.push((id, retry));
+            }
+        }
+    }
+    if todo.is_empty() {
+        return;
+    }
+    let a2 = app.clone();
+    std::thread::spawn(move || {
+        for (id, tape) in todo {
+            tell_voices_apart(&a2, &id, &tape);
+            if let Ok(m) = meeting::load_in(&meeting::dir(), &id) {
+                if m.ai_notes.trim().is_empty() {
+                    after_meeting(&a2, &m);
+                } else {
+                    auto_export(&a2, &id);
+                }
+            }
+        }
+    });
+}
+
 /// The voices of meeting `id` are being told apart (after Stop): its text is not final yet.
 fn voices_pending(app: &AppRef, id: &str) -> bool {
     app.voices_working.lock().contains(id)
@@ -1653,6 +1796,22 @@ fn after_meeting(app: &AppRef, m: &meeting::Meeting) {
 
 /// The side menu's Exit: the same as the tray menu's (a meeting is stopped and saved by the page
 /// first; `shutdown` keeps what a meeting left running has).
+/// The end of the process, after `shutdown` saved what there is. `_exit` on Unix: the C++
+/// libraries' global destructors (onnxruntime of Who is speaking, ggml) must not run while
+/// their own worker threads still do: telling the voices apart when the app quits ended
+/// with std::terminate (SIGABRT) in exit(). Nothing is left to flush but stdout and stderr.
+fn exit_now() -> ! {
+    use std::io::Write;
+    let _ = std::io::stdout().flush();
+    let _ = std::io::stderr().flush();
+    #[cfg(unix)]
+    unsafe {
+        libc::_exit(0)
+    }
+    #[cfg(not(unix))]
+    std::process::exit(0)
+}
+
 /// The strip's collapse button and its pill (a click opens it again).
 #[tauri::command]
 fn overlay_collapse(app: State<'_, AppRef>, collapsed: bool) {
@@ -1813,7 +1972,7 @@ async fn overlay_drag_end(app: State<'_, AppRef>) -> Result<bool, String> {
 
 #[tauri::command]
 fn app_quit(app: State<'_, AppRef>) {
-    app.handle.exit(0);
+    app.request_quit();
 }
 
 const THEMES: &[&str] = &["system", "light", "dark"];
@@ -2692,8 +2851,10 @@ pub fn run() {
                 std::process::exit(0);
             }
             let handle = tauri_app.handle().clone();
-            // The others' sound of a meeting that did not end (the app was killed): never kept.
-            crate::voices::delete_leftovers(&meeting::dir());
+            // The others' sound of meetings whose voices were not told apart (the app quit or
+            // crashed first): listed now, before a meeting can record; told apart below.
+            crate::voices::delete_retries(&meeting::dir());
+            let voices_left = crate::voices::leftovers(&meeting::dir());
             // Its screen video: kept, made whole (seconds for a long one: not in the way).
             let left = crate::screen::leftovers(&meeting::dir()); // now: no meeting records yet
             std::thread::spawn(move || meeting::recover_videos(&meeting::dir(), left));
@@ -2769,6 +2930,8 @@ pub fn run() {
                 ai_cancel: Arc::new(AtomicBool::new(false)),
                 ai_job: Mutex::new(None),
                 chat_job: Mutex::new(None),
+                quit_asking: AtomicBool::new(false),
+                quit_waiting: Arc::new(AtomicBool::new(false)),
                 tray_menu: Mutex::new(Vec::new()),
                 tray_dictation: Mutex::new("idle".into()),
                 tray_mics: Mutex::new(Some(Vec::new())),
@@ -2993,6 +3156,7 @@ pub fn run() {
                 let a2 = app.clone();
                 std::thread::spawn(move || crate::voices::download_models(|| a2.emit_status()));
             }
+            resume_voices(&app, voices_left);
             // Live preview: 17 MB, downloaded once; dictation works without it meanwhile.
             if config.live_preview {
                 app.prepare_preview();
@@ -3014,6 +3178,7 @@ pub fn run() {
             if let Some(a) = handle.try_state::<AppRef>() {
                 a.shutdown();
             }
+            exit_now();
         }
     });
 }

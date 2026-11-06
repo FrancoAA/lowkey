@@ -1338,9 +1338,9 @@ impl Session {
             doc.state = "done".into();
             doc.duration = elapsed;
         }
-        drop(self.inner.tape.lock().take()); // an unfinished tape deletes its file
-        if let Some(p) = self.tape_done.lock().take() {
-            let _ = std::fs::remove_file(p); // `finish` got that far, then failed
+        // The others' sound is kept: its voices are told apart at the next start.
+        if let Some(t) = self.inner.tape.lock().take() {
+            let _ = t.finish();
         }
         self.inner.save();
     }
