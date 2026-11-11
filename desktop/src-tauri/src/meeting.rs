@@ -675,25 +675,57 @@ pub fn edit_paragraph(m: &mut Meeting, from: usize, to: usize, before: &str, tex
 
 /// Name person `person` (1, 2, …) of the others. The name the user gave another person merges
 /// the two (the voices of one person were found as two): its lines go to the other one ("Speaker
-/// 3" is not a name: it never merges). "" gives back "Speaker n".
+/// 3" is not a name: it never merges). "" gives back "Speaker n". The AI notes follow: the old
+/// label becomes the new one in them (no new notes needed: they stay as current as they were).
 pub fn name_speaker(m: &mut Meeting, person: u32, name: &str) -> anyhow::Result<()> {
     anyhow::ensure!(person >= 1 && person as usize <= m.people.len(), "There is no Speaker {person} in this meeting.");
     let name: String = name.split_whitespace().collect::<Vec<_>>().join(" ");
     anyhow::ensure!(name.chars().count() <= MAX_NAME, "A name has at most {MAX_NAME} characters.");
+    let before = person_label(m, person);
+    let notes_current = m.ai_version >= m.transcript_version;
     let other = (1..=m.people.len() as u32).find(|&n| {
         n != person && !name.is_empty() && m.people[n as usize - 1].to_lowercase() == name.to_lowercase() && m.lines.iter().any(|l| l.person == n)
     });
-    match other {
+    let after = match other {
         Some(into) => {
             for l in m.lines.iter_mut().filter(|l| l.speaker == Speaker::Them && l.person == person) {
                 l.person = into;
             }
             m.people[person as usize - 1].clear();
+            person_label(m, into)
         }
-        None => m.people[person as usize - 1] = name,
-    }
+        None => {
+            m.people[person as usize - 1] = name;
+            person_label(m, person)
+        }
+    };
+    m.ai_notes = renamed_in_notes(&m.ai_notes, &before, &after);
     m.transcript_version += 1;
+    if notes_current {
+        m.ai_version = m.transcript_version;
+    }
     Ok(())
+}
+
+/// Person `n` of the others as the transcript names them ("Speaker 2", or the name given).
+fn person_label(m: &Meeting, n: u32) -> String {
+    m.label(&Line { speaker: Speaker::Them, start: 0.0, end: 0.0, text: String::new(), person: n })
+}
+
+/// `notes` with each `before` (a whole word or words, any case: "Speaker 2", never "Speaker 20")
+/// written `after`. "Me" and "Them" stay: they are not one person's label.
+fn renamed_in_notes(notes: &str, before: &str, after: &str) -> String {
+    let skip = |s: &str| s.is_empty() || s.eq_ignore_ascii_case("me") || s.eq_ignore_ascii_case("them");
+    if notes.is_empty() || skip(before) || skip(after) || before == after {
+        return notes.to_string();
+    }
+    // A word's edge only where the label has one ("Bo Jr." ends with a dot).
+    let edge = |c: Option<char>| if c.is_some_and(char::is_alphanumeric) { r"\b" } else { "" };
+    let pattern = format!("{}{}{}", edge(before.chars().next()), regex::escape(before), edge(before.chars().last()));
+    match regex::RegexBuilder::new(&pattern).case_insensitive(true).build() {
+        Ok(re) => re.replace_all(notes, regex::NoExpand(after)).into_owned(),
+        Err(_) => notes.to_string(),
+    }
 }
 
 /// After Stop: who of the others said each line (`voices::assign`), and room for their names.
@@ -1396,6 +1428,21 @@ mod tests {
         assert_eq!((m.label(&m.lines[2]), m.lines[2].person), ("Speaker 1".to_string(), 2));
         name_speaker(&mut m, 2, "").unwrap();
         assert_eq!(m.label(&m.lines[2]), "Speaker 2", "an empty name gives the number back");
+        // The AI notes follow the names, and stay current (no "Write notes again" for a name).
+        m.ai_notes = "## Plan\n- **Speaker 2** sends the deck (00:03)\n- speaker 2 and Speaker 20 agree; Them too".into();
+        m.ai_version = m.transcript_version;
+        name_speaker(&mut m, 2, "Bo").unwrap();
+        assert_eq!(m.ai_notes, "## Plan\n- **Bo** sends the deck (00:03)\n- Bo and Speaker 20 agree; Them too");
+        assert_eq!(m.ai_version, m.transcript_version, "the notes are as current as before");
+        name_speaker(&mut m, 2, "Ana María").unwrap(); // a merge: Bo is Ana María
+        assert!(m.ai_notes.contains("**Ana María** sends the deck") && !m.ai_notes.contains("Bo"), "{}", m.ai_notes);
+        // Notes written before a transcript fix stay "to write again".
+        m.transcript_version += 1;
+        name_speaker(&mut m, 1, "Ana").unwrap();
+        assert!(m.ai_version < m.transcript_version);
+        assert!(m.ai_notes.contains("**Ana** sends the deck"));
+        assert_eq!(renamed_in_notes("- Bo Jr. calls, bo jr. pays", "Bo Jr.", "Bob"), "- Bob calls, Bob pays");
+        assert_eq!(renamed_in_notes("- **Me** and Them", "Me", "Bob"), "- **Me** and Them", "Me and Them are never renamed");
         // The paragraph fix moves a line to another person; a number that is not there is refused.
         edit_paragraph(&mut m, 2, 2, "Good morning.", "Good morning.", Speaker::Them, 1).unwrap();
         assert_eq!(m.lines[2].person, 1);

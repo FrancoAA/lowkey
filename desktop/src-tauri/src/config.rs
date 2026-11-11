@@ -102,6 +102,9 @@ pub struct Config {
     pub ai_key: String,
     /// Write the AI notes when a meeting stops (the first time, the built-in model downloads).
     pub ai_auto: bool,
+    /// The instructions for the notes ("" = the built-in llm::NOTES_PROMPT). {language} becomes
+    /// the meeting's language.
+    pub ai_prompt: String,
     /// AI agents (the MCP server, `lowkey --mcp`) may start and stop meeting recordings. Off:
     /// they only read meetings and dictations, and transcribe files.
     pub mcp_recording: bool,
@@ -141,6 +144,7 @@ impl Default for Config {
             ai_model: String::new(),
             ai_key: String::new(),
             ai_auto: true,
+            ai_prompt: String::new(),
             mcp_recording: false,
             meeting_voices: false,
             screen_token: String::new(),

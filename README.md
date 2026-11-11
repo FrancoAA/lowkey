@@ -114,13 +114,14 @@ The global key is **<kbd>Super</kbd>+<kbd>Ctrl</kbd>+<kbd>X</kbd>** on Linux and
   ready. Keep holding the key for push-to-talk, or let go and tap it again to finish.
 - While a dictation is still being transcribed, a new press shows "Still transcribing".
   Dictation goes ahead of files in the queue.
-- **Move or collapse the strip** (the dictation and the meeting recording use the same one):
+- **Move or collapse the strip** (the dictation and the meeting recording use the same window):
   drag it anywhere on the screen. The button in its top-right corner (it shows when the
   pointer is on the strip) makes it a small pill with the dot and the time. A click on the pill
   opens it again. The app keeps the place and the size for the next time
-  (`overlay_at`, `overlay_collapsed` in the settings). While a meeting records, the strip
-  shows the time, the wave and a **microphone button**: it mutes your microphone (silence is
-  recorded in its place; the computer's sound goes on) until you click it again. The strip never keeps the keyboard focus:
+  (`overlay_at`, `overlay_collapsed` in the settings). While a meeting records, the window is a
+  small **capsule** (see Meetings), whatever the strip's size: on hover its **microphone
+  button** mutes your microphone (silence is recorded in its place; the computer's sound goes
+  on) until you click it again. The strip never keeps the keyboard focus:
   on Hyprland a click focuses a window, so the app gives the focus back to your app at once
   (during a drag, when you let go).
 
@@ -185,10 +186,12 @@ Record a call or a talk, as text next to your notes (Linux for now). No bot join
   <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>M</kbd> on macOS and Windows; change it in Settings → Meetings)
   starts a recording from any app, and stops it. On Hyprland (or with your own desktop bind)
   it also starts the app when it is closed; on X11, macOS and Windows the app must run. A
-  strip at the bottom of the screen shows the time, a two-colour wave (Me light grey, Them steel blue) and the newest line,
-  and "saved" at the end, with **Open the notes**: a click opens the window on that meeting's
-  notes. The saved strip stays 8 s, and longer while the pointer is on it. It never keeps the
-  keyboard focus; drag it to move it, or collapse it to a pill (see above).
+  small capsule at the bottom of the screen shows a red dot, Lowkey's mark and the time. The
+  mark's bars move with the voices, green while you talk and blue while the others talk. On
+  hover the capsule shows **Record screen**, **Mute** and **Stop**; a click elsewhere on it
+  opens the meeting in the window. At Stop it says "Saving", then **Open the notes**: a click
+  opens the window on that meeting's notes. The saved capsule stays 8 s, and longer while the
+  pointer is on it. It never keeps the keyboard focus; drag it to move it.
 - **Record** (in the window, next to the search field) does the same, and so does the tray menu. It records two sources: your microphone (**Me**) and the computer's sound
   (**Them**: the others in Zoom, Meet, Teams…, through PipeWire or PulseAudio).
 - The text comes a few seconds after someone speaks: each source is cut at pauses (4–20 s
@@ -211,7 +214,8 @@ Record a call or a talk, as text next to your notes (Linux for now). No bot join
   after Stop, the others in the call are told apart by their voices, and each "Them" line gets
   a speaker: **Speaker 1**, **Speaker 2**… Click a speaker to type a name; give two speakers the
   same name when they are one person, and their lines merge. Copy, Export, the note-app file,
-  the notes and AI agents use the names. Turning it on downloads two models (46 MB). While a
+  the notes and AI agents use the names. Notes written already change with the name ("Speaker
+  2" becomes the name in them); they do not need to be written again for it. Turning it on downloads two models (46 MB). While a
   meeting records, the computer's sound is kept in a temporary file in the meetings folder;
   after Stop it takes about 2 minutes for an hour of meeting, then the file is deleted, and only
   then are the note-app file and the notes written (Export, Write notes and fixes wait for
@@ -252,8 +256,13 @@ Record a call or a talk, as text next to your notes (Linux for now). No bot join
   Notes also offers Qwen3.5 2B (1.3 GB, faster, less exact) and Gemma 4 E4B (5 GB). Or your own
   server in Settings → Meetings → Notes (Ollama, LM Studio, any OpenAI-compatible API; a warning shows
   when it is not on this computer). They are written by themselves when a meeting stops (the
-  first time, after the model's download), or with **Write notes** when a meeting has none;
-  they are a draft, and Copy/Export include them. Measurements: [bench/summary/results.md](bench/summary/results.md).
+  first time, after the model's download), or with **Write notes** when a meeting has none.
+  **Regenerate** writes them again (it asks first; the new notes replace the old ones only when
+  they are complete, so a failed or cancelled try keeps them). They are a draft, and
+  Copy/Export include them. **Instructions for the notes** (Settings → Meetings → Notes) shows
+  what the model is told: change it to try other notes, and **Restore the original** brings
+  back the app's instructions. `{language}` becomes the meeting's language (when the text does
+  not have it, "Write in …" is added at the end), and the Vocabulary's names are added. Measurements: [bench/summary/results.md](bench/summary/results.md).
 - **Ask about this meeting** (the chat on the right; <kbd>Ctrl</kbd>+<kbd>K</kbd>): the same
   model answers questions from the transcript and the notes ("who calls Acme?", "write a
   follow-up email"). Three suggestions are ready: a follow-up email, a TL;DR, your tasks. The
@@ -406,6 +415,7 @@ ai_engine = "builtin"           # AI notes: builtin | server
 ai_builtin_model = "qwen3.5-4b" # qwen3.5-4b (recommended) | qwen3.5-2b | gemma-4-e4b
 ai_url = "http://localhost:11434/v1"   # own server (OpenAI-compatible); ai_model, ai_key too
 ai_auto = true                  # write AI notes when a meeting stops
+ai_prompt = ""                  # the instructions for the notes ("" = the app's; Settings → Meetings → Notes)
 export_dir = ""                  # Note apps: the folder for each meeting's Markdown note ("" = off)
 export_auto = true              # save there when a meeting stops and when its AI notes are written
 export_parts = ["ai_notes", "notes", "transcript"]
@@ -472,10 +482,10 @@ make test          # UI typecheck + build, Rust unit tests
 make e2e-desktop   # the app in a nested Hyprland, on a temporary headless output of your
                    # session; its own runtime folder and a D-Bus that starts no services (no
                    # portals): files, errors, dictation, the global key, live preview, Settings,
-                   # a meeting; the meeting key and its strip (drag, mute, collapse, Open the
-                   # notes), AI notes (with a cached Qwen3.5 4B in bench/.work/llm);
+                   # a meeting; the meeting key and its capsule (drag, mute, stop, record
+                   # screen, Open the notes), AI notes (with a cached Qwen3.5 4B in bench/.work/llm);
                    # screenshots 09-40. Programs it started are stopped at the end.
-                   # python3 scripts/e2e_desktop.py --strip-only: only the strip (quick)
+                   # python3 scripts/e2e_desktop.py --strip-only: only the capsule (quick)
                    # python3 scripts/e2e_desktop.py --first-run: empty model folder
                    # OW_E2E_HYPRBARS=<hyprbars.so>: also checks that title-bar plugins skip the overlay
 make bench         # research only: the model benchmark (docs/benchmark.md), Python via uv

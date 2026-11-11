@@ -64,6 +64,9 @@ export interface Status {
     model: string;
     has_key: boolean;
     auto: boolean;
+    /** The user's instructions for the notes ("" = the app's), and the app's own. */
+    prompt: string;
+    default_prompt: string;
     builtin: {
       supported: boolean;
       downloaded: boolean;

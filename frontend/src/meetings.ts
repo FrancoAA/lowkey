@@ -944,12 +944,17 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
     }
     const mine = aiJob?.id === shown.id ? aiJob : null;
     const running = !!mine && aiRunning();
-    // When there are no notes yet (not written, or the writing failed), or the transcript was
-    // fixed after they were written.
+    // No notes yet (not written, or the writing failed); the transcript was fixed after they were
+    // written; or Regenerate (the notes went wrong, or other instructions are to be tried).
     const stale = !!shown.ai_notes && (shown.transcript_version ?? 0) > (shown.ai_version ?? 0);
-    aiWrite.hidden = running || (!!shown.ai_notes && !stale) || tab !== "notes";
-    aiWrite.textContent = stale ? "Write notes again" : "Write notes";
-    aiWrite.title = stale ? "The transcript was fixed after these notes were written" : "";
+    const regenerate = !!shown.ai_notes?.trim() && !stale;
+    aiWrite.hidden = running || tab !== "notes";
+    aiWrite.textContent = stale ? "Write notes again" : regenerate ? "Regenerate" : "Write notes";
+    aiWrite.title = stale
+      ? "The transcript was fixed after these notes were written"
+      : regenerate
+        ? "Write these notes again from the transcript, with the instructions in Settings → Meetings → Notes"
+        : "";
     aiWrite.disabled = aiRunning() || chatRunning() || voicesWorking.has(shown.id); // at work for something else, or the speakers come first
     if (voicesWorking.has(shown.id)) aiWrite.title = "Wait until the voices are told apart: then the notes have the speakers";
     aiCancel.hidden = !running;
@@ -1168,6 +1173,15 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
   aiWrite.addEventListener("click", async () => {
     if (!shown || aiRunning()) return;
     const id = shown.id;
+    const stale = (shown.transcript_version ?? 0) > (shown.ai_version ?? 0);
+    if (shown.ai_notes?.trim() && !stale) {
+      const ok = await confirmDialog({
+        title: "Write the notes again?",
+        body: "The model writes new notes from the transcript, with the instructions in Settings → Meetings → Notes. They replace these notes when they are complete. If the writing fails or you cancel it, these notes stay.",
+        action: "Regenerate",
+      });
+      if (!ok || shown?.id !== id || aiRunning()) return;
+    }
     aiWrite.disabled = true; // no second job from a double click
     aiJob = { id, state: "preparing", detail: "Getting ready…", progress: 0, text: "" };
     renderAi();

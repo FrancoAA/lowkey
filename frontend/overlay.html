@@ -17,7 +17,20 @@
       <canvas id="wave" aria-hidden="true"></canvas>
       <span id="timer" class="timer" aria-hidden="true">0:00</span>
       <span id="preview" class="preview" aria-hidden="true"></span>
-      <canvas id="mwave" class="mwave" aria-hidden="true"></canvas>
+      <!-- A meeting: the capsule. A red dot, the live mark (its bars move with the voices, in the
+           colour of who talks), the time; on hover Mute, Record screen and Stop. Then "Saving",
+           and "Open the notes". -->
+      <div id="cap" class="cap">
+        <span class="cap-rec" aria-hidden="true"></span>
+        <span id="mark" class="mark" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
+        <span id="cap-time" class="cap-time" aria-hidden="true">0:00</span>
+        <svg class="cap-muted" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3Zm0 0v4m-4 0h8M6 11a6 6 0 0 0 12 0M4 4l16 16" /></svg>
+        <span class="cap-spin" aria-hidden="true"></span>
+        <svg class="cap-check" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12l5 5 9-10" /></svg>
+        <span id="cap-text" class="cap-text"></span>
+        <!-- For screen readers: what the capsule shows (the time is not read every second). -->
+        <span id="cap-sr" class="sr-only"></span>
+      </div>
       <!-- Collapsed: the dot and this short text (the time, or what it does) only. -->
       <span id="mini" class="mini" aria-hidden="true"></span>
       <!-- A meeting: record the screen too (as often as you want), or stop it. -->
@@ -28,6 +41,8 @@
       <button id="mute" class="mute" type="button" title="Mute your microphone" aria-label="Mute your microphone" aria-pressed="false">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3Zm0 0v4m-4 0h8M6 11a6 6 0 0 0 12 0" /><path class="slash" d="M4 4l16 16" /></svg>
       </button>
+      <!-- A meeting: stop and save it. -->
+      <button id="stop" class="stop-btn" type="button" title="Stop and save the meeting" aria-label="Stop and save the meeting"></button>
       <button id="collapse" class="collapse" type="button" title="Collapse (drag the strip to move it)" aria-label="Collapse the strip">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7" /></svg>
       </button>

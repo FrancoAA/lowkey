@@ -512,14 +512,12 @@ pub enum Engine {
 /// the order of a long meeting), and a click on the point finds its place (frontend crossref).
 /// bench/summary/results.md, "Time order": the time at the start of a bullet made the 4B model
 /// copy the transcript line by line; the task rule before the time rule keeps the owners right.
-pub fn system_prompt(lang: &str, names: &[String]) -> String {
-    format!(
-        "You write meeting notes from a transcript. \"Me\" is the person who recorded the meeting; \
+pub const NOTES_PROMPT: &str = "You write meeting notes from a transcript. \"Me\" is the person who recorded the meeting; \
 the others are \"Them\", or one label for each person told apart by voice (\"Speaker 2\", or a \
 name). For a label that is not a name, use the person's name when the transcript says it. The \
 notes written by \"Me\" during the meeting show what mattered to them.
 
-Write in {lang}. Use only facts from the transcript; never invent names, dates or numbers.
+Write in {language}. Use only facts from the transcript; never invent names, dates or numbers.
 
 Organize the notes by topic and keep the order of the meeting. Markdown:
 - One section for each topic: \"## \" and a short title that names it. Each subject gets its own \
@@ -540,9 +538,18 @@ topic's section, after its earlier bullets. Never make a second section for the 
 never put a bullet under another topic only because it was said near it.
 - A question left without a decision is a bullet too: say it is open, and the next date if one \
 was set.
-- No summary, no introduction, no closing words. Leave out small talk and greetings.{}",
-        glossary(names)
-    )
+- No summary, no introduction, no closing words. Leave out small talk and greetings.";
+
+/// The placeholder for the meeting's language in the instructions ("Spanish").
+pub const LANGUAGE: &str = "{language}";
+
+/// The instructions sent with the meeting: `custom` (Settings → Meetings → Notes; "" = the
+/// built-in NOTES_PROMPT) with the language in place of {language} (added at the end when the
+/// text does not have it: notes in the wrong language otherwise), and the vocabulary's names.
+pub fn system_prompt(lang: &str, names: &[String], custom: &str) -> String {
+    let text = if custom.trim().is_empty() { NOTES_PROMPT } else { custom.trim() };
+    let text = if text.contains(LANGUAGE) { text.replace(LANGUAGE, lang) } else { format!("{text}\n\nWrite in {lang}.") };
+    text + &glossary(names)
 }
 
 fn glossary(names: &[String]) -> String {
@@ -603,12 +610,13 @@ pub fn write_notes(
     input: &str,
     lang: &str,
     names: &[String],
+    prompt: &str,
     progress: ProgressFn,
     on_text: &mut dyn FnMut(&str),
     cancel: &AtomicBool,
 ) -> anyhow::Result<String> {
     anyhow::ensure!(input.chars().count() <= MAX_INPUT_CHARS, "this meeting is too long for notes for now (over about four hours)");
-    let messages = vec![json!({"role": "system", "content": system_prompt(lang, names)}), json!({"role": "user", "content": input})];
+    let messages = vec![json!({"role": "system", "content": system_prompt(lang, names, prompt)}), json!({"role": "user", "content": input})];
     // Temperature 0: at 0.2 the 4B model gave the recorder's own task to someone else in half
     // of the runs (bench/summary/results.md, "Notes by topic"). 3000 tokens: the times make the
     // notes about a third longer; it still fits in `CONTEXT` after `MAX_INPUT_CHARS`.
@@ -987,7 +995,7 @@ mod tests {
     fn own_server_gets_the_instructions_the_key_and_the_model() {
         let (url, got) = fake_server("## Versión 2.4\n- **Martín** cierra el ticket 412");
         let engine = Engine::Server { url, model: "qwen3.5:4b".into(), key: "sk-test".into() };
-        let text = write_notes(&engine, "**Them** (00:01): Hola.", "Spanish", &[], &mut |_, _, _| {}, &mut |_| {}, &AtomicBool::new(false)).unwrap();
+        let text = write_notes(&engine, "**Them** (00:01): Hola.", "Spanish", &[], "", &mut |_, _, _| {}, &mut |_| {}, &AtomicBool::new(false)).unwrap();
         assert_eq!(text, "## Versión 2.4\n- **Martín** cierra el ticket 412");
         let req = got.join().unwrap();
         assert!(req.starts_with("POST /v1/chat/completions "), "{req}");
@@ -1098,7 +1106,7 @@ mod tests {
         assert!(!builtin_status(DEFAULT_MODEL).downloaded);
         let mut steps = Vec::new();
         let input = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../bench/summary/meeting-es.md")).unwrap();
-        let text = write_notes(&Engine::Builtin { gpu: true, model: DEFAULT_MODEL.into() }, &input, "Spanish", &[], &mut |w, _, _| steps.push(w.to_string()), &mut |_| {}, &AtomicBool::new(false));
+        let text = write_notes(&Engine::Builtin { gpu: true, model: DEFAULT_MODEL.into() }, &input, "Spanish", &[], "", &mut |w, _, _| steps.push(w.to_string()), &mut |_| {}, &AtomicBool::new(false));
         stop_builtin();
         let text = text.unwrap();
         assert!(steps.iter().any(|s| s == "the model runner"), "{steps:?}");
@@ -1130,8 +1138,21 @@ mod tests {
         for bad in ["../x", "/etc/passwd", "a/../../b", "C:\\x", "\\\\server\\x", ""] {
             assert_eq!(safe_relative(bad), None, "{bad}");
         }
-        assert!(system_prompt("Spanish", &[]).contains("Write in Spanish"));
-        assert!(system_prompt("Spanish", &["Lisandro".into(), "NMR".into()]).contains("write them exactly like this): Lisandro, NMR."));
+        assert!(system_prompt("Spanish", &[], "").contains("Write in Spanish. Use only facts"));
+        assert!(system_prompt("Spanish", &["Lisandro".into(), "NMR".into()], "").contains("write them exactly like this): Lisandro, NMR."));
+    }
+
+    #[test]
+    fn own_instructions_get_the_language_and_the_names() {
+        let names = ["Ana".to_string()];
+        assert_eq!(
+            system_prompt("Spanish", &names, "  Short notes in {language}.  "),
+            "Short notes in Spanish.\n\nNames and terms that may appear (write them exactly like this): Ana."
+        );
+        // Without {language}: it is said at the end (else the notes come in the wrong language).
+        assert_eq!(system_prompt("Spanish", &[], "Bullets only."), "Bullets only.\n\nWrite in Spanish.");
+        assert_eq!(system_prompt("Spanish", &[], "  \n "), system_prompt("Spanish", &[], ""), "empty = the built-in instructions");
+        assert!(NOTES_PROMPT.contains(LANGUAGE));
     }
 
     #[test]

@@ -78,6 +78,8 @@ pub struct App {
     overlay_drag: Mutex<Option<hyprland::OverlayDrag>>,
     /// Who wants the overlay: [dictation, meeting]. It shows while either does.
     overlay_wants: [AtomicBool; 2],
+    /// The strip is the meeting's capsule (a meeting records, or its "saved" shows).
+    overlay_capsule: AtomicBool,
     /// AI notes and questions: one job at a time, and its cancel flag.
     ai_busy: Arc<AtomicBool>,
     ai_cancel: Arc<AtomicBool>,
@@ -302,6 +304,7 @@ impl App {
             "start_at_login": self.start_at_login(),
             "meeting_key": self.key_of(KeyKind::Meeting),
             "overlay_collapsed": self.config.lock().overlay_collapsed,
+            "overlay_capsule": self.overlay_capsule.load(Ordering::SeqCst),
             "meeting_key_source": self.source_of(KeyKind::Meeting),
             "meeting_key_problem": if self.source_of(KeyKind::Meeting) == "none" && !self.key_of(KeyKind::Meeting).is_empty() { self.meeting_hotkey_text.lock().clone() } else { String::new() },
             "paste_key": self.key_of(KeyKind::PasteLast),
@@ -319,6 +322,8 @@ impl App {
             "ai": {
                 "engine": cfg.ai_engine, "url": cfg.ai_url, "model": cfg.ai_model, "has_key": !cfg.ai_key.is_empty(),
                 "auto": cfg.ai_auto,
+                // The instructions for the notes: the user's ("" = none), and the built-in ones.
+                "prompt": cfg.ai_prompt, "default_prompt": llm::NOTES_PROMPT,
                 "builtin_model": llm::model(&cfg.ai_builtin_model).id,
                 "builtin": llm::builtin_status(&cfg.ai_builtin_model),
             },
@@ -490,12 +495,25 @@ impl App {
                 emit_logged(&self.handle, "overlay", false);
             }
         }
+        if who == 1 && !on {
+            self.set_overlay_capsule(false); // the strip again (for a dictation, or the next time)
+        }
+        if !visible {
+            hyprland::overlay_hidden(); // the place that changed while it showed, for the next time
+        }
+    }
+
+    /// The meeting's wish, and its shape: the capsule for a recording and its "saved", the strip
+    /// for what needs words (a call offered, a meeting that did not start).
+    fn want_meeting_overlay(&self, capsule: bool) {
+        self.set_overlay_capsule(capsule);
+        self.want_overlay(1, true);
     }
 
     // ------------------------------------------------------------- the strip's place
     fn overlay_place(&self) -> hyprland::OverlayPlace {
         let c = self.config.lock();
-        hyprland::OverlayPlace { collapsed: c.overlay_collapsed, at: c.overlay_at }
+        hyprland::OverlayPlace { collapsed: c.overlay_collapsed, capsule: self.overlay_capsule.load(Ordering::SeqCst), at: c.overlay_at }
     }
 
     /// Save a new place (only when it changed): the config, and the Hyprland rule.
@@ -513,8 +531,14 @@ impl App {
                 eprintln!("  strip place not saved: {e}");
             }
         }
+        self.publish_overlay_place();
+    }
+
+    /// The place now to the Hyprland rule (the size at the next show) and to the strip's page.
+    fn publish_overlay_place(&self) {
+        let place = self.overlay_place();
         hyprland::set_overlay_place(place);
-        emit_logged(&self.handle, "overlay-place", json!({ "collapsed": place.collapsed, "at": place.at }));
+        emit_logged(&self.handle, "overlay-place", json!({ "collapsed": place.collapsed, "capsule": place.capsule, "at": place.at }));
     }
 
     /// Where the strip is now, as fractions of the room around it (None: not on screen, or the
@@ -592,29 +616,47 @@ impl App {
             return;
         }
         let new = hyprland::OverlayPlace { collapsed, ..old };
+        let at = self.resize_overlay_window(old, new);
+        self.save_overlay_place(hyprland::OverlayPlace { collapsed, at, ..new });
+    }
+
+    /// The meeting's capsule on or off: the window's size limits now (before it shows), its
+    /// size on screen a moment later (not on this thread: it waits for GTK).
+    fn set_overlay_capsule(&self, on: bool) {
+        if self.overlay_capsule.swap(on, Ordering::SeqCst) == on {
+            return;
+        }
+        let new = self.overlay_place();
+        let old = hyprland::OverlayPlace { capsule: !on, ..new };
+        self.publish_overlay_place();
+        if old.size() == new.size() {
+            return;
+        }
+        if let Some(win) = self.handle.get_webview_window("overlay") {
+            overlay_size_limits(&win, new.size(), new.size().0 < old.size().0);
+        }
+        let Some(me) = self.handle.try_state::<AppRef>().map(|a| a.inner().clone()) else { return };
+        std::thread::spawn(move || {
+            let at = me.resize_overlay_window(old, new);
+            if me.overlay_capsule.load(Ordering::SeqCst) == on {
+                me.save_overlay_place(hyprland::OverlayPlace { at, ..me.overlay_place() });
+            }
+        });
+    }
+
+    /// The window from `old`'s size to `new`'s, its centre kept. Returns where it is then (as
+    /// fractions), or `new.at` when the system does not say.
+    fn resize_overlay_window(&self, old: hyprland::OverlayPlace, new: hyprland::OverlayPlace) -> Option<[f32; 2]> {
         let (w, h) = new.size();
-        let Some(win) = self.handle.get_webview_window("overlay") else { return };
+        if old.size() == (w, h) {
+            return new.at;
+        }
+        let Some(win) = self.handle.get_webview_window("overlay") else { return new.at };
         // Not Hyprland: where it is before (to keep its centre).
         let before = (win.outer_position().ok(), win.outer_size().ok());
-        // The size limits first: the window refuses a size outside them.
-        let size = tauri::LogicalSize::new(w as f64, h as f64);
-        // Growing: the max size first; shrinking: the min size first (never min > max).
-        if collapsed {
-            let _ = win.set_min_size(Some(size));
-            let _ = win.set_max_size(Some(size));
-        } else {
-            let _ = win.set_max_size(Some(size));
-            let _ = win.set_min_size(Some(size));
-        }
-        #[cfg(target_os = "linux")]
-        {
-            let _ = win.with_webview(move |wv| {
-                use gtk::prelude::WidgetExt;
-                wv.inner().set_size_request(w as i32, h as i32);
-            });
-        }
-        let _ = win.set_size(size);
-        let mut at = old.at;
+        overlay_size_limits(&win, (w, h), w < old.size().0);
+        let _ = win.set_size(tauri::LogicalSize::new(w as f64, h as f64));
+        let mut at = new.at;
         if hyprland::running() {
             // Give GTK a moment to send the new size limits, else Hyprland keeps the old size.
             std::thread::sleep(std::time::Duration::from_millis(120));
@@ -624,8 +666,8 @@ impl App {
                     at = Some(moved.fractions());
                 }
             }
-        } else {
-            // Keep the centre (Windows, macOS, X11).
+        } else if win.is_visible().unwrap_or(false) {
+            // Keep the centre (Windows, macOS, X11). Hidden: placed when it shows.
             let scale = win.scale_factor().unwrap_or(1.0);
             if let (Some(p), Some(b)) = before {
                 let (pw, ph) = ((w as f64 * scale) as i32, (h as f64 * scale) as i32);
@@ -634,7 +676,7 @@ impl App {
             std::thread::sleep(std::time::Duration::from_millis(120));
             at = self.overlay_fractions_now().or(at);
         }
-        self.save_overlay_place(hyprland::OverlayPlace { collapsed, at });
+        at
     }
 
     fn handle_cli(self: &Arc<Self>, cli: &Cli, first: bool) {
@@ -728,7 +770,7 @@ impl App {
                     }
                     // The strip says why for a moment (it reads the meeting-start event).
                     emit_logged(&self.handle, "meeting-start", json!({"result": {"Err": e}}));
-                    self.want_overlay(1, true);
+                    self.want_meeting_overlay(false);
                     output::notify(&format!("Meeting not started: {e}"));
                     self.hide_meeting_strip_later(4);
                 }
@@ -820,7 +862,7 @@ impl App {
                                 emit_logged(&self.handle, "meeting-start", json!({"result": {"Err": e}}));
                                 output::notify(&format!("The {} call was not recorded: {e}", call.label));
                                 *self.call_offer.lock() = Some((call.clone(), Instant::now()));
-                                self.want_overlay(1, true);
+                                self.want_meeting_overlay(false);
                                 self.hide_meeting_strip_later(4);
                             }
                         }
@@ -829,7 +871,7 @@ impl App {
                         *self.call_offer.lock() = Some((call.clone(), Instant::now()));
                         let key = self.key_of(KeyKind::Meeting);
                         emit_logged(&self.handle, "call", json!({"state": "offer", "key": call.key, "label": call.label, "meeting_key": key}));
-                        self.want_overlay(1, true);
+                        self.want_meeting_overlay(false);
                         // Not taken in 20 s: the offer goes (and the strip, unless a meeting records).
                         let me = self.clone();
                         let k = call.key.clone();
@@ -1243,6 +1285,8 @@ struct OptionsIn {
     /// Some("") removes the key.
     ai_key: Option<String>,
     ai_auto: Option<bool>,
+    /// Some("") (or the built-in text) goes back to the built-in instructions.
+    ai_prompt: Option<String>,
     mcp_recording: Option<bool>,
     meeting_voices: Option<bool>,
     /// Some("") turns the note-app folder off.
@@ -1337,6 +1381,14 @@ fn apply_options(app: &AppRef, options: OptionsIn) -> Result<Value, String> {
         }
         if let Some(on) = options.ai_auto {
             cfg.ai_auto = on;
+        }
+        if let Some(p) = options.ai_prompt {
+            let p = p.trim();
+            if p.chars().count() > MAX_PROMPT_CHARS {
+                return Err(format!("The instructions are too long (at most {MAX_PROMPT_CHARS} characters)."));
+            }
+            // The built-in text, unchanged: "" (so it follows the app's next improvements).
+            cfg.ai_prompt = if p == llm::NOTES_PROMPT.trim() { String::new() } else { p.to_string() };
         }
         if let Some(on) = options.mcp_recording {
             cfg.mcp_recording = on;
@@ -1503,6 +1555,9 @@ async fn meeting_start(app: State<'_, AppRef>, title: String) -> Result<meeting:
 
 const ALREADY_RECORDING: &str = "A meeting is already being recorded.";
 
+/// Settings → Meetings → Notes: the longest instructions (the built-in ones are about 2,600).
+const MAX_PROMPT_CHARS: usize = 20_000;
+
 /// Two key strings name the same combination ("super+alt+v" = "SUPER + ALT + V").
 fn same_key(a: &str, b: &str) -> bool {
     let n = |k: &str| hyprland::normalize_key(k).unwrap_or_else(|| k.split_whitespace().collect::<String>().to_uppercase());
@@ -1569,7 +1624,7 @@ fn meeting_open(app: &AppRef, title: &str) -> Result<meeting::Live, String> {
         return Err(format!("{e:#}"));
     }
     *app.meeting.lock() = Some(session.clone());
-    app.want_overlay(1, true); // the strip shows the recording, in every app
+    app.want_meeting_overlay(true); // the capsule shows the recording, in every app
     app.emit_status();
     // The first piece comes after a few seconds: have the model loaded by then.
     let e2 = app.engines.clone();
@@ -1810,6 +1865,26 @@ fn exit_now() -> ! {
     }
     #[cfg(not(unix))]
     std::process::exit(0)
+}
+
+/// The window's size limits (min = max holds its size). Shrinking: the min size first; growing:
+/// the max size first (never min > max: the window refuses it).
+fn overlay_size_limits(win: &tauri::WebviewWindow, (w, h): (u32, u32), shrinking: bool) {
+    let size = tauri::LogicalSize::new(w as f64, h as f64);
+    if shrinking {
+        let _ = win.set_min_size(Some(size));
+        let _ = win.set_max_size(Some(size));
+    } else {
+        let _ = win.set_max_size(Some(size));
+        let _ = win.set_min_size(Some(size));
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let _ = win.with_webview(move |wv| {
+            use gtk::prelude::WidgetExt;
+            wv.inner().set_size_request(w as i32, h as i32);
+        });
+    }
 }
 
 /// The strip's collapse button and its pill (a click opens it again).
@@ -2224,7 +2299,10 @@ fn run_ai_notes(app: &AppRef, id: &str) {
         };
         let mut on_text = |t: &str| send("writing", "Writing…", 0.0, t);
         let names = crate::vocabulary::Vocabulary::new(&app.config.lock().vocabulary).names();
-        let text = llm::write_notes(&engine, &input, &lang, &names, &mut progress, &mut on_text, &app.ai_cancel)?;
+        let prompt = app.config.lock().ai_prompt.clone();
+        let text = llm::write_notes(&engine, &input, &lang, &names, &prompt, &mut progress, &mut on_text, &app.ai_cancel)?;
+        // Nothing written (an empty answer): the notes there stay.
+        anyhow::ensure!(!text.trim().is_empty(), "the model wrote no notes; the notes did not change");
         Ok((text, label))
     })();
     match result {
@@ -2878,7 +2956,7 @@ pub fn run() {
             let config = Config::load();
             set_window_theme(&handle, &config.theme);
             // The strip opens where the user left it (the rule that keys add uses this place).
-            let place = hyprland::OverlayPlace { collapsed: config.overlay_collapsed, at: config.overlay_at };
+            let place = hyprland::OverlayPlace { collapsed: config.overlay_collapsed, capsule: false, at: config.overlay_at };
             hyprland::set_overlay_place(place);
             let engines = Engines::new(config.idle_unload_minutes);
             engines.set_vocabulary(&config.vocabulary);
@@ -2942,6 +3020,7 @@ pub fn run() {
                 call_session: Mutex::new(None),
                 calls_seen: Mutex::new(Vec::new()),
                 overlay_wants: [AtomicBool::new(false), AtomicBool::new(false)],
+                overlay_capsule: AtomicBool::new(false),
                 overlay_drag: Mutex::new(None),
                 ai_busy: Arc::new(AtomicBool::new(false)),
                 ai_cancel: Arc::new(AtomicBool::new(false)),

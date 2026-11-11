@@ -22,6 +22,8 @@ export interface Options {
   /** "" removes the key. */
   ai_key?: string;
   ai_auto?: boolean;
+  /** The instructions for the notes; "" goes back to the app's. */
+  ai_prompt?: string;
   mcp_recording?: boolean;
   meeting_voices?: boolean;
   /** "" turns the note-app folder off. */

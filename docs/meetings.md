@@ -11,7 +11,7 @@ notes written by a language model (a local server such as Ollama or LM Studio by
 cloud API only when you choose it, with a clear warning). Phase 3 adds the computer's sound on
 macOS and Windows, a prompt when a call starts, and questions over past meetings.
 
-## The meeting key and the strip
+## The meeting key and the capsule
 
 - Settings → Meetings → **Meeting key**: Super+Ctrl+M on Linux, Ctrl+Alt+M on macOS and Windows
   (`meeting_hotkey` in config.toml). It runs `lowkey --meeting toggle`: a tap starts a
@@ -22,14 +22,26 @@ macOS and Windows, a prompt when a call starts, and questions over past meetings
   the app)". The dictation key and the meeting key never share a combination: each counts the
   other's bind as someone else's, and the app refuses the dictation key as the meeting key.
   X11, macOS, Windows: the global-shortcut plugin, as for dictation.
-- The **strip** is the dictation overlay (same window, same Hyprland rule: floating, pinned,
-  never focused). While a meeting records it shows a red dot, the time, a two-colour wave (Me
-  above the line in light grey, Them below it in steel blue) and the newest line, its speaker in its
-  colour. At Stop it says "Saving the
-  meeting…", then "Meeting saved" for 3 s. A dictation during a meeting takes the strip and
-  gives it back when it is done. A meeting started in the window shows the strip too (with no
-  keys at all, the app adds the strip's window rule itself). The time is not in the
-  screen-reader region, so it is not read out every second.
+- The **capsule** is the dictation overlay's window (same Hyprland rule: floating, pinned,
+  never focused) at 184×40 (`hyprland::OVERLAY_CAPSULE`). The app makes the window this size
+  when a meeting records (`set_overlay_capsule`), keeps it while "saved" shows, and gives the
+  strip its own size back when the meeting's strip goes; it never changes `overlay_collapsed`.
+  A call offered and a meeting that did not start need words: they show in the strip.
+- The window is transparent: the capsule is 30 px high and only as wide as what it shows,
+  with its own shadow; on hover it grows by the width of its buttons. A press on the
+  transparent edge drags it too (else Hyprland would focus the window for nothing).
+- At rest the capsule shows a red dot, Lowkey's mark and the time. The mark's five bars move
+  with the meeting's levels and take the colour of who talks (`LiveMark`: the louder source
+  for 0.2 s; green for Me, blue for Them; grey after 1.2 s of quiet). Speaker 2, 3… are told
+  apart only after Stop, so the live colours are Me and Them. Muted, a red crossed microphone
+  shows and only the computer's sound moves the bars. On hover: Record screen (when this build
+  records the screen), Mute and Stop, right after the time. A click elsewhere opens the meeting in
+  the window; a drag moves it (the place is kept, as for the strip). A call that ended shows
+  "Call ended" in place of the time for 20 s. At Stop it says "Saving", then a check and
+  **Open the notes**. A dictation during a meeting shows in the capsule as the pill does (the
+  dot and the time) and gives it back when it is done. A meeting started in the window shows
+  the capsule too (with no keys at all, the app adds the window rule itself). The time is not
+  in the screen-reader region, so it is not read out every second.
 - If the meeting key cannot be added (e.g. `config.toml` gives it the dictation key's
   combination), Settings → Meetings shows it "not active" with the reason; moving the dictation key
   adds it again.
@@ -145,8 +157,17 @@ with their bullet), and the sections by their first bullet. The 4B model alone p
 minute 7 under a topic of minute 29, and a topic of minute 4 after topics of minute 13
 (bench/summary/results.md, "Time order"). A bullet without a time stays after the bullet before
 it; notes without times stay as written. The notes are written at temperature 0: at 0.2 the 4B model gave the recorder's
-call to someone else in half of the runs (bench/summary/results.md, "Notes by topic"). **Write notes** shows only when a meeting has no notes (not written, or the writing
-failed). The language is named in the instructions (Settings → Speech,
+call to someone else in half of the runs (bench/summary/results.md, "Notes by topic"). **Write notes** shows when a meeting has no notes (not written, or the writing
+failed), **Write notes again** when the transcript was fixed after them, and **Regenerate**
+otherwise (it asks first). The notes are saved only when the model is done: an error, a cancel
+or an empty answer keeps the notes there.
+
+Settings → Meetings → Notes → **Instructions for the notes** (`ai_prompt` in config.toml; ""
+= the built-in `llm::NOTES_PROMPT`). The box shows the app's text until it is changed; saving
+the app's text again stores "" (so later improvements reach it), and **Restore the original**
+(it asks first) goes back to it. `{language}` becomes the meeting's language; without it, "Write
+in <language>." is added at the end (the measurement above). The Vocabulary's names are always
+added. Notes without times in brackets are not sorted (see above). The language is named in the instructions (Settings → Speech,
 else found in the transcript with whatlang): with "the language of the meeting" two of three
 models wrote English notes for a Spanish meeting (bench/summary/results.md).
 
