@@ -214,7 +214,8 @@ Record a call or a talk, as text next to your notes (Linux for now). No bot join
   after Stop, the others in the call are told apart by their voices, and each "Them" line gets
   a speaker: **Speaker 1**, **Speaker 2**… Click a speaker to type a name; give two speakers the
   same name when they are one person, and their lines merge. Copy, Export, the note-app file,
-  the notes and AI agents use the names. Turning it on downloads two models (46 MB). While a
+  the notes and AI agents use the names. Notes written already change with the name ("Speaker
+  2" becomes the name in them); they do not need to be written again for it. Turning it on downloads two models (46 MB). While a
   meeting records, the computer's sound is kept in a temporary file in the meetings folder;
   after Stop it takes about 2 minutes for an hour of meeting, then the file is deleted, and only
   then are the note-app file and the notes written (Export, Write notes and fixes wait for
