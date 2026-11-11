@@ -138,7 +138,13 @@ transcript; never older AI notes) and organizes it by topic, in the meeting's or
 section for each topic, a bullet for each decision, fact, figure or task (a task starts with
 the person in bold), one level of sub-bullets for the reasons, the dropped options and the next
 dates; no summary, no introduction. A line by **Me** that says "I" will do something is a task
-for **Me**. The notes are written at temperature 0: at 0.2 the 4B model gave the recorder's
+for **Me**. Each bullet ends with the time of its transcript line, e.g. (12:40); when the meeting
+comes back to a topic, its new bullets go in that topic's section. Then the app sorts by these
+times (`llm::in_meeting_order`): the bullets of each section in time order (sub-bullets stay
+with their bullet), and the sections by their first bullet. The 4B model alone put a point from
+minute 7 under a topic of minute 29, and a topic of minute 4 after topics of minute 13
+(bench/summary/results.md, "Time order"). A bullet without a time stays after the bullet before
+it; notes without times stay as written. The notes are written at temperature 0: at 0.2 the 4B model gave the recorder's
 call to someone else in half of the runs (bench/summary/results.md, "Notes by topic"). **Write notes** shows only when a meeting has no notes (not written, or the writing
 failed). The language is named in the instructions (Settings → Speech,
 else found in the transcript with whatlang): with "the language of the meeting" two of three

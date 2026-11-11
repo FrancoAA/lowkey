@@ -77,3 +77,35 @@ decision, fact, figure or task (the person in bold), one level of sub-bullets. T
   this problem. At temperature 0 the answer is the same each time, and it is right here.
 - The app writes the notes at temperature 0; the chat answers at 0.2.
 - One meeting only: check the owners in your notes, as before.
+
+## Time order (run4, 2026-11-11)
+
+The problem: in long meetings a point said in the middle came at the end of the notes, under
+another topic. In a 55-minute meeting the 4B model put a point from 07:26 in a section about
+29:12, and the talk of 42:00 in a section of 12:00. Without a time on a bullet, nothing could
+put it back in its place.
+
+The fix has two parts. The prompt (`run4/prompt.txt`, the app's `llm::system_prompt`) asks for
+the time of the transcript line at the end of each bullet, e.g. (12:40), and puts the bullets of
+a topic that comes back in that topic's section. Then the app sorts by these times
+(`llm::in_meeting_order`): the bullets of each section, and the sections by their first bullet.
+The model alone does not keep the order, also when the prompt asks for it (07:30 after 09:53,
+13:23 after 15:13); the sort is what makes it right.
+
+Qwen3.5 4B on the GPU, temperature 0, one run for each prompt and meeting. The bench meeting
+(`meeting-es.md`) and five recorded meetings (16 to 55 minutes; not in the repository, they are
+private):
+
+| Where the time goes | Bench: owners right | Bold names | Recorded meetings |
+|---|---|---|---|
+| End of the bullet, its rule before the task rule (`run4/time-rule-before-tasks.md`) | no: the Acme call to Sofía | no | good topics |
+| Start of the bullet: "- (12:40) …" (`run4/time-first.md`) | yes | yes | of 5: one copied the transcript line by line ("X dijo que …"), one repeated bullets in two sections |
+| Start, and a rule that only a task has a bold name | yes | yes | the 55-minute meeting copied every line until the token limit (2 tries of 2) |
+| **End of the bullet, its rule after the task rule** (`run4/time-at-end.md`) | **yes**, all five tasks | no | **good topics in all**; a chat with no decisions is weak but does not loop |
+
+- In the bullets checked by hand, each time was the time of the right line, or a few seconds from it.
+- The cost: the names of the task owners are no longer in bold (the owners are right). Some
+  points come twice in other words (Salesforce, Postgres in the bench).
+- The notes are about a third longer with the times: `max_tokens` is 3000 now (2000 before).
+- A small model is not stable here: one sentence more in the prompt changed a good answer into a
+  copy of the transcript. Test a change on a long meeting before it goes in.
