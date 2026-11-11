@@ -443,6 +443,10 @@ fn builtin_endpoint(exe: &Path, model: &Path, gpu: bool, cancel: &AtomicBool) ->
     cmd.env("LLAMA_API_KEY", &key);
     cmd.args(["-m", &model.to_string_lossy(), "--host", "127.0.0.1", "--port", &port.to_string()]);
     cmd.args(["-c", &CONTEXT.to_string(), "-np", "1", "-fa", "on", "--jinja", "--no-webui"]);
+    // The KV cache in 8 bits: 1,088 MB at 64K instead of 2,048 MB (f16), at the same speed. The
+    // cost, measured: the 4B model drops more points in the longest meetings (bench/summary/
+    // results.md, "Quantized KV cache"). q4_0 gave a task to the wrong person and looped.
+    cmd.args(["-ctk", "q8_0", "-ctv", "q8_0"]);
     cmd.args(["-ngl", if gpu { "99" } else { "0" }]);
     cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(std::fs::File::create(&log).map(Stdio::from).unwrap_or_else(|_| Stdio::null()));
     #[cfg(windows)]

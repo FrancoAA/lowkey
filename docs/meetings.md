@@ -157,7 +157,11 @@ models wrote English notes for a Spanish meeting (bench/summary/results.md).
   own process on 127.0.0.1 with a random 192-bit API key from the system's random generator,
   given through its environment (`LLAMA_API_KEY`; the command line is readable by other users,
   the environment is not), so no web page and no other user can use it. 64K context (about four
-  hours of meeting), all layers on the GPU when the app found one. It stops 2 minutes after the
+  hours of meeting), all layers on the GPU when the app found one. The KV cache is 8-bit
+  (`-ctk q8_0 -ctv q8_0`): 1.1 GB at 64K instead of 2 GB, about 4.4 GB in all with the 4B model.
+  The cost: in a 55-minute meeting the notes had fewer points (24 and 36 bullets, not 51) and
+  missed one topic; in shorter meetings they were as good (bench/summary/results.md,
+  "Quantized KV cache"). It stops 2 minutes after the
   last use (never during a job), on Cancel, and when the app quits; a pid file lets the next
   start stop one that a crash or a kill left behind (only if that pid is our llama-server).
 - **The built-in model** (Settings → Meetings → Notes → Notes model, `ai_builtin_model`; its status, "Ready · Qwen3.5 4B

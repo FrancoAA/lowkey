@@ -109,3 +109,20 @@ private):
 - The notes are about a third longer with the times: `max_tokens` is 3000 now (2000 before).
 - A small model is not stable here: one sentence more in the prompt changed a good answer into a
   copy of the transcript. Test a change on a long meeting before it goes in.
+
+## Quantized KV cache (run4, 2026-11-11)
+
+`-ctk/-ctv` on the built-in server (llama.cpp b12047, Vulkan, flash attention on), 64k context,
+the `run4/prompt.txt` prompt, the same six meetings as "Time order". The KV cache at 64k: f16
+2,048 MB, q8_0 1,088 MB, q4_0 576 MB; the speed did not change (~490 tokens/s read).
+
+| KV cache | Bench owners | 55-minute meeting (2 runs) | Other meetings |
+|---|---|---|---|
+| **f16** (the app) | all right | 51 bullets, 11 topics, the same both times | — |
+| q8_0 | all right | 36 and 24 bullets; the scheduling topic (20-25 min) missing both times | as f16 |
+| q4_0 | the Acme call to Sofía | 28 bullets, 7 topics | a casual chat looped (the same 10 bullets) until the token limit |
+
+- f16 at temperature 0 changes a few words from run to run, no more: these are not that noise.
+- Both quantized caches lose content where the input is longest (~15k tokens). The app uses
+  q8_0 all the same, for the memory (about 4.4 GB in all, not 5.4 GB): a choice, not a free gain.
+  q4_0 is out: a wrong owner and a loop.
