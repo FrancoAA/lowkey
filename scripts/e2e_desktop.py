@@ -386,7 +386,8 @@ esac
             check(hj("getoption", "cursor:no_warps").get("bool") is False, "cursor:no_warps is as it was (off) after the focus went back")
             # On hover the buttons show at the right end: Stop, then Mute, then Record screen.
             (x1, y1) = s1["at"]
-            stop_at, mute_at, screen_at = (x1 + sw - 22, y1 + 20), (x1 + sw - 51, y1 + 20), (x1 + sw - 80, y1 + 20)
+            # (the hover capsule: 4 px margin, 1 px border, 5 px padding, 22 px buttons 5 px apart)
+            stop_at, mute_at, screen_at = (x1 + sw - 21, y1 + 20), (x1 + sw - 48, y1 + 20), (x1 + sw - 75, y1 + 20)
             n_m = len(events("meeting"))
             pointer(f"abs:{mute_at[0]},{mute_at[1]},{{W}},{{H}}", "sleep:300", "click")
             try:
@@ -424,7 +425,7 @@ esac
             check(tuple(s4["size"]) == (184, 40) and abs(s4["at"][0] - s1["at"][0]) <= 3 and abs(s4["at"][1] - s1["at"][1]) <= 3,
                   f"the next recording shows the capsule where it was left ({s1['at']} / {s4['at']})")
             # Record screen (on hover), Stop screen, and again: two screen videos in this meeting.
-            sx, sy = s4["at"][0] + sw - 80, s4["at"][1] + 20
+            sx, sy = s4["at"][0] + sw - 75, s4["at"][1] + 20
             for want in ("on", "", "on"):
                 n_s = len(events("meeting"))
                 pointer(f"abs:{sx},{sy},{{W}},{{H}}", "sleep:300", "click")

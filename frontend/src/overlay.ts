@@ -264,7 +264,9 @@ async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> 
   const { invoke } = await import("@tauri-apps/api/core");
   return invoke<T>(cmd, args);
 }
-root.addEventListener("pointerdown", (e) => {
+// On the whole page: around the capsule the window is transparent, and a press there drags it
+// too (else Hyprland focuses the window for it, and nothing gives the focus back).
+document.addEventListener("pointerdown", (e) => {
   if (e.button !== 0) return;
   if ((e.target as Element).closest("#collapse, #mute, #screen, #stop, .open-link")) return; // their clicks (above)
   press = { x: e.screenX, y: e.screenY, appDrag: call<boolean>("overlay_drag_start").catch(() => false) };
@@ -276,7 +278,7 @@ root.addEventListener("pointerdown", (e) => {
     /* no capture: the release over the window still ends the drag */
   }
 });
-root.addEventListener("pointermove", (e) => {
+document.addEventListener("pointermove", (e) => {
   const p = press;
   if (!p || !(e.buttons & 1) || Math.hypot(e.screenX - p.x, e.screenY - p.y) < 4) return;
   void p.appDrag.then((appDrag) => {
@@ -296,8 +298,8 @@ async function release(): Promise<void> {
     if (root.dataset.capsule === "1" && meet) void call("open_meeting", { id: meet.meeting.id });
   } else if (collapsed) void askCollapse(false);
 }
-root.addEventListener("pointerup", () => void release());
-root.addEventListener("pointercancel", () => void release());
+document.addEventListener("pointerup", () => void release());
+document.addEventListener("pointercancel", () => void release());
 
 function renderMeeting(now: number): void {
   if (current !== "meeting") {

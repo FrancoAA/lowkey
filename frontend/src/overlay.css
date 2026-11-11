@@ -111,24 +111,29 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: transparent;
 .open-link:hover { color: #bfdbfe; }
 .open-link:focus-visible { outline: 2px solid #93c5fd; outline-offset: 1px; }
 /* ------------------------------------------------------------------ the meeting's capsule
-   The window is the capsule's size while a meeting shows (the app sets it). At rest: a red dot,
-   the live mark and the time. On hover: Mute, Record screen and Stop in place of the dot. Then
-   "Saving", and "Open the notes". Drag it to move it; a click opens the meeting in Lowkey. */
+   The app makes the window 184x40 while a meeting shows. The window is transparent: the capsule
+   is only as wide as what it shows (30 px high, room for its shadow), in the middle. At rest: a
+   red dot, the live mark and the time. On hover it grows to the window's width: Record screen,
+   Mute and Stop at its right end. Then "Saving", and "Open the notes". Drag it to move it; a
+   click opens the meeting in Lowkey. */
 .cap, .stop-btn, .mute, .screen-btn { display: none; }
 .overlay[data-capsule="1"] {
-  display: flex; align-items: center; justify-content: center; gap: 5px; padding: 0 10px; border-radius: 20px; cursor: pointer;
+  height: 30px; width: max-content; max-width: calc(100% - 8px); margin: 5px auto 0;
+  display: flex; align-items: center; justify-content: center; gap: 5px; padding: 0 10px; border-radius: 15px; cursor: pointer;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.45);
 }
+.overlay[data-capsule="1"][data-state="recording"]:hover { width: calc(100% - 8px); padding: 0 5px 0 10px; }
 .overlay[data-capsule="1"] > :not(.cap):not(.mute):not(.screen-btn):not(.stop-btn) { display: none; }
-.cap { align-items: center; gap: 8px; min-width: 0; font-size: 0.8rem; font-weight: 600; white-space: nowrap; }
+.cap { align-items: center; gap: 8px; min-width: 0; font-size: 12px; font-weight: 600; white-space: nowrap; }
 .overlay[data-capsule="1"] .cap { display: flex; }
 .cap > * { display: none; flex: none; }
 .cap-rec { width: 8px; height: 8px; border-radius: 50%; background: #f87171; animation: rec 1.6s ease-in-out infinite; }
 .cap-time { font-variant-numeric: tabular-nums; }
-.cap-muted, .cap-check { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.cap-muted, .cap-check { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .cap-muted { color: #fca5a5; }
 .cap-check { color: #4ade80; }
 .cap-spin {
-  width: 14px; height: 14px; border-radius: 50%; border: 2px solid #52525b; border-top-color: #f4f4f5;
+  width: 13px; height: 13px; border-radius: 50%; border: 2px solid #52525b; border-top-color: #f4f4f5;
   animation: spin 0.8s linear infinite;
 }
 .cap-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
@@ -136,7 +141,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: transparent;
 
 /* The live mark: Lowkey's five bars. Their height follows the voices, their colour who talks
    (overlay.ts LiveMark sets data-who and each bar's scale). */
-.mark { height: 18px; align-items: center; gap: 2px; }
+.mark { height: 14px; align-items: center; gap: 2px; }
 .mark i {
   display: block; width: 3px; height: 100%; border-radius: 2px; background: #a1a1aa;
   transform: scaleY(0.2); transition: background-color 0.18s;
@@ -164,10 +169,10 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: transparent;
 
 /* The capsule's buttons: shown on hover. */
 .mute, .screen-btn, .stop-btn {
-  width: 24px; height: 24px; padding: 0; border: 0; border-radius: 7px; place-items: center; flex: none;
+  width: 22px; height: 22px; padding: 0; border: 0; border-radius: 6px; place-items: center; flex: none;
   background: rgba(255, 255, 255, 0.07); color: #e4e4e7; cursor: pointer;
 }
-.mute svg, .screen-btn svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.mute svg, .screen-btn svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .mute:hover, .screen-btn:hover { background: rgba(255, 255, 255, 0.14); }
 .mute .slash { display: none; }
 .overlay[data-muted="1"] .mute { background: rgba(248, 113, 113, 0.18); color: #fca5a5; }
@@ -176,7 +181,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: transparent;
 .overlay[data-screen="on"] .screen-btn { background: rgba(248, 113, 113, 0.18); color: #fca5a5; }
 .overlay[data-screen="waiting"] .screen-btn svg { animation: pulse 1.2s ease-in-out infinite; }
 .stop-btn { background: rgba(248, 113, 113, 0.18); }
-.stop-btn::before { content: ""; width: 9px; height: 9px; border-radius: 2px; background: #fca5a5; }
+.stop-btn::before { content: ""; width: 8px; height: 8px; border-radius: 2px; background: #fca5a5; }
 .stop-btn:hover { background: rgba(248, 113, 113, 0.3); }
 .stop-btn:disabled { opacity: 0.5; cursor: default; }
 :is(.mute, .screen-btn, .stop-btn):focus-visible { outline: 2px solid #93c5fd; outline-offset: 1px; }
