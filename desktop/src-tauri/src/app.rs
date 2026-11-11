@@ -62,7 +62,7 @@ pub struct App {
     paste_hotkey: Mutex<Option<Arc<hyprland::Hotkey>>>,
     paste_hotkey_text: Mutex<String>,
     paste_os_key: Mutex<Option<String>>,
-    /// Finished dictations (Settings → History), and the last one for the paste-last key.
+    /// Finished dictations (History), and the last one for the paste-last key.
     history: Arc<crate::history::History>,
     /// Settings' microphone test is running.
     mic_testing: AtomicBool,
@@ -322,20 +322,20 @@ impl App {
                 "builtin_model": llm::model(&cfg.ai_builtin_model).id,
                 "builtin": llm::builtin_status(&cfg.ai_builtin_model),
             },
-            // Settings → AI agents: the command an agent starts (`lowkey --mcp`).
+            // Settings → Connections → AI agents: the command an agent starts (`lowkey --mcp`).
             "agents": { "recording": cfg.mcp_recording, "program": crate::autostart::launcher() },
-            // Settings → Models → Tell the other voices apart.
+            // Settings → Meetings → Tell the other voices apart.
             "voices": {
                 "on": cfg.meeting_voices, "supported": crate::voices::SUPPORTED, "present": crate::voices::present(),
                 "download": crate::voices::download_state(),
                 "working": *self.voices_working.lock(),
             },
-            // Settings → General → Screen video; `chosen`: a screen is remembered.
+            // Settings → Meetings → Screen video; `chosen`: a screen is remembered.
             "screen": {
                 "supported": crate::screen::SUPPORTED, "chosen": !cfg.screen_token.is_empty(),
                 "check": crate::screen::status(),
             },
-            // Settings → Note apps; `vault`: the Obsidian vault the folder is in.
+            // Settings → Connections → Note apps; `vault`: the Obsidian vault the folder is in.
             "export": {
                 "dir": cfg.export_dir, "auto": cfg.export_auto, "parts": cfg.export_parts,
                 "vault": (!cfg.export_dir.is_empty()).then(|| crate::export::obsidian_vault(std::path::Path::new(&cfg.export_dir))).flatten()
@@ -688,10 +688,10 @@ impl App {
 
     /// The meeting key (or `--meeting`): start, stop or toggle the recording. `title`: for a
     /// start that is not an offered call. `agent`: an AI agent asks (the MCP server); only with
-    /// Settings → AI agents → "Let agents start and stop recordings", and the user is told.
+    /// Settings → Connections → AI agents → "Let agents start and stop recordings", and the user is told.
     fn meeting_key(self: &Arc<Self>, action: &str, title: &str, agent: bool) {
         if agent && !self.config.lock().mcp_recording {
-            output::notify("An AI agent asked to start or stop a meeting recording; that is off in Settings → AI agents.");
+            output::notify("An AI agent asked to start or stop a meeting recording; that is off in Settings → Connections → AI agents.");
             return;
         }
         if self.meeting_starting.load(Ordering::SeqCst) {
@@ -1558,7 +1558,7 @@ fn meeting_open(app: &AppRef, title: &str) -> Result<meeting::Live, String> {
     let session = meeting::Session::new(meeting::dir(), doc, transcribe, emit).map_err(|e| format!("Could not save the meeting: {e:#}"))?;
     if app.config.lock().meeting_voices && crate::voices::SUPPORTED {
         if !crate::voices::present() {
-            session.notice("The voice models are not downloaded yet (Settings → Models → Who is speaking): this meeting keeps \"Them\".".into());
+            session.notice("The voice models are not downloaded yet (Settings → Meetings → Who is speaking): this meeting keeps \"Them\".".into());
         } else if let Err(e) = session.keep_their_sound(&crate::voices::tape_path(&meeting::dir(), &id)) {
             session.notice(format!("The others' voices will not be told apart in this meeting: {e:#}."));
         }
@@ -1617,7 +1617,7 @@ fn meeting_screen(app: State<'_, AppRef>, on: bool) -> Result<(), String> {
     Ok(())
 }
 
-/// Settings → Choose the screen again: the next Record screen shows the screen picker.
+/// Settings → Meetings → Choose the screen again: the next Record screen shows the screen picker.
 #[tauri::command]
 fn screen_forget(app: State<'_, AppRef>) -> Result<(), String> {
     {
@@ -1629,7 +1629,7 @@ fn screen_forget(app: State<'_, AppRef>) -> Result<(), String> {
     Ok(())
 }
 
-/// Settings → Check again: what this computer has for the screen video (GStreamer may have been
+/// Settings → Meetings → Check again: what this computer has for the screen video (GStreamer may have been
 /// installed since). Returns when it is known (seconds: each encoder is tried).
 #[tauri::command]
 async fn screen_check(app: State<'_, AppRef>) -> Result<(), String> {
@@ -1677,7 +1677,7 @@ fn stop_meeting(app: &AppRef) -> Result<meeting::Meeting, String> {
         match theirs {
             // The voices first (about 2 min for an hour); the note app and the AI notes then
             // get the speakers.
-            // (Settings → Models may have turned it off while it recorded.)
+            // (Settings → Meetings may have turned it off while it recorded.)
             Some(tape) if them && app.config.lock().meeting_voices => {
                 // Marked before the thread starts: Export, Write notes and fixes wait for it.
                 app.voices_working.lock().insert(m.id.clone());
@@ -1833,7 +1833,7 @@ fn overlay_unfocus() {
 fn export_meeting(app: &AppRef, id: &str, manual: bool) -> Result<Value, String> {
     let cfg = app.config.lock().clone();
     if cfg.export_dir.is_empty() {
-        return Err("Choose a folder first: Settings → Note apps.".into());
+        return Err("Choose a folder first: Settings → Connections → Note apps.".into());
     }
     if live_session(app, id).is_some() {
         return Err("Save it when the recording stops.".into());
@@ -1856,7 +1856,7 @@ fn export_meeting(app: &AppRef, id: &str, manual: bool) -> Result<Value, String>
     }
 }
 
-/// When a meeting stops and when its AI notes are written (Settings → Note apps → by itself).
+/// When a meeting stops and when its AI notes are written (Settings → Connections → Note apps → by itself).
 fn auto_export(app: &AppRef, id: &str) {
     let cfg = app.config.lock().clone();
     if cfg.export_dir.is_empty() || !cfg.export_auto {
@@ -1887,7 +1887,7 @@ fn meeting_open_in_obsidian(app: State<'_, AppRef>, id: String) -> Result<(), St
     crate::export::open_link(&link).map_err(|e| format!("Could not open Obsidian: {e}"))
 }
 
-/// Settings → Note apps → Choose folder: the system's folder dialog; saved at once.
+/// Settings → Connections → Note apps → Choose folder: the system's folder dialog; saved at once.
 #[tauri::command]
 async fn choose_export_folder(app: State<'_, AppRef>, handle: tauri::AppHandle) -> Result<Option<Value>, String> {
     use tauri_plugin_dialog::DialogExt;
@@ -2085,7 +2085,7 @@ fn vocabulary_add(app: State<'_, AppRef>, term: crate::vocabulary::Term) -> Resu
     let list = crate::vocabulary::with_term(&app.config.lock().vocabulary, term.clone());
     if !crate::vocabulary::has(&list, &term) {
         return Err(format!(
-            "“{}” was not added: the Vocabulary is full ({} terms, {} spellings each). Remove some in Settings → General.",
+            "“{}” was not added: the Vocabulary is full ({} terms, {} spellings each). Remove some in Settings → Speech.",
             term.term,
             crate::vocabulary::MAX_TERMS,
             crate::vocabulary::MAX_SPELLINGS
@@ -2120,7 +2120,7 @@ fn auto_export_after_edits(app: &AppRef, id: &str) {
 }
 
 // ------------------------------------------------------------------ AI notes
-/// Settings → Models → AI notes: the engine to use now.
+/// Settings → Meetings → Notes: the engine to use now.
 fn ai_engine(app: &AppRef) -> llm::Engine {
     let cfg = app.config.lock().clone();
     if cfg.ai_engine == "server" {
@@ -2360,6 +2360,22 @@ fn meeting_markdown(app: State<'_, AppRef>, id: String, utc_offset_minutes: i32)
     Ok(meeting::to_markdown(&m, utc_offset_minutes.clamp(-14 * 60, 14 * 60)))
 }
 
+/// One part of the meeting, for the Copy button of its tab: "notes" (the AI notes, as the model
+/// wrote them) or "transcript" (one paragraph per speaker turn). No title or date.
+#[tauri::command]
+fn meeting_text(app: State<'_, AppRef>, id: String, part: String) -> Result<String, String> {
+    let m = match live_session(app.inner(), &id) {
+        Some(s) => s.meeting(),
+        None => meeting::load_in(&meeting::dir(), &id).map_err(|e| format!("{e:#}"))?,
+    };
+    match part.as_str() {
+        "notes" if m.ai_notes.trim().is_empty() => Err("This meeting has no notes yet.".into()),
+        "notes" => Ok(m.ai_notes.trim().to_string() + "\n"),
+        "transcript" => Ok(meeting::transcript_markdown(&m)),
+        other => Err(format!("unknown part: {other}")),
+    }
+}
+
 /// Wayland desktops other than Hyprland, or Hyprland without a Lua config: the user binds the
 /// key in the desktop's settings (apps cannot).
 fn keys_are_manual() -> bool {
@@ -2376,7 +2392,7 @@ fn set_hotkey(app: State<'_, AppRef>, key: String) -> Result<Value, String> {
     r
 }
 
-/// Settings → Shortcuts → Paste last dictation → Change.
+/// Settings → Dictation → Paste last dictation → Change.
 #[tauri::command]
 fn set_paste_hotkey(app: State<'_, AppRef>, key: String) -> Result<Value, String> {
     let app = app.inner().clone();
@@ -2415,7 +2431,7 @@ fn window_titles() -> std::collections::HashMap<u32, String> {
 }
 
 // ------------------------------------------------------------------ microphone
-/// Settings → General → Microphone: the inputs, and the one the app uses now (with why).
+/// Settings → Speech → Microphone: the inputs, and the one the app uses now (with why).
 #[tauri::command]
 async fn microphones(app: State<'_, AppRef>) -> Result<Value, String> {
     let app = app.inner().clone();
@@ -2435,7 +2451,7 @@ async fn microphones(app: State<'_, AppRef>) -> Result<Value, String> {
     .map_err(|e| e.to_string())
 }
 
-/// Settings → General → Microphone → Test: the chosen microphone for 4 s, its level as
+/// Settings → Speech → Microphone → Test: the chosen microphone for 4 s, its level as
 /// "mic-level" events (nothing is kept).
 #[tauri::command]
 async fn mic_test(app: State<'_, AppRef>) -> Result<(), String> {
@@ -2708,7 +2724,7 @@ pub fn transcribe_json(engines: &Engines, cfg: &Config, path: &std::path::Path, 
         .or_else(|| models::spec(&cfg.model).map(|m| m.id.to_string()))
         .unwrap_or_else(|| models::auto_model(&engines.hw).to_string());
     if !download && !models::spec(&model).is_some_and(models::present) {
-        return (model.clone(), Err(anyhow::anyhow!("The model {model} is not on this computer. Download it in Lowkey (Settings → Models), or name a downloaded one.")));
+        return (model.clone(), Err(anyhow::anyhow!("The model {model} is not on this computer. Download it in Lowkey (Settings → Speech), or name a downloaded one.")));
     }
     let t_load = Instant::now();
     let _ = engines.prepare(&model);
@@ -2827,6 +2843,7 @@ pub fn run() {
             screen_check,
             meeting_screen,
             meeting_markdown,
+            meeting_text,
             meeting_ai_notes,
             ai_notes_cancel,
             meeting_chat,
@@ -2961,7 +2978,7 @@ pub fn run() {
             // Files from the command line: queued before the page exists, so it always finds them.
             app.open_files.lock().extend(cli.files.iter().filter(|p| p.is_file()).cloned());
             tauri_app.manage(app.clone());
-            // Settings → Screen video: what this computer has (a second or two; once).
+            // Settings → Meetings → Screen video: what this computer has (a second or two; once).
             if crate::screen::SUPPORTED {
                 let a2 = app.clone();
                 std::thread::spawn(move || {
@@ -3127,7 +3144,7 @@ pub fn run() {
             } else if wayland_other {
                 "this Wayland desktop does not let apps add keys: bind `lowkey --paste-last` in your desktop's keyboard settings".to_string()
             } else if same_key(&pkey, &app.hotkey_key()) || same_key(&pkey, &app.key_of(KeyKind::Meeting)) {
-                format!("not added: {pkey} is already used by another key here. Choose another key in Settings → Shortcuts.")
+                format!("not added: {pkey} is already used by another key here. Choose another key in Settings → Dictation or Settings → Meetings.")
             } else if !hyprland::running() {
                 register_global_shortcut(&app, &pkey, KeyKind::PasteLast)
             } else {

@@ -50,7 +50,7 @@ export interface MeetingsUi {
   meetingKey(): string;
   /** Go to the Meetings section (the strip's "Open the notes"). */
   showMeetings(): void;
-  /** Settings → Note apps: the folder ("" = off) and the Obsidian vault it is in. */
+  /** Settings → Connections → Note apps: the folder ("" = off) and the Obsidian vault it is in. */
   exportInfo(): { dir: string; vault: string | null };
   /** Settings changed here (a term added to the Vocabulary): read them again. */
   refreshStatus(): void;
@@ -114,7 +114,7 @@ function fileName(title: string): string {
   return `${base || "meeting"}.md`;
 }
 
-/** `refreshExport`: the meeting's note-app buttons follow a change in Settings → Note apps. */
+/** `refreshExport`: the meeting's note-app buttons follow a change in Settings → Connections → Note apps. */
 export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(): void } {
   const api = backend.meetings;
   const home = $<HTMLDivElement>("meetings-home");
@@ -136,7 +136,6 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
   const title = $<HTMLInputElement>("meeting-title");
   const meta = $<HTMLElement>("meeting-meta");
   const stopBtn = $<HTMLButtonElement>("meeting-stop");
-  const copyBtn = $<HTMLButtonElement>("meeting-copy");
   const exportBtn = $<HTMLButtonElement>("meeting-export");
   const deleteBtn = $<HTMLButtonElement>("meeting-delete");
   const folderBtn = $<HTMLButtonElement>("meeting-folder");
@@ -159,6 +158,8 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
   const transcriptPanel = $<HTMLDivElement>("transcript-panel");
   const aiMeta = $<HTMLElement>("ai-meta");
   const aiWrite = $<HTMLButtonElement>("ai-write");
+  const copyNotes = $<HTMLButtonElement>("copy-notes");
+  const copyTranscript = $<HTMLButtonElement>("copy-transcript");
   const aiCancel = $<HTMLButtonElement>("ai-cancel");
   const aiProgress = $<HTMLDivElement>("ai-progress");
   const aiProgressFill = $<HTMLDivElement>("ai-progress-fill");
@@ -260,6 +261,7 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
     editing = null;
     const nearEnd = transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight < 60;
     transcript.replaceChildren();
+    renderCopy(); // its first words show Copy transcript
     if (voicesWorking.has(m.id)) {
       const n = document.createElement("p");
       n.className = "transcript-note";
@@ -540,7 +542,7 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
       clearTimeout(timer);
       void api.addVocabulary(s).then(
         () => {
-          bar.replaceChildren(`“${s.term}” is in the Vocabulary (Settings → General).`);
+          bar.replaceChildren(`“${s.term}” is in the Vocabulary (Settings → Speech).`);
           setTimeout(() => bar.remove(), 3000);
           ui.refreshStatus();
         },
@@ -584,7 +586,7 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
     square.setAttribute("aria-hidden", "true");
     if (live?.state === "finishing") stopBtn.replaceChildren(spinner(), "Saving…");
     else stopBtn.replaceChildren(square, "Stop");
-    copyBtn.hidden = exportBtn.hidden = deleteBtn.hidden = recording;
+    exportBtn.hidden = deleteBtn.hidden = recording;
     renderFolderButtons();
     livePanel.hidden = !recording;
     livePanel.dataset.state = live?.state ?? "";
@@ -884,6 +886,17 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
     // Write notes and the model's name belong to the notes; Cancel shows from both tabs.
     aiMeta.hidden = tab !== "notes";
     pending.hidden = tab !== "transcript";
+    renderCopy();
+  }
+
+  /** Each tab's Copy: the notes once they are written (not while they are written), the
+   * transcript once it has words (also while it records). */
+  function renderCopy(): void {
+    if (!shown) return;
+    const writing = aiJob?.id === shown.id && aiRunning();
+    copyNotes.hidden = tab !== "notes" || isLive() || writing || !shown.ai_notes?.trim();
+    const lines = (isLive() && live ? live.meeting : shown).lines; // while it records, the live lines
+    copyTranscript.hidden = tab !== "transcript" || lines.length === 0;
   }
 
   function setTab(t: "notes" | "transcript", focus = false): void {
@@ -926,6 +939,7 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
       drawn = null;
       aiBody.replaceChildren("Written here when the recording stops: one section for each topic, with its decisions and tasks. The transcript is in the other tab.");
       aiBody.classList.add("ai-empty");
+      renderCopy();
       return;
     }
     const mine = aiJob?.id === shown.id ? aiJob : null;
@@ -970,6 +984,7 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
     const check = linked ? "click a point to see it in the transcript" : "check it against the transcript";
     if (running && mine!.state === "writing") aiMeta.replaceChildren(spinner(), "Writing the notes…");
     else aiMeta.textContent = running ? "" : shown.ai_notes ? `${shown.ai_model || "AI"} · a draft: ${check}` : "";
+    renderCopy();
   }
 
   // ---------------------------------------------------------------- Notes → transcript
@@ -1704,17 +1719,25 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
     void showHome();
   });
 
-  copyBtn.addEventListener("click", async () => {
-    if (!shown) return;
-    await flush();
-    try {
-      await backend.copy(await api.markdown(shown.id));
-      copyBtn.textContent = "Copied";
-      setTimeout(() => (copyBtn.textContent = "Copy"), 1500);
-    } catch (err) {
-      showError(String(err));
-    }
-  });
+  // Each tab's Copy: only what that tab shows.
+  for (const [btn, part, label] of [
+    [copyNotes, "notes", "Copy notes"],
+    [copyTranscript, "transcript", "Copy transcript"],
+  ] as const) {
+    let reset = 0;
+    btn.addEventListener("click", async () => {
+      if (!shown) return;
+      try {
+        await backend.copy(await api.text(shown.id, part));
+        btn.textContent = "Copied";
+        ui.announce(part === "notes" ? "The notes are copied." : "The transcript is copied.");
+        clearTimeout(reset);
+        reset = window.setTimeout(() => (btn.textContent = label), 1500);
+      } catch (err) {
+        showError(String(err));
+      }
+    });
+  }
 
   exportBtn.addEventListener("click", async () => {
     if (!shown) return;
@@ -1782,7 +1805,7 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
     if (shown) void confirmDelete(shown.id, title.value.trim() || shown.title);
   });
 
-  // After Stop, with Settings → Models → Tell the other voices apart: the speakers come later.
+  // After Stop, with Settings → Meetings → Tell the other voices apart: the speakers come later.
   api.onVoices((e) => {
     if (e.state === "working") voicesWorking.add(e.id);
     else voicesWorking.delete(e.id);

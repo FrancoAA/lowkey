@@ -39,25 +39,21 @@
             <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7h-9M14 17H5" /><circle cx="17" cy="17" r="3" /><circle cx="7" cy="7" r="3" /></svg>
             General
           </button>
-          <button type="button" role="tab" class="nav-item" data-section="model" aria-controls="section-model">
-            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect width="16" height="16" x="4" y="4" rx="2" /><rect width="6" height="6" x="9" y="9" rx="1" /><path d="M15 2v2M15 20v2M2 15h2M2 9h2M20 15h2M20 9h2M9 2v2M9 20v2" /></svg>
-            Models
+          <button type="button" role="tab" class="nav-item" data-section="speech" aria-controls="section-speech">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 10v3M6 6v11M10 3v18M14 8v7M18 5v13M22 10v3" /></svg>
+            Speech
           </button>
           <button type="button" role="tab" class="nav-item" data-section="dictation" aria-controls="section-dictation">
             <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect width="20" height="16" x="2" y="4" rx="2" /><path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M8 12h.01M12 12h.01M16 12h.01M7 16h10" /></svg>
-            Shortcuts
+            Dictation
           </button>
-          <button type="button" role="tab" class="nav-item" data-section="preview" aria-controls="section-preview">
-            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 10v3M6 6v11M10 3v18M14 8v7M18 5v13M22 10v3" /></svg>
-            Live preview
+          <button type="button" role="tab" class="nav-item" data-section="meeting-settings" aria-controls="section-meeting-settings" aria-label="Meeting settings">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect width="18" height="18" x="3" y="4" rx="2" /><path d="M16 2v4M8 2v4M3 10h18M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01" /></svg>
+            Meetings
           </button>
-          <button type="button" role="tab" class="nav-item" data-section="notes-apps" aria-controls="section-notes-apps">
-            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20" /><path d="M8 7h8M8 11h6" /></svg>
-            Note apps
-          </button>
-          <button type="button" role="tab" class="nav-item" data-section="agents" aria-controls="section-agents">
-            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8V4H8" /><rect width="16" height="12" x="4" y="8" rx="2" /><path d="M2 14h2M20 14h2M15 13v2M9 13v2" /></svg>
-            AI agents
+          <button type="button" role="tab" class="nav-item" data-section="connections" aria-controls="section-connections">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" /><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" /></svg>
+            Connections
           </button>
           <button type="button" role="tab" class="nav-item" data-section="about" aria-controls="section-about">
             <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10" /><path d="M12 16v-4M12 8h.01" /></svg>
@@ -162,7 +158,6 @@
                 <p id="meeting-meta" class="meta"></p>
               </div>
               <div class="actions">
-                <button id="meeting-copy" type="button" class="btn btn-outline btn-sm">Copy</button>
                 <button id="meeting-export" type="button" class="btn btn-outline btn-sm">Export .md</button>
                 <button id="meeting-folder" type="button" class="btn btn-outline btn-sm" hidden>Save to folder</button>
                 <button id="meeting-obsidian" type="button" class="btn btn-outline btn-sm" hidden>Open in Obsidian</button>
@@ -217,6 +212,9 @@
                   <span id="ai-meta" class="ai-meta"></span>
                   <span id="meeting-pending" class="pending"></span>
                   <div class="actions">
+                    <!-- Copy: what the tab shows, alone (the notes, or the transcript). -->
+                    <button id="copy-notes" type="button" class="btn btn-outline btn-sm" hidden>Copy notes</button>
+                    <button id="copy-transcript" type="button" class="btn btn-outline btn-sm" hidden>Copy transcript</button>
                     <button id="ai-write" type="button" class="btn btn-outline btn-sm">Write notes</button>
                     <button id="ai-cancel" type="button" class="btn btn-ghost btn-sm" hidden>Cancel</button>
                   </div>
@@ -286,22 +284,39 @@
           </div>
         </section>
 
-        <!-- General -->
+        <!-- General: how the app starts and looks -->
         <section id="section-general" class="section" role="tabpanel" data-section="general" hidden>
           <header class="section-head">
             <h2>General</h2>
-            <p>How your speech is heard and understood.</p>
+            <p>How the app starts and how it looks.</p>
           </header>
           <div class="field">
             <div class="field-text">
-              <label for="language-select">Language</label>
-              <p class="field-desc">Auto-detect works for most speech. Set it when the app picks the wrong one.</p>
+              <label for="login-check">Start when you log in</label>
+              <p class="field-desc">Starts in the background (no window), so the keys always work.</p>
             </div>
-            <select id="language-select" class="select">
-              <option value="auto" selected>Auto-detect</option>
-            </select>
+            <input id="login-check" type="checkbox" role="switch" class="switch" />
           </div>
           <div class="separator"></div>
+          <div class="field">
+            <div class="field-text">
+              <label for="theme-select">Appearance</label>
+              <p class="field-desc">Light or dark. System follows your desktop's setting.</p>
+            </div>
+            <select id="theme-select" class="select">
+              <option value="system">System</option>
+              <option value="light">Light</option>
+              <option value="dark">Dark</option>
+            </select>
+          </div>
+        </section>
+
+        <!-- Speech: what dictations and meetings both use to turn sound into text -->
+        <section id="section-speech" class="section" role="tabpanel" data-section="speech" hidden>
+          <header class="section-head">
+            <h2>Speech</h2>
+            <p>How your speech becomes text, in dictations and in meetings.</p>
+          </header>
           <div class="field field-stacked">
             <div class="field-text">
               <label for="mic-select">Microphone</label>
@@ -319,6 +334,140 @@
               <p class="field-desc">With "System default": a Bluetooth headset's microphone switches it to call mode, with poor sound for everything else. Another microphone is used when there is one.</p>
             </div>
             <input id="mic-bt" type="checkbox" role="switch" class="switch" />
+          </div>
+          <div class="separator"></div>
+          <div class="field">
+            <div class="field-text">
+              <label for="language-select">Language</label>
+              <p class="field-desc">Auto-detect works for most speech. Set it when the app picks the wrong one.</p>
+            </div>
+            <select id="language-select" class="select">
+              <option value="auto" selected>Auto-detect</option>
+            </select>
+          </div>
+          <div class="separator"></div>
+          <div class="field field-stacked">
+            <div class="field-text">
+              <span class="label" id="vocab-label">Vocabulary</span>
+              <p class="field-desc">Names and terms the model gets wrong. In every transcript, their "sounds like" spellings become the term. Whisper and the notes model also get the list as a hint.</p>
+            </div>
+            <div id="vocab" class="vocab" role="table" aria-labelledby="vocab-label">
+              <div class="vocab-row vocab-head" role="row">
+                <span role="columnheader">Term</span>
+                <span role="columnheader">Sounds like <span class="vocab-hint">(separate with commas)</span></span>
+                <span></span>
+              </div>
+              <div id="vocab-rows" role="rowgroup"></div>
+            </div>
+            <div class="vocab-foot">
+              <button id="vocab-add" type="button" class="btn btn-outline btn-sm">
+                <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>Add term
+              </button>
+              <span id="vocab-note" class="field-desc" aria-live="polite"></span>
+            </div>
+          </div>
+
+          <div class="model-group">
+            <div class="group-head">
+              <h3>Speech model</h3>
+              <div id="model-status" class="model-status" data-state="loading" aria-live="off">
+                <span class="dot"></span><span id="model-status-text">Starting…</span>
+                <div class="model-bar" hidden><div id="model-bar-fill"></div></div>
+              </div>
+            </div>
+            <p class="field-desc group-desc">Runs on this computer and writes what you say as text. It downloads once.</p>
+            <div class="field field-stacked">
+              <div class="field-text">
+                <label for="model-select">Model</label>
+                <p id="model-details" class="field-desc"></p>
+              </div>
+              <select id="model-select" class="select select-wide"></select>
+            </div>
+            <div class="field">
+              <div class="field-text">
+                <label for="idle-select">Free memory when idle</label>
+                <p class="field-desc">Unload the model after a while without use. It loads again on the next use.</p>
+              </div>
+              <select id="idle-select" class="select">
+                <option value="0">Never</option>
+                <option value="5">After 5 minutes</option>
+                <option value="15" selected>After 15 minutes</option>
+                <option value="60">After 1 hour</option>
+              </select>
+            </div>
+          </div>
+        </section>
+
+        <!-- Dictation: its keys and the live preview -->
+        <section id="section-dictation" class="section" role="tabpanel" data-section="dictation" hidden>
+          <header class="section-head">
+            <h2>Dictation</h2>
+            <p>Talk, and the text is typed into the app you are in. The keys work in any app, also when this window is closed.</p>
+          </header>
+          <div id="key-row" class="field field-stacked key-row">
+            <div class="field-text">
+              <span class="label">Dictation key</span>
+              <p id="key-note" class="field-desc key-note" aria-live="polite"></p>
+            </div>
+            <div class="key-line">
+              <kbd id="key-current" class="key-current">…</kbd>
+              <button id="key-change" type="button" class="btn btn-outline">Change</button>
+              <button id="key-adopt" type="button" class="btn btn-default" hidden>Let the app manage it</button>
+            </div>
+          </div>
+          <div class="separator"></div>
+          <div id="paste-key-row" class="field field-stacked key-row">
+            <div class="field-text">
+              <span class="label">Paste last dictation</span>
+              <p id="paste-key-note" class="field-desc key-note" aria-live="polite"></p>
+            </div>
+            <div class="key-line">
+              <kbd id="paste-key-current" class="key-current">…</kbd>
+              <button id="paste-key-change" type="button" class="btn btn-outline">Change</button>
+            </div>
+          </div>
+
+          <div class="model-group">
+            <div class="group-head">
+              <h3>Live preview</h3>
+            </div>
+            <p class="field-desc group-desc">Words in the dictation overlay while you talk. The speech model (in Speech) still writes the text that is typed.</p>
+            <div class="field">
+              <div class="field-text">
+                <label for="preview-check">Show the words while you talk</label>
+                <p id="preview-note" class="field-desc"></p>
+              </div>
+              <input id="preview-check" type="checkbox" role="switch" class="switch" checked />
+            </div>
+            <div class="field">
+              <div class="field-text">
+                <label for="preview-engine">Preview engine</label>
+                <p class="field-desc">Automatic uses Parakeet when it is on this computer, else Whistle.</p>
+              </div>
+              <select id="preview-engine" class="select">
+                <option value="auto">Automatic</option>
+                <option value="whistle">Whistle · light (17 MB)</option>
+                <option value="parakeet">Parakeet · more accurate (~1.1 GB)</option>
+              </select>
+            </div>
+          </div>
+        </section>
+
+        <!-- Meetings: recording, who is speaking, notes -->
+        <section id="section-meeting-settings" class="section" role="tabpanel" data-section="meeting-settings" hidden>
+          <header class="section-head">
+            <h2>Meetings</h2>
+            <p>How meetings are recorded, and how their notes are written.</p>
+          </header>
+          <div id="meeting-key-row" class="field field-stacked key-row">
+            <div class="field-text">
+              <span class="label">Meeting key</span>
+              <p id="meeting-key-note" class="field-desc key-note" aria-live="polite"></p>
+            </div>
+            <div class="key-line">
+              <kbd id="meeting-key-current" class="key-current">…</kbd>
+              <button id="meeting-key-change" type="button" class="btn btn-outline">Change</button>
+            </div>
           </div>
           <div id="calls-card" class="settings-group" hidden>
             <div class="separator"></div>
@@ -345,74 +494,21 @@
               </div>
             </div>
           </div>
-          <div class="separator"></div>
-          <div class="field field-stacked">
-            <div class="field-text">
-              <span class="label" id="vocab-label">Vocabulary</span>
-              <p class="field-desc">Names and terms the model gets wrong. In every transcript, their "sounds like" spellings become the term. Whisper and the notes model also get the list as a hint.</p>
-            </div>
-            <div id="vocab" class="vocab" role="table" aria-labelledby="vocab-label">
-              <div class="vocab-row vocab-head" role="row">
-                <span role="columnheader">Term</span>
-                <span role="columnheader">Sounds like <span class="vocab-hint">(separate with commas)</span></span>
-                <span></span>
-              </div>
-              <div id="vocab-rows" role="rowgroup"></div>
-            </div>
-            <div class="vocab-foot">
-              <button id="vocab-add" type="button" class="btn btn-outline btn-sm">
-                <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>Add term
-              </button>
-              <span id="vocab-note" class="field-desc" aria-live="polite"></span>
-            </div>
-          </div>
-          <div class="separator"></div>
-          <div class="field">
-            <div class="field-text">
-              <label for="theme-select">Appearance</label>
-              <p class="field-desc">Light or dark. System follows your desktop's setting.</p>
-            </div>
-            <select id="theme-select" class="select">
-              <option value="system">System</option>
-              <option value="light">Light</option>
-              <option value="dark">Dark</option>
-            </select>
-          </div>
-        </section>
 
-        <!-- Models: speech to text, notes -->
-        <section id="section-model" class="section" role="tabpanel" data-section="model" hidden>
-          <header class="section-head">
-            <h2>Models</h2>
-            <p>Two models run on this computer: one writes what you say as text, the other writes the notes of your meetings. Each downloads once.</p>
-          </header>
-
-          <div class="model-group">
+          <div class="model-group" id="voices-group">
             <div class="group-head">
-              <h3>Speech to text</h3>
-              <div id="model-status" class="model-status" data-state="loading" aria-live="off">
-                <span class="dot"></span><span id="model-status-text">Starting…</span>
-                <div class="model-bar" hidden><div id="model-bar-fill"></div></div>
+              <h3>Who is speaking</h3>
+              <div id="voices-status" class="model-status" data-state="missing" aria-live="off">
+                <span class="dot"></span><span id="voices-status-text">Off</span>
+                <div class="model-bar" hidden><div id="voices-bar-fill"></div></div>
               </div>
-            </div>
-            <div class="field field-stacked">
-              <div class="field-text">
-                <label for="model-select">Speech model</label>
-                <p id="model-details" class="field-desc"></p>
-              </div>
-              <select id="model-select" class="select select-wide"></select>
             </div>
             <div class="field">
               <div class="field-text">
-                <label for="idle-select">Free memory when idle</label>
-                <p class="field-desc">Unload the model after a while without use. It loads again on the next use.</p>
+                <label for="voices-on">Tell the other voices apart</label>
+                <p class="field-desc">After a meeting stops, each of the others gets a label (Speaker 1, Speaker 2…) that you can name. The first time, two models download (46 MB). While a meeting records, the others' sound is kept in a temporary file on this computer, and deleted when the voices are told apart.</p>
               </div>
-              <select id="idle-select" class="select">
-                <option value="0">Never</option>
-                <option value="5">After 5 minutes</option>
-                <option value="15" selected>After 15 minutes</option>
-                <option value="60">After 1 hour</option>
-              </select>
+              <input id="voices-on" type="checkbox" role="switch" class="switch" />
             </div>
           </div>
 
@@ -425,6 +521,13 @@
               </div>
             </div>
             <p class="field-desc group-desc">Writes the notes of a meeting from its transcript, one section for each topic, and answers your questions about the meeting. The notes are a draft: check them against the transcript.</p>
+            <div class="field">
+              <div class="field-text">
+                <label for="ai-auto">Write notes when a meeting stops</label>
+                <p class="field-desc">On by default. The first time, the chosen built-in model downloads (once), with its progress in the meeting.</p>
+              </div>
+              <input id="ai-auto" type="checkbox" role="switch" class="switch" />
+            </div>
             <div class="field field-stacked">
               <div class="field-text">
                 <label for="ai-engine">Notes model</label>
@@ -453,178 +556,80 @@
                 </div>
               </div>
             </div>
-            <div class="field">
-              <div class="field-text">
-                <label for="ai-auto">Write notes when a meeting stops</label>
-                <p class="field-desc">On by default. The first time, the chosen built-in model downloads (once), with its progress in the meeting.</p>
-              </div>
-              <input id="ai-auto" type="checkbox" role="switch" class="switch" />
-            </div>
           </div>
+        </section>
 
-          <div class="model-group" id="voices-group">
+        <!-- Connections: note apps (Markdown in a folder) and AI agents (lowkey --mcp) -->
+        <section id="section-connections" class="section" role="tabpanel" data-section="connections" hidden>
+          <header class="section-head">
+            <h2>Connections</h2>
+            <p>Let other apps use your meetings and dictations.</p>
+          </header>
+
+          <div class="model-group">
             <div class="group-head">
-              <h3>Who is speaking</h3>
-              <div id="voices-status" class="model-status" data-state="missing" aria-live="off">
-                <span class="dot"></span><span id="voices-status-text">Off</span>
-                <div class="model-bar" hidden><div id="voices-bar-fill"></div></div>
+              <h3>Note apps</h3>
+            </div>
+            <p class="field-desc group-desc">Each meeting as a Markdown note in a folder you choose. Nothing leaves this computer.</p>
+            <div class="field field-stacked">
+              <div class="field-text">
+                <span class="label">Folder</span>
+                <p id="export-dir-note" class="field-desc">Obsidian: your vault, or a folder in it. Logseq: its pages folder. Google Drive, Dropbox or iCloud: a folder that their app keeps in sync.</p>
+              </div>
+              <div class="key-line">
+                <code id="export-dir" class="export-dir">No folder</code>
+                <button id="export-choose" type="button" class="btn btn-outline">Choose folder…</button>
+                <button id="export-off" type="button" class="btn btn-ghost" hidden>Turn off</button>
               </div>
             </div>
             <div class="field">
               <div class="field-text">
-                <label for="voices-on">Tell the other voices apart in meetings</label>
-                <p class="field-desc">After a meeting stops, each of the others gets a label (Speaker 1, Speaker 2…) that you can name. The first time, two models download (46 MB). While a meeting records, the others' sound is kept in a temporary file on this computer, and deleted when the voices are told apart.</p>
+                <label for="export-auto">Save each meeting there by itself</label>
+                <p class="field-desc">When it stops, and again when its notes are written. A note you changed in the other app is never overwritten. Off: use Save to folder in the meeting.</p>
               </div>
-              <input id="voices-on" type="checkbox" role="switch" class="switch" />
+              <input id="export-auto" type="checkbox" role="switch" class="switch" />
             </div>
+            <fieldset class="field field-stacked export-parts">
+              <legend class="label">In the note</legend>
+              <label><input type="checkbox" value="ai_notes" /> Notes</label>
+              <label><input type="checkbox" value="notes" /> Your notes</label>
+              <label><input type="checkbox" value="transcript" /> Transcript</label>
+            </fieldset>
           </div>
-        </section>
 
-        <!-- Dictation -->
-        <section id="section-dictation" class="section" role="tabpanel" data-section="dictation" hidden>
-          <header class="section-head">
-            <h2>Shortcuts</h2>
-            <p>Keys that work in any app, also when this window is closed.</p>
-          </header>
-          <div id="key-row" class="field field-stacked key-row">
-            <div class="field-text">
-              <span class="label">Dictation key</span>
-              <p id="key-note" class="field-desc key-note" aria-live="polite"></p>
+          <div class="model-group">
+            <div class="group-head">
+              <h3>AI agents</h3>
             </div>
-            <div class="key-line">
-              <kbd id="key-current" class="key-current">…</kbd>
-              <button id="key-change" type="button" class="btn btn-outline">Change</button>
-              <button id="key-adopt" type="button" class="btn btn-default" hidden>Let the app manage it</button>
+            <p class="field-desc group-desc">Let Claude Code, Codex, Gemini CLI and other agents read your meetings and dictations, and transcribe files with the speech model on this computer. They connect over MCP.</p>
+            <div class="field field-stacked">
+              <div class="field-text">
+                <span class="label">Connect an agent</span>
+                <p class="field-desc">Run the line for your agent once, in a terminal. The agent starts it when it needs it: this window does not have to be open.</p>
+              </div>
+              <div id="agent-commands" class="agent-commands"></div>
             </div>
-          </div>
-          <div class="separator"></div>
-          <div id="meeting-key-row" class="field field-stacked key-row">
-            <div class="field-text">
-              <span class="label">Meeting key</span>
-              <p id="meeting-key-note" class="field-desc key-note" aria-live="polite"></p>
+            <p class="field-desc" data-kind="warn">An agent sends what it reads to its own AI service. Nothing else leaves this computer.</p>
+            <div class="field">
+              <div class="field-text">
+                <label for="agents-recording">Let agents start and stop recordings</label>
+                <p class="field-desc">Off: agents only read and transcribe. On: an agent can start or stop a meeting recording when you ask it to. You see the strip and a notification each time.</p>
+              </div>
+              <input id="agents-recording" type="checkbox" role="switch" class="switch" />
             </div>
-            <div class="key-line">
-              <kbd id="meeting-key-current" class="key-current">…</kbd>
-              <button id="meeting-key-change" type="button" class="btn btn-outline">Change</button>
+            <div class="field field-stacked">
+              <div class="field-text">
+                <span class="label">What agents can do</span>
+              </div>
+              <ul class="agent-tools">
+                <li><b>List and read meetings</b>: the notes, your notes and the transcript ("Me" is you).</li>
+                <li><b>Search</b> meetings and dictations.</li>
+                <li><b>Get action items</b> from the notes, by person.</li>
+                <li><b>Read the last dictation.</b></li>
+                <li><b>Transcribe a file</b> on this computer, with the speech model chosen in Speech.</li>
+                <li><b>See if a meeting is being recorded</b>, and start or stop one when the switch above is on.</li>
+              </ul>
             </div>
-          </div>
-          <div class="separator"></div>
-          <div id="paste-key-row" class="field field-stacked key-row">
-            <div class="field-text">
-              <span class="label">Paste last dictation</span>
-              <p id="paste-key-note" class="field-desc key-note" aria-live="polite"></p>
-            </div>
-            <div class="key-line">
-              <kbd id="paste-key-current" class="key-current">…</kbd>
-              <button id="paste-key-change" type="button" class="btn btn-outline">Change</button>
-            </div>
-          </div>
-          <div class="separator"></div>
-          <div class="field">
-            <div class="field-text">
-              <label for="login-check">Start when you log in</label>
-              <p class="field-desc">Starts in the background (no window), so the keys always work.</p>
-            </div>
-            <input id="login-check" type="checkbox" role="switch" class="switch" />
-          </div>
-        </section>
-
-        <!-- Live preview -->
-        <section id="section-preview" class="section" role="tabpanel" data-section="preview" hidden>
-          <header class="section-head">
-            <h2>Live preview</h2>
-            <p>Words in the dictation overlay while you talk. The model above still writes the text.</p>
-          </header>
-          <div class="field">
-            <div class="field-text">
-              <label for="preview-check">Show the words while you talk</label>
-              <p id="preview-note" class="field-desc"></p>
-            </div>
-            <input id="preview-check" type="checkbox" role="switch" class="switch" checked />
-          </div>
-          <div class="separator"></div>
-          <div class="field">
-            <div class="field-text">
-              <label for="preview-engine">Preview engine</label>
-              <p class="field-desc">Automatic uses Parakeet when it is on this computer, else Whistle.</p>
-            </div>
-            <select id="preview-engine" class="select">
-              <option value="auto">Automatic</option>
-              <option value="whistle">Whistle · light (17 MB)</option>
-              <option value="parakeet">Parakeet · more accurate (~1.1 GB)</option>
-            </select>
-          </div>
-        </section>
-
-        <!-- Note apps: each meeting as Markdown in a folder (Obsidian, Logseq, synced folders) -->
-        <section id="section-notes-apps" class="section" role="tabpanel" data-section="notes-apps" hidden>
-          <header class="section-head">
-            <h2>Note apps</h2>
-            <p>Each meeting as a Markdown note in a folder you choose. Nothing leaves this computer.</p>
-          </header>
-          <div class="field field-stacked">
-            <div class="field-text">
-              <span class="label">Folder</span>
-              <p id="export-dir-note" class="field-desc">Obsidian: your vault, or a folder in it. Logseq: its pages folder. Google Drive, Dropbox or iCloud: a folder that their app keeps in sync.</p>
-            </div>
-            <div class="key-line">
-              <code id="export-dir" class="export-dir">No folder</code>
-              <button id="export-choose" type="button" class="btn btn-outline">Choose folder…</button>
-              <button id="export-off" type="button" class="btn btn-ghost" hidden>Turn off</button>
-            </div>
-          </div>
-          <div class="separator"></div>
-          <div class="field">
-            <div class="field-text">
-              <label for="export-auto">Save each meeting there by itself</label>
-              <p class="field-desc">When it stops, and again when its notes are written. A note you changed in the other app is never overwritten. Off: use Save to folder in the meeting.</p>
-            </div>
-            <input id="export-auto" type="checkbox" role="switch" class="switch" />
-          </div>
-          <div class="separator"></div>
-          <fieldset class="field field-stacked export-parts">
-            <legend class="label">In the note</legend>
-            <label><input type="checkbox" value="ai_notes" /> Notes</label>
-            <label><input type="checkbox" value="notes" /> Your notes</label>
-            <label><input type="checkbox" value="transcript" /> Transcript</label>
-          </fieldset>
-        </section>
-
-        <!-- AI agents: Lowkey as an MCP server (lowkey --mcp) -->
-        <section id="section-agents" class="section" role="tabpanel" data-section="agents" hidden>
-          <header class="section-head">
-            <h2>AI agents</h2>
-            <p>Let Claude Code, Codex, Gemini CLI and other agents read your meetings and dictations, and transcribe files with the speech model on this computer. They connect over MCP.</p>
-          </header>
-          <div class="field field-stacked">
-            <div class="field-text">
-              <span class="label">Connect an agent</span>
-              <p class="field-desc">Run the line for your agent once, in a terminal. The agent starts it when it needs it: this window does not have to be open.</p>
-            </div>
-            <div id="agent-commands" class="agent-commands"></div>
-          </div>
-          <p class="field-desc" data-kind="warn">An agent sends what it reads to its own AI service. Nothing else leaves this computer.</p>
-          <div class="separator"></div>
-          <div class="field">
-            <div class="field-text">
-              <label for="agents-recording">Let agents start and stop recordings</label>
-              <p class="field-desc">Off: agents only read and transcribe. On: an agent can start or stop a meeting recording when you ask it to. You see the strip and a notification each time.</p>
-            </div>
-            <input id="agents-recording" type="checkbox" role="switch" class="switch" />
-          </div>
-          <div class="separator"></div>
-          <div class="field field-stacked">
-            <div class="field-text">
-              <span class="label">What agents can do</span>
-            </div>
-            <ul class="agent-tools">
-              <li><b>List and read meetings</b>: the notes, your notes and the transcript ("Me" is you).</li>
-              <li><b>Search</b> meetings and dictations.</li>
-              <li><b>Get action items</b> from the notes, by person.</li>
-              <li><b>Read the last dictation.</b></li>
-              <li><b>Transcribe a file</b> on this computer, with the model chosen in Models.</li>
-              <li><b>See if a meeting is being recorded</b>, and start or stop one when the switch above is on.</li>
-            </ul>
           </div>
         </section>
 
@@ -646,8 +651,17 @@
               <a href="https://github.com/k2-fsa/sherpa-onnx">sherpa-onnx</a> (Apache-2.0);
               live preview by <a href="https://huggingface.co/Cactus-Compute/whistle">Cactus Whistle</a> (Apache-2.0).
             </dd>
-            <dt>Shortcuts</dt>
-            <dd><kbd>Space</kbd> dictate in this window · <kbd>Esc</kbd> cancel · <kbd>Ctrl</kbd> <kbd>,</kbd> settings</dd>
+            <dt>Keys in any app</dt>
+            <dd>
+              <ul class="about-keys">
+                <li><span id="about-key-dictation">–</span> dictate</li>
+                <li><span id="about-key-paste">–</span> paste the last dictation</li>
+                <li><span id="about-key-meeting">–</span> record a meeting</li>
+              </ul>
+              <span class="about-keys-note">Change them in Dictation and in Meetings.</span>
+            </dd>
+            <dt>Keys in this window</dt>
+            <dd><kbd>Space</kbd> dictate (in Transcribe) · <kbd>Esc</kbd> cancel · <kbd>Ctrl</kbd> <kbd>,</kbd> settings</dd>
           </dl>
         </section>
       </div>

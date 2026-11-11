@@ -268,9 +268,11 @@ h1 { font-size: 20px; font-weight: 600; }
 .key-note[data-kind="error"] { color: var(--destructive); }
 .key-note[data-kind="ok"] { color: var(--success); }
 
-.about { display: grid; grid-template-columns: 110px 1fr; gap: 12px 16px; margin: 0; }
+.about { display: grid; grid-template-columns: 140px 1fr; gap: 12px 16px; margin: 0; }
 .about dt { color: var(--muted-foreground); }
 .about dd { margin: 0; }
+.about-keys { margin: 0 0 4px; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; }
+.about-keys-note { color: var(--muted-foreground); font-size: 13px; }
 
 /* ───────────────────────────── loading ─────────────────────────────
    One look for "at work" everywhere: a spinner when there is no measure, a bar when there is
@@ -326,7 +328,9 @@ h1 { font-size: 20px; font-weight: 600; }
 /* Narrow windows: the section list goes on top, as a row of tabs. */
 @media (max-width: 560px) {
   .settings { grid-template-columns: 1fr; grid-template-rows: auto 1fr; height: auto; min-height: 100vh; }
-  .side-brand .tagline, .settings-title { display: none; }
+  .side-brand .tagline { display: none; }
+  /* Its own line: the settings tabs (Meetings among them) under the main ones. */
+  .settings-title { flex-basis: 100%; padding: 6px 10px 0; }
   .settings-nav { border-right: 0; border-bottom: 1px solid var(--border); }
   #settings-tabs { flex-direction: row; flex-wrap: wrap; }
   .settings-content { padding: 24px 20px; }
@@ -641,8 +645,8 @@ mark { background: color-mix(in srgb, var(--brand) 20%, transparent); color: inh
 .chat-send[data-stop] { background: var(--muted); color: var(--foreground); }
 .ai-error { margin: 0; color: var(--destructive); font-size: 13px; }
 
-/* ───────────────────────────── Models ───────────────────────────── */
-/* Two groups (speech to text, notes), each with its status on the right of its heading. */
+/* ───────────────────────────── setting groups ───────────────────────────── */
+/* A titled group in a settings page (Speech model, Notes, Note apps…); a model's status on the right of its heading. */
 .model-group { display: flex; flex-direction: column; gap: 18px; padding-top: 22px; border-top: 1px solid var(--border); }
 .section-head + .model-group { padding-top: 4px; border-top: 0; }
 .group-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
@@ -690,7 +694,7 @@ mark { background: color-mix(in srgb, var(--brand) 20%, transparent); color: inh
 .mic-meter > div { height: 100%; width: 0; background: var(--brand); border-radius: 6px; transition: width 0.08s linear; }
 
 /* ───────────────────────────── calls ───────────────────────────── */
-/* Settings → General: the call apps under "Offer to record calls". */
+/* Settings → Meetings: the call apps under "Offer to record calls". */
 /* A part of a section that can be hidden: its rows keep the section's spacing. */
 .settings-group { display: flex; flex-direction: column; gap: inherit; }
 .calls-apps { display: flex; flex-direction: column; gap: 8px; }
@@ -708,7 +712,7 @@ dialog.confirm h2 { font-size: 17px; font-weight: 600; }
 dialog.confirm p { margin: 8px 0 0; color: var(--muted-foreground); font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; }
 .confirm-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
 
-/* Settings → AI agents: one line per agent, with a Copy button. */
+/* Settings → Connections → AI agents: one line per agent, with a Copy button. */
 .agent-commands { display: flex; flex-direction: column; gap: 10px; }
 .agent-command { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 8px; align-items: center; }
 .agent-command .label { grid-column: 1 / -1; font-size: 13px; color: var(--muted-foreground); }
@@ -719,7 +723,7 @@ dialog.confirm p { margin: 8px 0 0; color: var(--muted-foreground); font-size: 1
 .agent-tools { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
 .agent-tools b { font-weight: 500; }
 
-/* Settings → Note apps */
+/* Settings → Connections → Note apps */
 .export-dir { padding: 6px 10px; border-radius: calc(var(--radius) - 2px); background: var(--muted); font: 12px/1.5 ui-monospace, "SF Mono", monospace; overflow-wrap: anywhere; }
 .export-parts { border: 0; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .export-parts legend { margin-bottom: 4px; }

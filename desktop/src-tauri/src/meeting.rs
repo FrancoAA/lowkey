@@ -1,7 +1,7 @@
 //! Meetings: your microphone ("Me") and the computer's sound ("Them", the others in a call) as
 //! a live transcript, with your notes next to it. Each source is cut into pieces at pauses and
 //! the pieces go to the speech model in order. Saved as JSON in <data dir>/meetings; nothing
-//! leaves the computer. No audio is kept, except with Settings → Models → "Tell the other voices
+//! leaves the computer. No audio is kept, except with Settings → Meetings → "Tell the other voices
 //! apart": the computer's sound then stays in a temporary file until the voices are told apart
 //! after Stop (src/voices.rs).
 
@@ -82,7 +82,7 @@ pub struct Meeting {
     pub ai_at: u64,
     /// Questions about the meeting and the model's answers (Ask about this meeting), oldest first.
     pub chat: Vec<ChatMessage>,
-    /// Settings → Note apps: the file it was saved as (in the chosen folder), and the hash of
+    /// Settings → Connections → Note apps: the file it was saved as (in the chosen folder), and the hash of
     /// what was written (a file that differs from it was edited outside: never overwritten).
     pub export_file: String,
     pub export_hash: String,
@@ -757,13 +757,17 @@ fn markdown(m: &Meeting, when: &str, parts: Parts) -> String {
     }
     if parts.transcript {
         s += "## Transcript\n\n";
-        if m.lines.is_empty() {
-            s += "No speech was found.\n";
-        }
-        for p in paragraphs(&m.lines) {
-            s += &format!("**{}** ({}): {}\n\n", m.label(&p), clock(p.start), p.text);
-        }
+        s += &transcript_markdown(m);
     }
+    s.trim_end().to_string() + "\n"
+}
+
+/// The transcript alone: one paragraph per speaker turn, "**Me** (0:12): …".
+pub fn transcript_markdown(m: &Meeting) -> String {
+    if m.lines.is_empty() {
+        return "No speech was found.\n".into();
+    }
+    let s: String = paragraphs(&m.lines).iter().map(|p| format!("**{}** ({}): {}\n\n", m.label(p), clock(p.start), p.text)).collect();
     s.trim_end().to_string() + "\n"
 }
 
@@ -834,7 +838,7 @@ struct Inner {
     muted: AtomicBool,
     emit: EmitFn,
     saving: Mutex<()>,
-    /// Settings → Models → Tell the other voices apart: the computer's sound, kept until Stop.
+    /// Settings → Meetings → Tell the other voices apart: the computer's sound, kept until Stop.
     tape: Mutex<Option<crate::voices::Tape>>,
     /// See `Live::screen`.
     screen: Mutex<Screen>,
