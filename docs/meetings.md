@@ -28,14 +28,14 @@ macOS and Windows, a prompt when a call starts, and questions over past meetings
   strip its own size back when the meeting's strip goes; it never changes `overlay_collapsed`.
   A call offered and a meeting that did not start need words: they show in the strip.
 - The window is transparent: the capsule is 30 px high and only as wide as what it shows,
-  with its own shadow; on hover it grows to the window's width for its buttons. A press on the
+  with its own shadow; on hover it grows by the width of its buttons. A press on the
   transparent edge drags it too (else Hyprland would focus the window for nothing).
 - At rest the capsule shows a red dot, Lowkey's mark and the time. The mark's five bars move
   with the meeting's levels and take the colour of who talks (`LiveMark`: the louder source
   for 0.2 s; green for Me, blue for Them; grey after 1.2 s of quiet). Speaker 2, 3… are told
   apart only after Stop, so the live colours are Me and Them. Muted, a red crossed microphone
   shows and only the computer's sound moves the bars. On hover: Record screen (when this build
-  records the screen), Mute and Stop at its right end. A click elsewhere opens the meeting in
+  records the screen), Mute and Stop, right after the time. A click elsewhere opens the meeting in
   the window; a drag moves it (the place is kept, as for the strip). A call that ended shows
   "Call ended" in place of the time for 20 s. At Stop it says "Saving", then a check and
   **Open the notes**. A dictation during a meeting shows in the capsule as the pill does (the

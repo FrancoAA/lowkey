@@ -344,6 +344,22 @@ esac
             w, h = mon["width"], mon["height"]
             run([pointer_tool, *[c.format(W=w, H=h) for c in cmds]], env)
 
+        def capsule_buttons(at, size) -> tuple[tuple[int, int], tuple[int, int], tuple[int, int]]:
+            """Point at the capsule (its buttons show right after the time) and find Stop by its
+            colour (#fca5a5): then Mute and Record screen, 27 px apart, to its left."""
+            (cx, cy), (cw, ch) = at, size
+            pointer(f"abs:{cx + cw // 2},{cy + ch // 2},{{W}},{{H}}", "sleep:300")
+            png = tmp / "capsule-hover.png"
+            run(["grim", "-g", f"{cx},{cy} {cw}x{ch}", png], env)
+            raw = subprocess.run(["ffmpeg", "-loglevel", "error", "-i", str(png), "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+                                 capture_output=True, check=True).stdout
+            red = [(i // 3 % cw, i // 3 // cw) for i in range(0, len(raw) - 2, 3)
+                   if raw[i] > 235 and 140 < raw[i + 1] < 190 and 140 < raw[i + 2] < 190]
+            check(len(red) >= 30, f"the capsule shows its buttons on hover (Stop: {len(red)} pixels)")
+            bx = round(sum(p[0] for p in red) / len(red))
+            by = round(sum(p[1] for p in red) / len(red))
+            return (cx + bx, cy + by), (cx + bx - 27, cy + by), (cx + bx - 54, cy + by)
+
         def strip_step() -> None:
             """The meeting's capsule: drag it, mute and unmute, stop it with its button, see it come
             back where it was left; record the screen; a click opens the meeting; Open the notes."""
@@ -384,10 +400,9 @@ esac
             check(abs(cx - (x + 24 - 300)) <= 3 and abs(cy - (y + 20 - 200)) <= 3,
                   f"the cursor stays where the drag left it ({cx:.0f}, {cy:.0f})")
             check(hj("getoption", "cursor:no_warps").get("bool") is False, "cursor:no_warps is as it was (off) after the focus went back")
-            # On hover the buttons show at the right end: Stop, then Mute, then Record screen.
+            # On hover the buttons show right after the time: Record screen, Mute, Stop.
             (x1, y1) = s1["at"]
-            # (the hover capsule: 4 px margin, 1 px border, 5 px padding, 22 px buttons 5 px apart)
-            stop_at, mute_at, screen_at = (x1 + sw - 21, y1 + 20), (x1 + sw - 48, y1 + 20), (x1 + sw - 75, y1 + 20)
+            stop_at, mute_at, screen_at = capsule_buttons(s1["at"], s1["size"])
             n_m = len(events("meeting"))
             pointer(f"abs:{mute_at[0]},{mute_at[1]},{{W}},{{H}}", "sleep:300", "click")
             try:
@@ -425,7 +440,7 @@ esac
             check(tuple(s4["size"]) == (184, 40) and abs(s4["at"][0] - s1["at"][0]) <= 3 and abs(s4["at"][1] - s1["at"][1]) <= 3,
                   f"the next recording shows the capsule where it was left ({s1['at']} / {s4['at']})")
             # Record screen (on hover), Stop screen, and again: two screen videos in this meeting.
-            sx, sy = s4["at"][0] + sw - 75, s4["at"][1] + 20
+            _, _, (sx, sy) = capsule_buttons(s4["at"], s4["size"])
             for want in ("on", "", "on"):
                 n_s = len(events("meeting"))
                 pointer(f"abs:{sx},{sy},{{W}},{{H}}", "sleep:300", "click")
@@ -456,8 +471,9 @@ esac
             print("  screenshot docs/screenshots/39-desktop-capsule-open-notes.png")
             raw = subprocess.run(["ffmpeg", "-loglevel", "error", "-i", str(png), "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
                                  capture_output=True, check=True).stdout
+            # #93c5fd, or #bfdbfe while the pointer is on it.
             blue = [(i // 3 % lw, i // 3 // lw) for i in range(0, len(raw) - 2, 3)
-                    if raw[i] < 190 and raw[i + 1] > 170 and raw[i + 2] > 235 and raw[i + 2] - raw[i] > 60]
+                    if raw[i] < 200 and raw[i + 1] > 170 and raw[i + 2] > 235 and raw[i + 2] - raw[i] > 50]
             check(len(blue) > 15, f"the saved capsule shows the link Open the notes ({len(blue)} link pixels)")
             bx = sorted(p[0] for p in blue)[len(blue) // 2]
             by = sorted(p[1] for p in blue)[len(blue) // 2]

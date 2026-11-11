@@ -113,8 +113,8 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: transparent;
 /* ------------------------------------------------------------------ the meeting's capsule
    The app makes the window 184x40 while a meeting shows. The window is transparent: the capsule
    is only as wide as what it shows (30 px high, room for its shadow), in the middle. At rest: a
-   red dot, the live mark and the time. On hover it grows to the window's width: Record screen,
-   Mute and Stop at its right end. Then "Saving", and "Open the notes". Drag it to move it; a
+   red dot, the live mark and the time. On hover: Record screen, Mute and Stop right after the
+   time (it grows by their width). Then "Saving", and "Open the notes". Drag it to move it; a
    click opens the meeting in Lowkey. */
 .cap, .stop-btn, .mute, .screen-btn { display: none; }
 .overlay[data-capsule="1"] {
@@ -122,7 +122,9 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: transparent;
   display: flex; align-items: center; justify-content: center; gap: 5px; padding: 0 10px; border-radius: 15px; cursor: pointer;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.45);
 }
-.overlay[data-capsule="1"][data-state="recording"]:hover { width: calc(100% - 8px); padding: 0 5px 0 10px; }
+.overlay[data-capsule="1"][data-state="recording"]:hover { padding: 0 5px 0 10px; }
+/* Saving, and saved: a little more room after the words. */
+.overlay[data-capsule="1"]:is([data-state="transcribing"], [data-state="done"]) { padding: 0 14px 0 11px; }
 .overlay[data-capsule="1"] > :not(.cap):not(.mute):not(.screen-btn):not(.stop-btn) { display: none; }
 .cap { align-items: center; gap: 8px; min-width: 0; font-size: 12px; font-weight: 600; white-space: nowrap; }
 .overlay[data-capsule="1"] .cap { display: flex; }
@@ -158,7 +160,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: transparent;
 .overlay[data-capsule="1"][data-state="recording"]:is([data-note="ended"], [data-note="auto"]) .cap-text { display: block; }
 .overlay[data-capsule="1"][data-state="recording"]:is([data-note="ended"], [data-note="auto"]) .cap-time { display: none; }
 .overlay[data-capsule="1"][data-note="ended"] .cap-text { color: #fcd34d; }
-.overlay[data-capsule="1"][data-state="recording"]:hover .cap { margin-right: auto; } /* the buttons at the right end */
+.overlay[data-capsule="1"][data-state="recording"]:hover .cap { margin-right: 3px; } /* 8 px from the time to the buttons */
 .overlay[data-capsule="1"][data-state="recording"]:hover .cap-rec,
 .overlay[data-capsule="1"][data-state="recording"]:hover .cap-muted { display: none; }
 .overlay[data-capsule="1"][data-state="recording"]:hover :is(.mute, .stop-btn) { display: grid; }
