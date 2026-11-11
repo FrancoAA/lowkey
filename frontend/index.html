@@ -556,6 +556,19 @@
                 </div>
               </div>
             </div>
+            <!-- The instructions for the notes: the app's, or the user's own (Restore brings the app's back). -->
+            <div class="field field-stacked">
+              <div class="field-text">
+                <label for="ai-prompt">Instructions for the notes</label>
+                <p class="field-desc">What the model is told before it reads the meeting. <code>{language}</code> becomes the meeting's language; the names in Vocabulary are added at the end. Change it to try other notes: Restore the original brings back the app's instructions. Then write the notes of a meeting again to see the result.</p>
+              </div>
+              <textarea id="ai-prompt" class="input prompt-input" rows="12" spellcheck="false" aria-describedby="ai-prompt-state"></textarea>
+              <div class="prompt-actions">
+                <span id="ai-prompt-state" class="field-desc" aria-live="polite"></span>
+                <button id="ai-prompt-restore" type="button" class="btn btn-ghost btn-sm">Restore the original</button>
+                <button id="ai-prompt-save" type="button" class="btn btn-default btn-sm">Save</button>
+              </div>
+            </div>
           </div>
         </section>
 

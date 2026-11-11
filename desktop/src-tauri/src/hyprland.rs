@@ -120,14 +120,20 @@ fn shell_quote(s: &str) -> String {
     }
 }
 
-/// The strip's sizes (logical px): open, and collapsed to a small pill.
+/// The strip's sizes (logical px): open, collapsed to a small pill, and the meeting's capsule
+/// (the live mark, the time, and on hover Mute, Record screen and Stop).
 pub const OVERLAY_SIZE: (u32, u32) = (380, 76);
 pub const OVERLAY_PILL: (u32, u32) = (150, 44);
+pub const OVERLAY_CAPSULE: (u32, u32) = (184, 40);
 
 /// Where the strip shows and how: collapsed or not, and where the user left it.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct OverlayPlace {
+    /// The user collapsed the strip (saved).
     pub collapsed: bool,
+    /// A meeting shows: the capsule, whatever `collapsed` says (not saved: the app sets it while
+    /// a meeting records, and until its "saved" goes).
+    pub capsule: bool,
     /// [x, y] as fractions (0..1) of the room the monitor leaves around the strip
     /// (0,0 = top left, 1,1 = bottom right). None: bottom centre.
     pub at: Option<[f32; 2]>,
@@ -135,12 +141,18 @@ pub struct OverlayPlace {
 
 impl OverlayPlace {
     pub fn size(&self) -> (u32, u32) {
-        if self.collapsed { OVERLAY_PILL } else { OVERLAY_SIZE }
+        if self.capsule {
+            OVERLAY_CAPSULE
+        } else if self.collapsed {
+            OVERLAY_PILL
+        } else {
+            OVERLAY_SIZE
+        }
     }
 }
 
 /// The place the app's rule uses now (set from the config, and when the user moves the strip).
-static PLACE: parking_lot::Mutex<OverlayPlace> = parking_lot::Mutex::new(OverlayPlace { collapsed: false, at: None });
+static PLACE: parking_lot::Mutex<OverlayPlace> = parking_lot::Mutex::new(OverlayPlace { collapsed: false, capsule: false, at: None });
 
 /// Floating, pinned, bottom centre (or where the user left it). A restart replaces it (Lua
 /// global; each rule gets a new name: Hyprland keeps the first rule of a name). Not `no_focus`:
@@ -174,8 +186,13 @@ pub fn overlay_rule_lua_at(place: &OverlayPlace) -> String {
     )
 }
 
+/// The place changed while the strip was on screen: the rule waits until it hides.
+static RULE_PENDING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 /// A new place for the strip: the app's rule follows it (if the app's rule is in use), so the
-/// strip shows there the next time it opens.
+/// strip shows there the next time it opens. Not while the strip is on screen (the new rule
+/// applies only at the next map; in the nested e2e, after a new rule while the strip showed,
+/// the pointer over it focused it): `overlay_hidden` sends it then.
 pub fn set_overlay_place(place: OverlayPlace) {
     let changed = {
         let mut p = PLACE.lock();
@@ -184,6 +201,17 @@ pub fn set_overlay_place(place: OverlayPlace) {
         changed
     };
     if changed && running() && lua_config() {
+        if overlay_geometry().is_some() {
+            RULE_PENDING.store(true, std::sync::atomic::Ordering::SeqCst);
+        } else {
+            let _ = eval(&overlay_rule_lua());
+        }
+    }
+}
+
+/// The strip was hidden: the rule for the place that changed while it showed.
+pub fn overlay_hidden() {
+    if RULE_PENDING.swap(false, std::sync::atomic::Ordering::SeqCst) && running() && lua_config() {
         let _ = eval(&overlay_rule_lua());
     }
 }
@@ -1006,8 +1034,11 @@ mod tests {
     fn the_strips_place_and_size() {
         let open = overlay_rule_lua_at(&OverlayPlace::default());
         assert!(open.contains("size = { 380, 76 }") && open.contains(r#"move = { "(monitor_w/2-190)", "(monitor_h-150)" }"#), "{open}");
-        let pill = overlay_rule_lua_at(&OverlayPlace { collapsed: true, at: Some([0.25, 1.5]) });
+        let pill = overlay_rule_lua_at(&OverlayPlace { collapsed: true, capsule: false, at: Some([0.25, 1.5]) });
         assert!(pill.contains("size = { 150, 44 }") && pill.contains(r#"move = { "((monitor_w-150)*0.2500)", "((monitor_h-44)*1.0000)" }"#), "{pill}");
+        // A meeting shows: the capsule, also over the user's collapsed pill.
+        let capsule = overlay_rule_lua_at(&OverlayPlace { collapsed: true, capsule: true, at: None });
+        assert!(capsule.contains("size = { 184, 40 }") && capsule.contains(r#"move = { "(monitor_w/2-92)", "(monitor_h-114)" }"#), "{capsule}");
         // Where it is on screen, read back from hyprctl's JSON (a 2x monitor at 1920,0).
         let clients = json!([
             { "title": "other", "address": "0x1", "at": [0, 0], "size": [10, 10], "monitor": 1 },

@@ -1,10 +1,12 @@
 import "./overlay.css";
-import { DualWaveform, Waveform } from "./waveform";
+import { LiveMark, Waveform } from "./waveform";
 
 /**
- * The strip at the bottom of the screen: what the dictation is doing, and while a meeting
- * records, the recording (time, levels, the newest line). The dictation goes first; the
- * meeting shows when no dictation runs. Drag it to move it; its button collapses it to a pill.
+ * The strip at the bottom of the screen: what the dictation is doing. While a meeting shows, the
+ * app makes the window a small capsule: the live mark (its bars move with the voices, in the
+ * colour of who talks) and the time; on hover Mute, Record screen and Stop. The dictation goes
+ * first; the meeting shows when no dictation runs. Drag it to move it; its button collapses the
+ * strip to a pill.
  */
 interface DictationState {
   state: "idle" | "starting" | "listening" | "transcribing" | "done" | "error";
@@ -23,6 +25,10 @@ const mini = document.getElementById("mini")!;
 const collapseBtn = document.getElementById("collapse") as HTMLButtonElement;
 const muteBtn = document.getElementById("mute") as HTMLButtonElement;
 const screenBtn = document.getElementById("screen") as HTMLButtonElement;
+const stopBtn = document.getElementById("stop") as HTMLButtonElement;
+const capTime = document.getElementById("cap-time")!;
+const capText = document.getElementById("cap-text")!;
+const capSr = document.getElementById("cap-sr")!;
 const label = document.getElementById("label")!;
 const detail = document.getElementById("detail")!;
 const timer = document.getElementById("timer")!;
@@ -44,8 +50,8 @@ interface MeetingLive {
   screen_supported?: boolean;
 }
 
-/** Me above the line, Them below, in their colours (overlay.css --me / --them). */
-const mwave = new DualWaveform(document.getElementById("mwave") as HTMLCanvasElement);
+/** The capsule's mark, in the colour of who talks (overlay.css --me / --them). */
+const mark = new LiveMark(document.getElementById("mark")!);
 let dict: DictationState | null = null;
 let dictAt = 0; // when the dictation state arrived (done/error show for a moment)
 let meet: MeetingLive | null = null;
@@ -121,34 +127,47 @@ function show(): void {
   const meetingActive = !!meet && meet.state !== "done";
   if (meetingShows(now) && (!dictationShows(now) || (meetingActive && !dictating))) renderMeeting(now);
   else render(dict ?? { state: "idle", level: 0, text: "", error: null, detail: "", delivered: [], elapsed: 0 });
+  renderShape();
   renderMini();
 }
 
-/** The pill's text: the time while it records, else one word for what it does. */
+/** The pill's text: the time while a dictation listens, else one word for what it does (a
+ * meeting's recording is in the capsule; a call offered, or an error, can be in the pill). */
 function renderMini(): void {
   const state = root.dataset.state ?? "";
-  const meeting = root.dataset.mode === "meeting";
   const words: Record<string, string> = {
     starting: "Starting",
-    transcribing: meeting ? "Saving" : "",
-    done: meeting ? "Saved" : label.textContent?.startsWith("Typed") ? "Typed" : "Copied",
+    transcribing: "",
+    done: label.textContent?.startsWith("Typed") ? "Typed" : "Copied",
     error: "Error",
     offer: "Call",
   };
-  mini.textContent = state === "listening" || state === "recording" ? timer.textContent ?? "" : words[state] ?? "Ready";
-  mini.style.color = state === "recording" ? "#f4f4f5" : state === "error" ? "#fca5a5" : "";
+  mini.textContent = state === "listening" ? timer.textContent ?? "" : words[state] ?? "Ready";
+  mini.style.color = state === "error" ? "#fca5a5" : "";
 }
 
 // ------------------------------------------------------------------ move and collapse
+/** The user collapsed the strip (saved); the app made the window the meeting's capsule. */
 let collapsed = false;
-function setCollapsed(on: boolean): void {
-  collapsed = on;
-  root.dataset.collapsed = on ? "1" : "";
-  root.title = on ? "Click to open · drag to move" : "";
+let capsule = false;
+function setPlace(c: boolean, cap: boolean): void {
+  collapsed = c;
+  capsule = cap;
+  renderShape();
+}
+
+/** The capsule for a meeting; else the pill (collapsed, or what else shows in the capsule's
+ * window: a dictation while a meeting records), or the strip. */
+function renderShape(): void {
+  const meeting = root.dataset.mode === "meeting";
+  root.dataset.capsule = capsule && meeting ? "1" : "";
+  root.dataset.collapsed = collapsed || (capsule && !meeting) ? "1" : "";
+  root.title = capsule ? (meeting ? "Click to open the meeting · drag to move" : "") : collapsed ? "Click to open · drag to move" : "";
 }
 
 async function askCollapse(on: boolean): Promise<void> {
-  setCollapsed(on);
+  collapsed = on;
+  renderShape();
   const { invoke } = await import("@tauri-apps/api/core");
   await invoke("overlay_collapse", { collapsed: on });
 }
@@ -190,6 +209,13 @@ function renderScreen(m: MeetingLive | null): void {
   screenBtn.title = what;
   screenBtn.setAttribute("aria-label", what);
 }
+
+stopBtn.addEventListener("click", (e) => {
+  e.stopPropagation();
+  stopBtn.disabled = true; // the app says "finishing" next
+  void call("meeting_stop").catch(() => (stopBtn.disabled = false));
+  void call("overlay_unfocus"); // after the click (see the collapse button)
+});
 
 screenBtn.addEventListener("click", (e) => {
   e.stopPropagation();
@@ -240,8 +266,15 @@ async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> 
 }
 root.addEventListener("pointerdown", (e) => {
   if (e.button !== 0) return;
-  if ((e.target as Element).closest("#collapse, #mute, #screen, .open-link")) return; // their clicks (above)
+  if ((e.target as Element).closest("#collapse, #mute, #screen, #stop, .open-link")) return; // their clicks (above)
   press = { x: e.screenX, y: e.screenY, appDrag: call<boolean>("overlay_drag_start").catch(() => false) };
+  // The release comes here also when the pointer is outside the window by then (a fast drag
+  // leaves the small capsule before the window follows it).
+  try {
+    root.setPointerCapture(e.pointerId);
+  } catch {
+    /* no capture: the release over the window still ends the drag */
+  }
 });
 root.addEventListener("pointermove", (e) => {
   const p = press;
@@ -257,18 +290,14 @@ async function release(): Promise<void> {
   press = null;
   if (!p) return;
   const moved = (await p.appDrag) ? await call<boolean>("overlay_drag_end") : false;
-  if (!moved && collapsed) void askCollapse(false);
+  if (moved) return;
+  // A click: the capsule opens its meeting in Lowkey; the pill opens the strip.
+  if (capsule) {
+    if (root.dataset.capsule === "1" && meet) void call("open_meeting", { id: meet.meeting.id });
+  } else if (collapsed) void askCollapse(false);
 }
 root.addEventListener("pointerup", () => void release());
 root.addEventListener("pointercancel", () => void release());
-
-/** "Them  … the newest words": the speaker always shows (in its colour), older words are cut. */
-function speakerLine(who: "me" | "them", text: string): void {
-  const name = document.createElement("b");
-  name.className = who === "me" ? "who-me" : "who-them";
-  name.textContent = who === "me" ? "Me" : "Them";
-  detail.replaceChildren(name, " " + fitTail(text, detail, `${name.textContent}  `));
-}
 
 function renderMeeting(now: number): void {
   if (current !== "meeting") {
@@ -276,12 +305,15 @@ function renderMeeting(now: number): void {
     clearInterval(tick);
     current = "meeting";
   }
-  if (meet?.state === "recording") mwave.start();
-  else mwave.stop();
   root.dataset.mode = "meeting";
   root.dataset.preview = "";
+  root.dataset.note = "";
   preview.textContent = "";
+  capText.title = "";
   if (meetError && now - meetError.at < 4000 && (!meet || meet.state === "done")) {
+    mark.stop();
+    renderMute(false);
+    renderScreen(null);
     root.dataset.state = "error";
     label.textContent = "Meeting not started";
     detail.textContent = meetError.text;
@@ -289,6 +321,9 @@ function renderMeeting(now: number): void {
   }
   const note = callNoteNow(now);
   if (note?.state === "offer" && (!meet || meet.state === "done")) {
+    mark.stop();
+    renderMute(false);
+    renderScreen(null);
     root.dataset.state = "offer";
     label.textContent = `${note.label} call detected`;
     detail.textContent = note.key ? `${prettyKey(note.key)} records it` : "Record it in Meetings";
@@ -297,44 +332,43 @@ function renderMeeting(now: number): void {
   const m = meet!;
   const elapsed = m.state === "recording" ? m.elapsed + (now - meetAt) / 1000 : m.elapsed;
   root.dataset.state = m.state === "recording" ? "recording" : m.state === "finishing" ? "transcribing" : "done";
-  const last = m.meeting.lines[m.meeting.lines.length - 1];
   renderMute(m.state === "recording" && !!m.muted);
   renderScreen(m);
+  stopBtn.disabled = m.state !== "recording";
   if (m.state === "recording") {
-    label.textContent = ""; // the time, the wave and the mute button say it (no "Recording")
-    timer.textContent = clock(elapsed * 1000); // aria-hidden: no announcement every second
-    const stop = meetingKey ? ` · ${prettyKey(meetingKey)} stops` : "";
-    if (m.muted) {
-      const tag = document.createElement("span");
-      tag.className = "muted-note";
-      tag.textContent = "Mic muted";
-      const rest = m.meeting.system_audio
-        ? m.screen === "on" ? " · only the computer's sound and the screen are recorded" : " · only the computer's sound is recorded"
-        : m.screen === "on" ? " · only the screen is recorded" : "";
-      detail.replaceChildren(tag, rest);
-    } else if (note?.state === "ended") detail.textContent = `The ${note.label} call ended${note.key ? ` · ${prettyKey(note.key)} stops` : ""}`;
-    else if (note?.state === "auto") detail.textContent = `Started automatically · ${note.label} call`;
-    else if (last) speakerLine(last.speaker, last.text);
-    else {
-      const what = m.meeting.system_audio ? "Your mic and the computer's sound" : "Your mic only";
-      detail.textContent = `${m.screen === "on" ? what.replace(" and ", ", ").replace(" only", "") + " and the screen" : what}${stop}`;
-    }
+    mark.muted = !!m.muted;
+    mark.start();
+    capTime.textContent = clock(elapsed * 1000); // aria-hidden: no announcement every second
+    capSr.textContent = m.muted ? "Recording a meeting. Your microphone is muted." : "Recording a meeting.";
+    // A call that ended (stop it), or a recording that started by itself: a word for a while.
+    if (note?.state === "ended" || note?.state === "auto") {
+      root.dataset.note = note.state;
+      capText.textContent = note.state === "ended" ? "Call ended" : `${note.label} call`;
+      capText.title =
+        note.state === "ended"
+          ? `The ${note.label} call ended${note.key ? ` · ${prettyKey(note.key)} stops` : ""}`
+          : `Started automatically · ${note.label} call`;
+    } else capText.textContent = "";
   } else if (m.state === "finishing") {
-    label.textContent = "Saving the meeting…";
-    detail.textContent = m.pending ? `${m.pending} part${m.pending > 1 ? "s" : ""} to transcribe` : "One moment";
+    mark.stop();
+    capSr.textContent = "";
+    capText.textContent = "Saving";
+    capText.title = m.pending ? `${m.pending} part${m.pending > 1 ? "s" : ""} to transcribe` : "";
   } else {
-    label.textContent = "Meeting saved";
+    mark.stop();
+    capSr.textContent = "Meeting saved.";
     // A link to the meeting: Lowkey opens on its notes.
     const id = m.meeting.id;
-    if (openLink.dataset.id !== id || openLink.parentElement !== detail) {
+    if (openLink.dataset.id !== id || openLink.parentElement !== capText) {
       openLink.dataset.id = id;
-      detail.replaceChildren(`${clock(m.meeting.duration * 1000)} · `, openLink);
+      capText.replaceChildren(openLink);
     }
+    capText.title = `${clock(m.meeting.duration * 1000)} recorded`;
   }
 }
 
 function render(d: DictationState): void {
-  if (root.dataset.mode === "meeting") mwave.stop();
+  if (root.dataset.mode === "meeting") mark.stop();
   renderMute(false);
   renderScreen(null);
   delete root.dataset.mode;
@@ -415,10 +449,13 @@ void (async () => {
     show();
   });
   await listen<{ me: number; them: number }>("meeting-level", (e) => {
-    mwave.levels = e.payload;
+    mark.levels = e.payload;
   });
   await listen<{ meeting_key?: string }>("status", (e) => (meetingKey = e.payload.meeting_key ?? meetingKey));
-  await listen<{ collapsed: boolean }>("overlay-place", (e) => setCollapsed(e.payload.collapsed));
+  await listen<{ collapsed: boolean; capsule?: boolean }>("overlay-place", (e) => {
+    setPlace(e.payload.collapsed, !!e.payload.capsule);
+    show();
+  });
   await listen<boolean>("overlay-hold", (e) => {
     held = e.payload;
     show();
@@ -427,9 +464,9 @@ void (async () => {
   window.setInterval(() => {
     if (meet || dict) show();
   }, 500);
-  const st = await invoke<{ meeting_key?: string; overlay_collapsed?: boolean }>("get_status");
+  const st = await invoke<{ meeting_key?: string; overlay_collapsed?: boolean; overlay_capsule?: boolean }>("get_status");
   meetingKey = st.meeting_key ?? "";
-  setCollapsed(!!st.overlay_collapsed);
+  setPlace(!!st.overlay_collapsed, !!st.overlay_capsule);
   const live = await invoke<MeetingLive | null>("meeting_live");
   if (live) {
     meet = live;

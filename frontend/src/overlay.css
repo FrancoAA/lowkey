@@ -2,8 +2,9 @@
   color-scheme: dark;
   font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --accent: #e4e4e7;
-  --me: #e4e4e7;
-  --them: #8aa4bf;
+  /* Who talks, in the capsule's live mark (and a call's dot). */
+  --me: #4ade80;
+  --them: #60a5fa;
 }
 * { box-sizing: border-box; }
 /* The window is transparent: only the rounded strip is drawn. */
@@ -60,9 +61,8 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: transparent;
 @keyframes pulse { 50% { opacity: 0.4; } }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
 
-/* Meeting: a red recording dot, "Recording", the time and the two-colour wave (Me above,
-   Them below), then the newest line with its speaker in its colour. */
-.mwave { display: none; }
+/* A meeting in the strip (a call offered, a meeting that did not start): the dot, then two rows
+   of words. A recording shows in the capsule (below). */
 .overlay[data-mode="meeting"] {
   display: grid; grid-template-columns: 40px auto auto 1fr; grid-template-rows: 28px 22px;
   column-gap: 10px; align-content: center;
@@ -70,18 +70,10 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: transparent;
 .overlay[data-mode="meeting"] .dot { grid-row: 1 / 3; align-self: center; }
 .overlay[data-mode="meeting"] .dot svg { display: none; }
 .overlay[data-mode="meeting"] .dot::after { content: ""; width: 14px; height: 14px; border-radius: 50%; background: #f87171; }
-.overlay[data-mode="meeting"][data-state="recording"] .dot { animation: rec 1.6s ease-in-out infinite; }
-.overlay[data-mode="meeting"][data-state="done"] .dot::after { background: #4ade80; }
 .overlay[data-mode="meeting"] .text { display: contents; }
 .overlay[data-mode="meeting"] .label { grid-column: 2 / 5; grid-row: 1; align-self: center; }
 .overlay[data-mode="meeting"] .detail { grid-column: 2 / 5; grid-row: 2; display: block; color: #e4e4e7; }
 .overlay[data-mode="meeting"] #wave, .overlay[data-mode="meeting"] .timer, .overlay[data-mode="meeting"] .preview { display: none; }
-.overlay[data-mode="meeting"][data-state="recording"] .timer {
-  display: block; grid-column: 3; grid-row: 1; align-self: center; font-size: 0.95rem; font-weight: 600; color: #f4f4f5;
-}
-.overlay[data-mode="meeting"][data-state="recording"] .mwave { display: block; grid-column: 4; grid-row: 1; width: 100%; height: 26px; align-self: center; }
-.who-me { color: var(--me); font-weight: 600; }
-.who-them { color: var(--them); font-weight: 600; }
 @keyframes rec { 50% { box-shadow: 0 0 0 4px rgba(248, 113, 113, 0.25); } }
 .overlay[data-mode="meeting"][data-state="offer"] .dot::after { background: var(--them); }
 .overlay[data-mode="meeting"][data-state="offer"] .dot { animation: offer 1.4s ease-in-out infinite; }
@@ -114,47 +106,77 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: transparent;
   display: block; font-size: 0.85rem; font-weight: 600; white-space: nowrap; font-variant-numeric: tabular-nums;
 }
 
-/* Recording a meeting: no words in the first row, just the time, the wave and the mute button
-   (the collapse button keeps the top-right corner). */
-.overlay[data-mode="meeting"][data-state="recording"] { grid-template-columns: 40px auto 1fr 28px; padding-right: 36px; }
-/* With Record screen: one more button before the mute button. */
-.overlay[data-mode="meeting"][data-state="recording"][data-screen-btn="1"] { grid-template-columns: 40px auto 1fr 28px 28px; }
-.overlay[data-mode="meeting"][data-state="recording"][data-screen-btn="1"] .detail { grid-column: 2 / 6; }
-.overlay[data-mode="meeting"][data-state="recording"][data-screen-btn="1"] .mute { grid-column: 5; }
-.overlay[data-mode="meeting"][data-state="recording"] .label { display: none; }
-.overlay[data-mode="meeting"][data-state="recording"] .timer { grid-column: 2; }
-.overlay[data-mode="meeting"][data-state="recording"] .mwave { grid-column: 3; }
-.overlay[data-mode="meeting"][data-state="recording"] .detail { grid-column: 2 / 5; }
-.mute, .screen-btn {
-  display: none; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 8px; place-items: center;
-  background: rgba(255, 255, 255, 0.06); color: #e4e4e7; cursor: pointer;
-}
-.mute svg, .screen-btn svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
-.mute .slash { display: none; }
-.mute:hover, .screen-btn:hover { background: rgba(255, 255, 255, 0.12); }
-.overlay[data-mode="meeting"][data-state="recording"][data-screen-btn="1"] .screen-btn { display: grid; grid-column: 4; grid-row: 1; align-self: center; }
-/* The screen records: the button is red; the picker is open: it pulses. */
-.overlay[data-screen="on"] .screen-btn { background: rgba(248, 113, 113, 0.18); color: #fca5a5; }
-.overlay[data-screen="waiting"] .screen-btn svg { animation: pulse 1.2s ease-in-out infinite; }
-.overlay[data-mode="meeting"][data-state="recording"] .mute { display: grid; grid-column: 4; grid-row: 1; align-self: center; }
-/* Muted: the button is red with a slash; the row under it says so. */
-.overlay[data-muted="1"] .mute { background: rgba(248, 113, 113, 0.18); color: #fca5a5; }
-.overlay[data-muted="1"] .mute .slash { display: inline; }
-.muted-note { color: #fca5a5; font-weight: 600; }
-/* The pill keeps the mute button while a meeting records: the dot and the mute button go to the
-   two ends, the time stays in the middle. */
-.overlay[data-collapsed="1"][data-collapsed][data-mode="meeting"][data-state="recording"] {
-  justify-content: space-between; padding: 0 9px 0 10px; gap: 8px;
-}
-.overlay[data-collapsed="1"][data-collapsed][data-mode="meeting"][data-state="recording"] .mute { display: grid; width: 26px; height: 26px; }
-.overlay[data-collapsed="1"][data-collapsed][data-mode="meeting"][data-state="recording"] .screen-btn { display: none; }
-
 /* A saved meeting: "Open the notes" opens Lowkey on it. */
 .open-link { color: #93c5fd; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; border-radius: 3px; }
 .open-link:hover { color: #bfdbfe; }
 .open-link:focus-visible { outline: 2px solid #93c5fd; outline-offset: 1px; }
-/* The screen is recorded too: a small screen before the time. */
-.overlay[data-mode="meeting"][data-state="recording"][data-screen="on"] .timer::before {
-  content: ""; display: inline-block; width: 10px; height: 7px; margin-right: 6px; vertical-align: 1px;
-  border: 1.5px solid currentColor; border-radius: 2px; opacity: 0.8;
+/* ------------------------------------------------------------------ the meeting's capsule
+   The window is the capsule's size while a meeting shows (the app sets it). At rest: a red dot,
+   the live mark and the time. On hover: Mute, Record screen and Stop in place of the dot. Then
+   "Saving", and "Open the notes". Drag it to move it; a click opens the meeting in Lowkey. */
+.cap, .stop-btn, .mute, .screen-btn { display: none; }
+.overlay[data-capsule="1"] {
+  display: flex; align-items: center; justify-content: center; gap: 5px; padding: 0 10px; border-radius: 20px; cursor: pointer;
 }
+.overlay[data-capsule="1"] > :not(.cap):not(.mute):not(.screen-btn):not(.stop-btn) { display: none; }
+.cap { align-items: center; gap: 8px; min-width: 0; font-size: 0.8rem; font-weight: 600; white-space: nowrap; }
+.overlay[data-capsule="1"] .cap { display: flex; }
+.cap > * { display: none; flex: none; }
+.cap-rec { width: 8px; height: 8px; border-radius: 50%; background: #f87171; animation: rec 1.6s ease-in-out infinite; }
+.cap-time { font-variant-numeric: tabular-nums; }
+.cap-muted, .cap-check { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.cap-muted { color: #fca5a5; }
+.cap-check { color: #4ade80; }
+.cap-spin {
+  width: 14px; height: 14px; border-radius: 50%; border: 2px solid #52525b; border-top-color: #f4f4f5;
+  animation: spin 0.8s linear infinite;
+}
+.cap-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.cap > .sr-only { display: block; position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+/* The live mark: Lowkey's five bars. Their height follows the voices, their colour who talks
+   (overlay.ts LiveMark sets data-who and each bar's scale). */
+.mark { height: 18px; align-items: center; gap: 2px; }
+.mark i {
+  display: block; width: 3px; height: 100%; border-radius: 2px; background: #a1a1aa;
+  transform: scaleY(0.2); transition: background-color 0.18s;
+}
+.mark[data-who="me"] i { background: var(--me); }
+.mark[data-who="them"] i { background: var(--them); }
+
+/* Recording. */
+.overlay[data-capsule="1"][data-state="recording"] :is(.cap-rec, .cap-time) { display: block; }
+.overlay[data-capsule="1"][data-state="recording"] .mark { display: flex; }
+.overlay[data-capsule="1"][data-state="recording"][data-muted="1"] .cap-muted { display: block; }
+/* A call ended (stop it), or the recording started by itself: a word in place of the time, for a
+   while. */
+.overlay[data-capsule="1"][data-state="recording"]:is([data-note="ended"], [data-note="auto"]) .cap-text { display: block; }
+.overlay[data-capsule="1"][data-state="recording"]:is([data-note="ended"], [data-note="auto"]) .cap-time { display: none; }
+.overlay[data-capsule="1"][data-note="ended"] .cap-text { color: #fcd34d; }
+.overlay[data-capsule="1"][data-state="recording"]:hover .cap { margin-right: auto; } /* the buttons at the right end */
+.overlay[data-capsule="1"][data-state="recording"]:hover .cap-rec,
+.overlay[data-capsule="1"][data-state="recording"]:hover .cap-muted { display: none; }
+.overlay[data-capsule="1"][data-state="recording"]:hover :is(.mute, .stop-btn) { display: grid; }
+.overlay[data-capsule="1"][data-state="recording"][data-screen-btn="1"]:hover .screen-btn { display: grid; }
+/* Saving, and saved. */
+.overlay[data-capsule="1"][data-state="transcribing"] :is(.cap-spin, .cap-text),
+.overlay[data-capsule="1"][data-state="done"] :is(.cap-check, .cap-text) { display: block; }
+
+/* The capsule's buttons: shown on hover. */
+.mute, .screen-btn, .stop-btn {
+  width: 24px; height: 24px; padding: 0; border: 0; border-radius: 7px; place-items: center; flex: none;
+  background: rgba(255, 255, 255, 0.07); color: #e4e4e7; cursor: pointer;
+}
+.mute svg, .screen-btn svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.mute:hover, .screen-btn:hover { background: rgba(255, 255, 255, 0.14); }
+.mute .slash { display: none; }
+.overlay[data-muted="1"] .mute { background: rgba(248, 113, 113, 0.18); color: #fca5a5; }
+.overlay[data-muted="1"] .mute .slash { display: inline; }
+/* The screen records: the button is red; the picker is open: it pulses. */
+.overlay[data-screen="on"] .screen-btn { background: rgba(248, 113, 113, 0.18); color: #fca5a5; }
+.overlay[data-screen="waiting"] .screen-btn svg { animation: pulse 1.2s ease-in-out infinite; }
+.stop-btn { background: rgba(248, 113, 113, 0.18); }
+.stop-btn::before { content: ""; width: 9px; height: 9px; border-radius: 2px; background: #fca5a5; }
+.stop-btn:hover { background: rgba(248, 113, 113, 0.3); }
+.stop-btn:disabled { opacity: 0.5; cursor: default; }
+:is(.mute, .screen-btn, .stop-btn):focus-visible { outline: 2px solid #93c5fd; outline-offset: 1px; }

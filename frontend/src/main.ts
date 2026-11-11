@@ -57,6 +57,10 @@ const aiModel = $<HTMLInputElement>("ai-model");
 const aiKey = $<HTMLInputElement>("ai-key");
 const aiKeyClear = $<HTMLButtonElement>("ai-key-clear");
 const aiAuto = $<HTMLInputElement>("ai-auto");
+const aiPrompt = $<HTMLTextAreaElement>("ai-prompt");
+const aiPromptState = $<HTMLElement>("ai-prompt-state");
+const aiPromptSave = $<HTMLButtonElement>("ai-prompt-save");
+const aiPromptRestore = $<HTMLButtonElement>("ai-prompt-restore");
 const agentCommands = $<HTMLElement>("agent-commands");
 const exportDir = $<HTMLElement>("export-dir");
 const exportDirNote = $<HTMLElement>("export-dir-note");
@@ -966,6 +970,8 @@ function renderAi(): void {
     aiFilled = true;
   }
   aiAuto.checked = ai.auto;
+  if (!aiPromptEdited) aiPrompt.value = ai.prompt || ai.default_prompt;
+  renderAiPrompt();
   aiServer.hidden = aiEngine.value !== "server";
   const pick = b.models.find((m) => `builtin:${m.id}` === aiEngine.value);
   aiEngineNote.textContent =
@@ -1050,6 +1056,47 @@ aiKey.addEventListener("change", () => {
 });
 aiKeyClear.addEventListener("click", () => saveAi({ ai_key: "" }));
 aiAuto.addEventListener("change", () => saveAi({ ai_auto: aiAuto.checked }));
+
+// ------------------------------------------------------------------ the instructions for the notes
+/** The text in the box was changed and not saved yet (a status refresh does not replace it). */
+let aiPromptEdited = false;
+
+function renderAiPrompt(): void {
+  const ai = status?.ai;
+  if (!ai) return;
+  const saved = (ai.prompt || ai.default_prompt).trim();
+  const text = aiPrompt.value.trim();
+  const changed = text !== saved;
+  const original = text === ai.default_prompt.trim();
+  aiPromptSave.disabled = !changed || !text;
+  aiPromptRestore.disabled = !ai.prompt && original;
+  const what = changed ? "Not saved" : ai.prompt ? "Your own instructions" : "The app's instructions";
+  const noLanguage = !text.includes("{language}");
+  aiPromptState.textContent = noLanguage && text ? `${what} · without {language}, "Write in" and the meeting's language are added at the end` : what;
+  aiPromptState.dataset.kind = changed ? "warn" : "";
+}
+
+aiPrompt.addEventListener("input", () => {
+  aiPromptEdited = true;
+  renderAiPrompt();
+});
+aiPromptSave.addEventListener("click", () => {
+  aiPromptEdited = false;
+  saveAi({ ai_prompt: aiPrompt.value });
+});
+aiPromptRestore.addEventListener("click", async () => {
+  const ai = status?.ai;
+  if (!ai) return;
+  const ok = await confirmDialog({
+    title: "Restore the original instructions?",
+    body: "Your own instructions for the notes are replaced by the app's. Notes written before do not change.",
+    action: "Restore",
+  });
+  if (!ok) return;
+  aiPromptEdited = false;
+  aiPrompt.value = ai.default_prompt;
+  saveAi({ ai_prompt: "" });
+});
 
 // ------------------------------------------------------------------ note apps (a folder)
 /** Settings → Connections → Note apps, from the status. */

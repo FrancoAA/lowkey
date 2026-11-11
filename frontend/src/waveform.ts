@@ -186,3 +186,82 @@ export class DualWaveform {
     ctx.globalAlpha = 1;
   }
 }
+
+/**
+ * The capsule's live mark: Lowkey's five bars move with the meeting's voices, and take the colour
+ * of who talks now ("me": the microphone, "them": the computer's sound). Levels come from the
+ * app's "meeting-level" events; the element's data-who and each bar's scale are set here, the
+ * colours are in the CSS.
+ */
+export class LiveMark {
+  /** The newest levels, 0..1, set by whoever receives them. */
+  levels = { me: 0, them: 0 };
+  /** Your microphone is muted: only the computer's sound moves the bars. */
+  muted = false;
+  private bars: HTMLElement[];
+  private smooth = [0, 0];
+  private who: "" | "me" | "them" = "";
+  /** The louder source that is not shown yet, and since when (a short hold: no flicker). */
+  private next: { who: "me" | "them"; at: number } | null = null;
+  private quietSince = 0;
+  private raf = 0;
+  private running = false;
+  /** The mark's shape: higher in the middle. */
+  private static SHAPE = [0.55, 0.8, 1, 0.8, 0.55];
+
+  constructor(private el: HTMLElement) {
+    this.bars = Array.from(el.children) as HTMLElement[];
+  }
+
+  start(): void {
+    if (this.running) return;
+    this.running = true;
+    const tick = (t: number) => {
+      this.frame(t);
+      this.raf = requestAnimationFrame(tick);
+    };
+    this.raf = requestAnimationFrame(tick);
+  }
+
+  stop(): void {
+    this.running = false;
+    cancelAnimationFrame(this.raf);
+    this.smooth = [0, 0];
+    this.setWho("");
+    for (const b of this.bars) b.style.transform = "";
+  }
+
+  private setWho(who: "" | "me" | "them"): void {
+    this.who = who;
+    this.el.dataset.who = who;
+  }
+
+  private frame(t: number): void {
+    // A square root, so quiet speech still shows; a little smoothing between frames.
+    const me = this.muted ? 0 : this.levels.me;
+    this.smooth[0] = this.smooth[0] * 0.6 + Math.sqrt(Math.min(1, me)) * 0.4;
+    this.smooth[1] = this.smooth[1] * 0.6 + Math.sqrt(Math.min(1, this.levels.them)) * 0.4;
+    const [m, th] = this.smooth;
+    const loud = Math.max(m, th);
+    if (loud > 0.15) {
+      this.quietSince = 0;
+      const who = th > m ? "them" : "me";
+      if (who === this.who) this.next = null;
+      else if (!this.next || this.next.who !== who) this.next = { who, at: t };
+      else if (t - this.next.at > 200) {
+        this.setWho(who);
+        this.next = null;
+      }
+    } else if (this.who) {
+      // Quiet for a moment: the bars go back to grey.
+      if (!this.quietSince) this.quietSince = t;
+      else if (t - this.quietSince > 1200) this.setWho("");
+    }
+    this.bars.forEach((b, i) => {
+      const wobble = 0.75 + 0.25 * Math.sin(t / 110 + i * 1.7);
+      // Quiet: the mark's own shape, small; a voice makes it grow.
+      const scale = LiveMark.SHAPE[i] * (0.35 + 0.65 * Math.min(1, loud * 1.3) * wobble);
+      b.style.transform = `scaleY(${scale.toFixed(3)})`;
+    });
+  }
+}

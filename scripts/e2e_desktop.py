@@ -14,7 +14,7 @@ Hyprland ignores binds from virtual keyboards, so the key bind's command is run 
 Hyprland's own exec dispatcher, exactly as a key press/release would.
 
 Usage: python3 scripts/e2e_desktop.py [--first-run] [--config-bind] [--strip-only]   (standard library only)
-  --strip-only   only the floating strip's drag and collapse (a quick run)
+  --strip-only   only the meeting's capsule: drag, buttons, place (a quick run)
   OW_E2E_HOLD=<dir> with --strip-only: keep the nested session open (env in <dir>/env.json)
                  until <dir>/stop exists, to try things by hand
   --first-run    empty model folder: the key-started app downloads the model (~550 MB)
@@ -345,13 +345,15 @@ esac
             run([pointer_tool, *[c.format(W=w, H=h) for c in cmds]], env)
 
         def strip_step() -> None:
-            """Drag the strip, collapse it, see it come back collapsed where it was left, open it."""
+            """The meeting's capsule: drag it, mute and unmute, stop it with its button, see it come
+            back where it was left; record the screen; a click opens the meeting; Open the notes."""
             cfg = tmp / "config" / "lowkey" / "config.toml"
+            collapsed_before = "overlay_collapsed = true" in (cfg.read_text() if cfg.exists() else "")
             n0 = len(events("meeting"))
             focus_before = (hj("activewindow") or {}).get("address")
             run(["hyprctl", "dispatch", f'hl.dsp.exec_cmd("{APP} --meeting toggle")'], env)
             try:
-                s0 = wait(lambda: win("lowkey-overlay"), 15, "the strip for the drag")
+                s0 = wait(lambda: (w_ := win("lowkey-overlay")) and tuple(w_["size"]) == (184, 40) and w_, 15, "the capsule for the drag")
             except AssertionError:  # where the windows are (for the log)
                 print("  windows:", [(c["title"], c["workspace"], c["mapped"], c["hidden"], c["at"], c["size"]) for c in hj("clients")])
                 print("  events:", [json.loads(l)["event"] for l in log.read_text().splitlines()][-25:])
@@ -361,116 +363,110 @@ esac
                 raise
             wait(lambda: next((m for m in events("meeting")[n0:] if m["state"] == "recording"), None), 30, "recording")
             time.sleep(0.8)
-            check(tuple(s0["size"]) == (380, 76), f"the strip opens at 380x76: {s0['size']}")
+            check(True, f"a meeting shows in the 184x40 capsule ({s0['at']})")
             (x, y), (sw, sh) = s0["at"], s0["size"]
             if os.environ.get("OW_E2E_HOLD"):  # debugging: keep the session for commands from outside
                 (Path(os.environ["OW_E2E_HOLD"]) / "env.json").write_text(json.dumps({**env, "OW_TMP": str(tmp), "OW_PTR": str(pointer_tool)}))
                 wait(lambda: (Path(os.environ["OW_E2E_HOLD"]) / "stop").exists(), 1800, "the stop file")
                 return
-            # Drag from its left part (not the collapse button), up and to the left.
+            run(["grim", "-g", f"{x - 24},{y - 24} {sw + 48}x{sh + 48}", SHOTS / "37-desktop-capsule.png"], env)
+            print("  screenshot docs/screenshots/37-desktop-capsule.png")
+            # Drag from its left part (the live mark), up and to the left.
             steps = [f"rel:{-30},{-20}"] * 10
-            pointer(f"abs:{x + 60},{y + 38},{{W}},{{H}}", "sleep:150", "down", "sleep:80", *[c for st in steps for c in (st, "sleep:20")], "sleep:150", "up")
+            pointer(f"abs:{x + 24},{y + 20},{{W}},{{H}}", "sleep:150", "down", "sleep:80", *[c for st in steps for c in (st, "sleep:20")], "sleep:150", "up")
             s1 = wait(lambda: (w_ := win("lowkey-overlay")) and abs(w_["at"][0] - (x - 300)) <= 12 and abs(w_["at"][1] - (y - 200)) <= 12 and w_,
-                      5, "the strip moved by the drag")
+                      5, "the capsule moved by the drag")
             time.sleep(0.5)
             check((hj("activewindow") or {}).get("address") == focus_before,
-                  f"dragging the strip moves it ({s0['at']} -> {s1['at']}); the focus stays on the app")
+                  f"dragging the capsule moves it ({s0['at']} -> {s1['at']}); the focus stays on the app")
             # The focus goes back to the app; Hyprland would put the cursor in its middle.
             cx, cy = (float(v) for v in run(["hyprctl", "cursorpos"], env).split(","))
-            check(abs(cx - (x + 60 - 300)) <= 3 and abs(cy - (y + 38 - 200)) <= 3,
+            check(abs(cx - (x + 24 - 300)) <= 3 and abs(cy - (y + 20 - 200)) <= 3,
                   f"the cursor stays where the drag left it ({cx:.0f}, {cy:.0f})")
             check(hj("getoption", "cursor:no_warps").get("bool") is False, "cursor:no_warps is as it was (off) after the focus went back")
-            # Mute: the microphone button (first row, right): silence goes in its place, the
-            # computer's sound goes on; the strip says so. Then unmute.
+            # On hover the buttons show at the right end: Stop, then Mute, then Record screen.
             (x1, y1) = s1["at"]
+            stop_at, mute_at, screen_at = (x1 + sw - 22, y1 + 20), (x1 + sw - 51, y1 + 20), (x1 + sw - 80, y1 + 20)
             n_m = len(events("meeting"))
-            pointer(f"abs:{x1 + 330},{y1 + 27},{{W}},{{H}}", "sleep:250", "click")
+            pointer(f"abs:{mute_at[0]},{mute_at[1]},{{W}},{{H}}", "sleep:300", "click")
             try:
                 wait(lambda: any(m.get("muted") for m in events("meeting")[n_m:]), 5, "muted")
-            except AssertionError:  # what the strip showed (for the log)
-                run(["grim", "-g", f"{x1},{y1} 380x76", tmp / "strip-not-muted.png"], env, check=False)
-                print(f"  strip at {win('lowkey-overlay')}; cursor {run(['hyprctl', 'cursorpos'], env, check=False).strip()}; "
-                      f"active {(hj('activewindow') or {}).get('title')}; screenshot {tmp / 'strip-not-muted.png'}")
+            except AssertionError:  # what the capsule showed (for the log)
+                run(["grim", "-g", f"{x1},{y1} {sw}x{sh}", tmp / "capsule-not-muted.png"], env, check=False)
+                print(f"  capsule at {win('lowkey-overlay')}; cursor {run(['hyprctl', 'cursorpos'], env, check=False).strip()}; "
+                      f"active {(hj('activewindow') or {}).get('title')}; screenshot {tmp / 'capsule-not-muted.png'}")
                 raise
             time.sleep(0.8)
-            check((hj("activewindow") or {}).get("address") == focus_before, "the mute button mutes your microphone; no focus taken")
-            run(["grim", "-g", f"{x1 - 20},{y1 - 20} 420x116", SHOTS / "38-desktop-strip-muted.png"], env)
-            print("  screenshot docs/screenshots/38-desktop-strip-muted.png")
+            check((hj("activewindow") or {}).get("address") == focus_before, "the capsule's mute button mutes your microphone; no focus taken")
+            run(["grim", "-g", f"{x1 - 24},{y1 - 24} {sw + 48}x{sh + 48}", SHOTS / "38-desktop-capsule-hover.png"], env)
+            print("  screenshot docs/screenshots/38-desktop-capsule-hover.png")
             n_u = len(events("meeting"))
-            pointer(f"abs:{x1 + 330},{y1 + 27},{{W}},{{H}}", "sleep:250", "click")
+            pointer(f"abs:{mute_at[0]},{mute_at[1]},{{W}},{{H}}", "sleep:250", "click")
             wait(lambda: any(m.get("muted") is False and m["state"] == "recording" for m in events("meeting")[n_u:]), 5, "unmuted")
             print("  ok  a second click unmutes it")
-            # Collapse: its button in the top-right corner (it shows on hover).
-            pointer(f"abs:{x1 + sw - 17},{y1 + 17},{{W}},{{H}}", "sleep:250", "click")
-            s2 = wait(lambda: (w_ := win("lowkey-overlay")) and tuple(w_["size"]) == (150, 44) and w_, 5, "the strip collapsed")
-            centre = lambda w_: (w_["at"][0] + w_["size"][0] / 2, w_["at"][1] + w_["size"][1] / 2)
-            c1, c2 = centre(s1), centre(s2)
-            check(abs(c1[0] - c2[0]) <= 2 and abs(c1[1] - c2[1]) <= 2, f"collapsed to a 150x44 pill around the same centre ({c1} -> {c2})")
-            wait(lambda: "overlay_collapsed = true" in cfg.read_text(), 5, "collapsed state saved")
-            time.sleep(0.6)
-            run(["grim", "-g", f"{int(s2['at'][0]) - 40},{int(s2['at'][1]) - 30} 212x104", SHOTS / "37-desktop-strip-collapsed.png"], env)
-            print("  screenshot docs/screenshots/37-desktop-strip-collapsed.png")
-            # Stop: the strip goes; its place is saved; the next recording shows it there, collapsed.
-            # (The pointer first leaves it: a saved strip stays while the pointer is on it.)
-            pointer(f"abs:5,5,{{W}},{{H}}")
+            # Stop: the capsule's button saves the meeting; the capsule goes; its place is saved;
+            # the next recording shows it there. (The pointer then leaves it: a saved capsule
+            # stays while the pointer is on it.)
             n1 = len(events("meeting"))
-            run(["hyprctl", "dispatch", f'hl.dsp.exec_cmd("{APP} --meeting toggle")'], env)
+            pointer(f"abs:{stop_at[0]},{stop_at[1]},{{W}},{{H}}", "sleep:250", "click")
+            wait(lambda: next((m for m in events("meeting")[n1:] if m["state"] in ("finishing", "done")), None), 15, "stopped by its button")
+            pointer(f"abs:5,5,{{W}},{{H}}")
             wait(lambda: next((m for m in events("meeting")[n1:] if m["state"] == "done"), None), 120, "saved")
-            wait(lambda: win("lowkey-overlay") is None, 15, "the strip goes")
-            check(re.search(r"^overlay_at = \[", cfg.read_text(), re.M), "the place is saved when the strip goes")
+            check((hj("activewindow") or {}).get("address") == focus_before, "the capsule's Stop button saves the meeting; no focus taken")
+            wait(lambda: win("lowkey-overlay") is None, 15, "the capsule goes")
+            check(re.search(r"^overlay_at = \[", cfg.read_text(), re.M), "the place is saved when the capsule goes")
+            check(("overlay_collapsed = true" in cfg.read_text()) == collapsed_before, "the capsule does not change the strip's collapsed setting")
             n2 = len(events("meeting"))
             run(["hyprctl", "dispatch", f'hl.dsp.exec_cmd("{APP} --meeting toggle")'], env)
-            s3 = wait(lambda: win("lowkey-overlay"), 15, "the strip again")
             wait(lambda: next((m for m in events("meeting")[n2:] if m["state"] == "recording"), None), 30, "recording again")
             time.sleep(0.5)
-            s3 = win("lowkey-overlay")
-            check(tuple(s3["size"]) == (150, 44) and abs(s3["at"][0] - s2["at"][0]) <= 3 and abs(s3["at"][1] - s2["at"][1]) <= 3,
-                  f"the next recording shows it collapsed where it was left ({s2['at']} / {s3['at']})")
-            # A click on the pill (no move) opens it again.
-            pointer(f"abs:{s3['at'][0] + 40},{s3['at'][1] + 22},{{W}},{{H}}", "sleep:150", "click")
-            s4 = wait(lambda: (w_ := win("lowkey-overlay")) and tuple(w_["size"]) == (380, 76) and w_, 5, "the strip opened")
-            wait(lambda: "overlay_collapsed = false" in cfg.read_text(), 5, "open state saved")
-            time.sleep(0.5)
-            check((hj("activewindow") or {}).get("address") == focus_before, f"a click on the pill opens the strip ({s4['at']}); no focus taken")
-            # Record screen on the strip (first row, before the mute button), Stop screen, and again:
-            # two screen videos in this meeting.
-            sx, sy = s4["at"][0] + 292, s4["at"][1] + 27
+            s4 = wait(lambda: win("lowkey-overlay"), 15, "the capsule again")
+            check(tuple(s4["size"]) == (184, 40) and abs(s4["at"][0] - s1["at"][0]) <= 3 and abs(s4["at"][1] - s1["at"][1]) <= 3,
+                  f"the next recording shows the capsule where it was left ({s1['at']} / {s4['at']})")
+            # Record screen (on hover), Stop screen, and again: two screen videos in this meeting.
+            sx, sy = s4["at"][0] + sw - 80, s4["at"][1] + 20
             for want in ("on", "", "on"):
                 n_s = len(events("meeting"))
-                pointer(f"abs:{sx},{sy},{{W}},{{H}}", "sleep:250", "click")
+                pointer(f"abs:{sx},{sy},{{W}},{{H}}", "sleep:300", "click")
                 wait(lambda: any(m.get("screen") == want and m["state"] == "recording" for m in events("meeting")[n_s:]), 15,
                      f"the screen {'records' if want else 'stopped'}")
                 time.sleep(2.5)
             check((hj("activewindow") or {}).get("address") == focus_before,
-                  "the strip's screen button records the screen, stops it, and records it again; no focus taken")
+                  "the capsule's screen button records the screen, stops it, and records it again; no focus taken")
+            # A click on the capsule (not on a button) opens the meeting in Lowkey.
+            live_id = next(m for m in reversed(events("meeting")) if m["state"] == "recording")["meeting"]["id"]
+            n_o = len(events("open-meeting"))
+            pointer(f"abs:{s4['at'][0] + 24},{s4['at'][1] + 20},{{W}},{{H}}", "sleep:250", "click")
+            opened = wait(lambda: events("open-meeting")[n_o:], 5, "open-meeting from the capsule")
+            check(opened[0] == live_id and win("lowkey-overlay") is not None, f"a click on the capsule opens the meeting it records ({opened[0]})")
             n3 = len(events("meeting"))
-            # The pointer rests on the strip: a saved strip stays while it does.
-            pointer(f"abs:{s4['at'][0] + 60},{s4['at'][1] + 38},{{W}},{{H}}")
+            # The pointer rests on the capsule: a saved capsule stays while it does.
+            pointer(f"abs:{s4['at'][0] + 60},{s4['at'][1] + 20},{{W}},{{H}}")
             run(["hyprctl", "dispatch", f'hl.dsp.exec_cmd("{APP} --meeting toggle")'], env)
             saved = wait(lambda: next((m for m in events("meeting")[n3:] if m["state"] == "done"), None), 120, "saved again")
             time.sleep(10)
             s5 = win("lowkey-overlay")
-            check(s5 is not None, "the saved strip stays while the pointer is on it (10 s; else 8 s)")
-            # "Open the notes" on the saved strip: found by its colour (#93c5fd), then clicked.
+            check(s5 is not None, "the saved capsule stays while the pointer is on it (10 s; else 8 s)")
+            # "Open the notes" on the saved capsule: found by its colour (#93c5fd), then clicked.
             (lx, ly), (lw, lh) = s5["at"], s5["size"]
             png = tmp / "saved.png"
             run(["grim", "-g", f"{lx},{ly} {lw}x{lh}", png], env)
-            shutil.copy(png, SHOTS / "39-desktop-strip-open-notes.png")
-            print("  screenshot docs/screenshots/39-desktop-strip-open-notes.png")
+            run(["grim", "-g", f"{lx - 24},{ly - 24} {lw + 48}x{lh + 48}", SHOTS / "39-desktop-capsule-open-notes.png"], env)
+            print("  screenshot docs/screenshots/39-desktop-capsule-open-notes.png")
             raw = subprocess.run(["ffmpeg", "-loglevel", "error", "-i", str(png), "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
                                  capture_output=True, check=True).stdout
             blue = [(i // 3 % lw, i // 3 // lw) for i in range(0, len(raw) - 2, 3)
                     if raw[i] < 190 and raw[i + 1] > 170 and raw[i + 2] > 235 and raw[i + 2] - raw[i] > 60]
-            check(len(blue) > 30, f"the saved strip shows the link Open the notes ({len(blue)} link pixels)")
+            check(len(blue) > 15, f"the saved capsule shows the link Open the notes ({len(blue)} link pixels)")
             bx = sorted(p[0] for p in blue)[len(blue) // 2]
             by = sorted(p[1] for p in blue)[len(blue) // 2]
             n4 = len(events("open-meeting"))
             pointer(f"abs:{lx + bx},{ly + by},{{W}},{{H}}", "sleep:250", "click")
             opened = wait(lambda: events("open-meeting")[n4:], 5, "open-meeting")
             check(opened[0] == saved["meeting"]["id"], f"a click on Open the notes opens that meeting ({opened[0]})")
-            wait(lambda: win("lowkey-overlay") is None, 5, "the strip goes after the click")
+            wait(lambda: win("lowkey-overlay") is None, 5, "the capsule goes after the click")
             wait(lambda: (hj("activewindow") or {}).get("title") == "Lowkey", 5, "the window in front")
-            print("  ok  the strip closed and the window came to the front")
+            print("  ok  the capsule closed and the window came to the front")
             video_step(saved)
 
         def video_step(saved) -> None:
@@ -582,13 +578,13 @@ esac
         else:
             check(len(b) == 2 and any(x["description"] == RUNTIME_DESC for x in b), "SUPER+CTRL+X added at runtime")
         check(win("lowkey-overlay") is None, "overlay hidden at start")
-        if "--strip-only" in sys.argv:  # a quick run: only the strip's move and collapse
+        if "--strip-only" in sys.argv:  # a quick run: only the meeting's capsule
             # As in the full run (and in use): another app has the focus, a terminal.
             subprocess.Popen(["foot", "--app-id=ow-e2e-target", "sh", "-c", "cat > /dev/null"], env=env,
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             focus(wait(lambda: next((c for c in hj("clients") if c["class"] == "ow-e2e-target"), None), 10, "terminal")["address"])
             # As usual in use (and in the full run): the app started in the background by a key,
-            # no window shown yet; the meeting starts right after a dictation (the strip shows
+            # no window shown yet; the meeting starts right after a dictation (the capsule shows
             # the meeting, not the dictation's "Typed" message, so its mute button is there).
             key("quit")
             wait(lambda: not app_pids(), 20, "the app quit")
