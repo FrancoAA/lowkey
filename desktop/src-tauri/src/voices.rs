@@ -3,7 +3,7 @@
 //! meeting (16-bit, 16 kHz, at the clock's positions: its times are the transcript's times).
 //! After Stop, sherpa-onnx finds who spoke when (pyannote segmentation 3.0 + TitaNet-S voice
 //! prints, then clustering), each "Them" line gets the person whose voice covers most of it, and
-//! the file is deleted. Off by default (Settings → Models): turning it on downloads the two
+//! the file is deleted. Off by default (Settings → Meetings): turning it on downloads the two
 //! models (46 MB).
 //!
 //! Measured on two AMI meetings (four people; also three people as the call's other side, and

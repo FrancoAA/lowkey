@@ -4,7 +4,7 @@
 //! the app need not run, and it never writes them.
 //!
 //! It only reads, with one exception: `start_meeting` and `stop_meeting` record. They work only
-//! when Settings → AI agents → "Let agents start and stop recordings" is on, and the app shows a
+//! when Settings → Connections → AI agents → "Let agents start and stop recordings" is on, and the app shows a
 //! notification when an agent starts or stops a recording.
 
 use std::io::{BufRead, Write};
@@ -25,10 +25,10 @@ In a meeting transcript, \"Me\" is the user who recorded the meeting; the others
 for each person told apart by voice (\"Speaker 2\", or a name the user gave). \
 AI notes are a draft that a language model wrote from the transcript; tasks in them start with the \
 owner's name in bold. All times are UTC. start_meeting and stop_meeting work only when the user \
-allows them in Lowkey (Settings → AI agents).";
+allows them in Lowkey (Settings → Connections → AI agents).";
 
 const NOT_ALLOWED: &str = "Agents may not start or stop recordings. The user can allow it in Lowkey: \
-Settings → AI agents → \"Let agents start and stop recordings\".";
+Settings → Connections → AI agents → \"Let agents start and stop recordings\".";
 
 const URI_PREFIX: &str = "lowkey://meeting/";
 
@@ -174,7 +174,7 @@ impl Server {
             }
             text.push(format!("Dictations ({} found):", found.len()));
             if keep == "off" {
-                text.push("(The dictation history is off: Lowkey → Settings → General.)".into());
+                text.push("(The dictation history is off: Lowkey → History → Keep.)".into());
             }
             text.extend(found.iter().take(limit).map(|e| format!("- {} UTC · {}", utc(e.at), e.text)));
             data["dictations"] = json!(found.iter().take(limit).map(|e| json!({ "id": e.id, "at": e.at, "at_utc": utc(e.at), "text": e.text })).collect::<Vec<_>>());
@@ -226,7 +226,7 @@ impl Server {
         let keep = (self.config)().history_keep;
         match crate::history::read(&self.history, &keep, "", (self.now)()).into_iter().next() {
             Some(e) => Ok((e.text.clone(), json!({ "id": e.id, "at": e.at, "at_utc": utc(e.at), "text": e.text, "seconds": e.seconds }))),
-            None if keep == "off" => anyhow::bail!("The dictation history is off (Lowkey → Settings → General), so there is no dictation to read."),
+            None if keep == "off" => anyhow::bail!("The dictation history is off (Lowkey → History → Keep), so there is no dictation to read."),
             None => anyhow::bail!("No dictation in the history yet."),
         }
     }
@@ -252,7 +252,7 @@ impl Server {
 
     fn recording_status(&self) -> ToolResult {
         let allowed = (self.config)().mcp_recording;
-        let may = if allowed { "Agents may start and stop recordings." } else { "Agents may not start or stop recordings (Lowkey → Settings → AI agents)." };
+        let may = if allowed { "Agents may start and stop recordings." } else { "Agents may not start or stop recordings (Lowkey → Settings → Connections → AI agents)." };
         let running = (self.app_since)().is_some();
         let now = self.recording();
         let text = match (&now, running) {
@@ -486,10 +486,10 @@ fn tools() -> Value {
           "description": "Whether Lowkey runs and records a meeting now, and whether agents may start and stop recordings.",
           "inputSchema": { "type": "object", "properties": {} } },
         { "name": "start_meeting", "title": "Start a meeting recording", "annotations": record,
-          "description": "Start recording a meeting: the user's microphone and the computer's sound. Only when the user asked for it; the people in the meeting must know they are recorded. Works only when the user allows it in Lowkey (Settings → AI agents); Lowkey shows a notification.",
+          "description": "Start recording a meeting: the user's microphone and the computer's sound. Only when the user asked for it; the people in the meeting must know they are recorded. Works only when the user allows it in Lowkey (Settings → Connections → AI agents); Lowkey shows a notification.",
           "inputSchema": { "type": "object", "properties": { "title": { "type": "string", "description": "The meeting's title (default: Lowkey's)." } } } },
         { "name": "stop_meeting", "title": "Stop the meeting recording", "annotations": record,
-          "description": "Stop the meeting recording and save it; returns when the transcript is saved. Works only when the user allows it in Lowkey (Settings → AI agents).",
+          "description": "Stop the meeting recording and save it; returns when the transcript is saved. Works only when the user allows it in Lowkey (Settings → Connections → AI agents).",
           "inputSchema": { "type": "object", "properties": {} } },
     ])
 }
@@ -775,7 +775,7 @@ mod tests {
         assert!(call(&mut s, "stop_meeting", json!({})).0);
         assert!(f.launched.borrow().is_empty(), "nothing was sent to the app");
         let (_, text, data) = call(&mut s, "recording_status", json!({}));
-        assert_eq!(text, "Lowkey runs; nothing is being recorded. Agents may not start or stop recordings (Lowkey → Settings → AI agents).");
+        assert_eq!(text, "Lowkey runs; nothing is being recorded. Agents may not start or stop recordings (Lowkey → Settings → Connections → AI agents).");
         assert_eq!(data["recording"], false, "the interrupted m-1 is not a recording");
 
         *f.allowed.borrow_mut() = true;

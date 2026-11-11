@@ -190,8 +190,8 @@ function renderPreview(): void {
   if (!p) return;
   const base =
     p.engine === "parakeet"
-      ? "Parakeet (CPU, 25 languages, finds the language itself). Preview only: the model above writes the text."
-      : "Whistle (17 MB, CPU). Preview only: the model above writes the text. EN, DE, FR, ES, IT, NL, PL.";
+      ? "Parakeet (CPU, 25 languages, finds the language itself)."
+      : "Whistle (17 MB, CPU). EN, DE, FR, ES, IT, NL, PL.";
   if (previewCheck.checked && p.state === "preparing") {
     const spin = document.createElement("span");
     spin.className = "spinner spinner-inline";
@@ -524,7 +524,7 @@ function prettyKey(key: string): string {
     .join(" + ");
 }
 
-/** One key row in Settings → Keys (the dictation key, the meeting key). */
+/** One key row: Settings → Dictation (the dictation key, the paste key), Settings → Meetings (the meeting key). */
 interface KeyUi {
   row: HTMLElement;
   current: HTMLElement;
@@ -910,7 +910,7 @@ function showSection(name: string, focus = false): void {
   }
   for (const p of document.querySelectorAll<HTMLElement>(".settings-content .section")) p.hidden = p.dataset.section !== name;
   if (name === "history") history?.refresh();
-  if (name === "general") microphone?.refresh();
+  if (name === "speech") microphone?.refresh();
 }
 showSection("transcribe");
 
@@ -942,7 +942,7 @@ document.addEventListener("keydown", (e) => {
 
 // ------------------------------------------------------------------ Notes settings
 let aiFilled = false;
-/** Settings → Models → Notes, from the status. Fields being edited are left alone. */
+/** Settings → Meetings → Notes, from the status. Fields being edited are left alone. */
 function renderAi(): void {
   const ai = status?.ai;
   if (!ai) return;
@@ -984,7 +984,7 @@ function renderAi(): void {
 let aiLive: AiNotesEvent | null = null;
 let aiLiveKind: "notes" | "chat" = "notes";
 
-/** Models → Notes: its status, as the speech model's (ready / not downloaded / at work). */
+/** Meetings → Notes: its status, as the speech model's (ready / not downloaded / at work). */
 function renderAiStatus(): void {
   const ai = status?.ai;
   if (!ai) return;
@@ -1052,7 +1052,7 @@ aiKeyClear.addEventListener("click", () => saveAi({ ai_key: "" }));
 aiAuto.addEventListener("change", () => saveAi({ ai_auto: aiAuto.checked }));
 
 // ------------------------------------------------------------------ note apps (a folder)
-/** Settings → Note apps, from the status. */
+/** Settings → Connections → Note apps, from the status. */
 function renderExport(): void {
   const e = status?.export;
   if (!e) return;
@@ -1097,7 +1097,7 @@ function shellWord(path: string): string {
 /** The switch's save is on its way: a status from before it must not flip the switch back. */
 let agentsSaving = false;
 
-/** Settings → AI agents: the line that connects each agent, and the recording switch. */
+/** Settings → Connections → AI agents: the line that connects each agent, and the recording switch. */
 function renderAgents(): void {
   const a = status?.agents;
   if (!a) return;
@@ -1149,7 +1149,7 @@ agentsRecording.addEventListener("change", () => {
 /** The switch's save is on its way (as for the agents' switch). */
 let voicesSaving = false;
 
-/** Models → Who is speaking: the switch and the models' state. */
+/** Settings → Meetings → Who is speaking: the switch and the models' state. */
 function renderVoices(): void {
   const v = status?.voices;
   if (!v) return;
@@ -1178,7 +1178,7 @@ voicesOn.addEventListener("change", () => {
     .finally(() => (voicesSaving = false));
 });
 
-/** Settings → General → Screen video: what this computer has, the screen remembered. */
+/** Settings → Meetings → Screen video: what this computer has, the screen remembered. */
 let screenChecking = false;
 function renderScreen(): void {
   const s = status?.screen;
@@ -1212,10 +1212,23 @@ screenForget.addEventListener("click", () => {
   }, (err) => showError(String(err)));
 });
 
+/** About → Keys in any app: one key as a <kbd>, or what is in its place. Read-only; they change in Dictation and Meetings. */
+function aboutKey(id: string, key: string | undefined, source: string | undefined): void {
+  const el = $<HTMLElement>(id);
+  if (source === "manual") return el.replaceChildren("The key you set in your desktop:");
+  if (!key) return el.replaceChildren("No key:");
+  const kbd = document.createElement("kbd");
+  kbd.textContent = prettyKey(key);
+  el.replaceChildren(kbd, source === "none" ? " (not active)" : "");
+}
+
 function renderAbout(): void {
   if (!status) return;
   $<HTMLElement>("about-version").textContent = status.version ?? "–";
   $<HTMLElement>("about-device").textContent = status.device ?? "–";
+  aboutKey("about-key-dictation", status.hotkey_key, status.hotkey_source);
+  aboutKey("about-key-paste", status.paste_key, status.paste_key_source);
+  aboutKey("about-key-meeting", status.meeting_key, status.meeting_key_source);
 }
 
 void getBackend().then((b) => {
@@ -1227,7 +1240,7 @@ void getBackend().then((b) => {
   );
   b.onOpenFiles((files) => files[0] && handleRef(files[0]));
   const liveDot = document.querySelector<HTMLElement>('.nav-item[data-section="meetings"] .nav-live')!;
-  // Models → Notes shows the model at work: notes, or an answer (also its first download).
+  // Settings → Meetings → Notes shows the model at work: notes, or an answer (also its first download).
   const onAi = (kind: "notes" | "chat") => (e: AiNotesEvent) => {
     aiLive = e;
     aiLiveKind = kind;

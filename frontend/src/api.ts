@@ -45,15 +45,15 @@ export interface Status {
   recording?: boolean;
   /** An automated test runs (OPENWHISPER_TEST_LOG): the page reports its player's events. */
   test?: boolean;
-  /** Settings → AI agents: agents may start and stop recordings; the program they start. */
+  /** Settings → Connections → AI agents: agents may start and stop recordings; the program they start. */
   agents?: { recording: boolean; program: string };
-  /** Settings → Models → Tell the other voices apart: on, this build can, the models are on
+  /** Settings → Meetings → Tell the other voices apart: on, this build can, the models are on
    * disk, their download (state "" | downloading | error), and the meetings being worked on. */
   voices?: { on: boolean; supported: boolean; present: boolean; download: { state: string; progress: number; error: string }; working: string[] };
-  /** Settings → General → Screen video: this build can, a screen is remembered, and what this
+  /** Settings → Meetings → Screen video: this build can, a screen is remembered, and what this
    * computer has (state checking | ready | missing; the encoder; what to install). */
   screen?: { supported: boolean; chosen: boolean; check: { state: "checking" | "ready" | "missing"; encoder: string; problem: string } };
-  /** Settings → Note apps: the folder ("" = off), by itself, the parts, the Obsidian vault it is in. */
+  /** Settings → Connections → Note apps: the folder ("" = off), by itself, the parts, the Obsidian vault it is in. */
   export?: { dir: string; auto: boolean; parts: string[]; vault: string | null };
   /** AI notes settings (the API key itself never comes to the page). */
   ai?: {
@@ -145,7 +145,7 @@ export interface Meeting {
   ai_at?: number;
   /** Questions about the meeting and their answers, oldest first. */
   chat?: ChatMessage[];
-  /** Settings → Note apps: the file it was saved as in the chosen folder ("" = not yet). */
+  /** Settings → Connections → Note apps: the file it was saved as in the chosen folder ("" = not yet). */
   export_file?: string;
   /** The folder it was saved in. */
   export_dir?: string;

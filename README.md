@@ -72,10 +72,12 @@ the CPU. Windows must have the Visual C++ runtime (`MSVCP140.dll`). The installe
 - **Result:** the text appears while it is transcribed. **Copy** puts it on the clipboard.
   **.txt**, **.srt** and **.vtt** save the transcript or subtitles.
 - **The window** has sections on the left: **Transcribe** (files, dictation in the window, the
-  result; it opens there), **Meetings** (below) and the settings — General (language), Models
-  (speech to text: the model, free memory when idle; AI notes: the model or your own server,
-  automatic notes; each with its status), Shortcuts (the dictation key, the meeting key, start
-  at login), Live preview (on/off, engine), About.
+  result; it opens there), **Meetings** (below), **History**, and the settings, sorted by task —
+  General (start at login, appearance), Speech (microphone, language, vocabulary, the speech
+  model and free memory when idle), Dictation (the dictation key, the paste key, live preview),
+  Meetings (the meeting key, call detection, screen video, who is speaking, the notes model and
+  automatic notes), Connections (note apps, AI agents), About (also a list of the keys).
+  Each model shows its status next to its setting.
   <kbd>Ctrl</kbd>+<kbd>,</kbd> jumps to the settings, <kbd>Esc</kbd> back to Transcribe.
 - Files given on the command line open in the app. **Closing the window keeps the app
   running** in the tray, so the dictation key stays instant. Quit with **Exit** at the bottom
@@ -137,14 +139,14 @@ keeps working: the script hands the key to the app, or starts `~/.local/bin/lowk
 `$XDG_RUNTIME_DIR/lowkey/app.log`. When the key is in your config, the app
 sees it and does not add it again. Classic `hyprland.conf`: `--print-snippet conf`.
 
-- **Change the key in Settings → Shortcuts → Change**, then press the new combination
+- **Change the key in Settings → Dictation → Change**, then press the new combination
   (Super, Ctrl or Alt with a letter, digit, F1-F24 or Space; Esc cancels). It works at once,
   and the app refuses a combination that another shortcut uses. When the key comes from a
   block in your Hyprland config, Settings offer **"Let the app manage it"**: the block is
   removed (a backup is kept next to the file), Hyprland reloads, and the app checks that its
   key works; if not, your config is put back. It also turns on "Start at login" (the config's
   bind worked after a logout; the app's bind needs the app).
-- **Settings → Shortcuts → Start when you log in**: the app starts hidden at login, so the key
+- **Settings → General → Start when you log in**: the app starts hidden at login, so the key
   works all the time (Linux: `~/.config/autostart/lowkey.desktop`).
 - Command line: `--hotkey "…"` (this run), `hotkey = "…"` in the settings, `--no-hotkey` adds
   none; `--remove-hotkey` removes a key that the app added (never yours).
@@ -165,7 +167,7 @@ sees it and does not add it again. Classic `hyprland.conf`: `--print-snippet con
 ### Live preview
 
 While you hold the key, the overlay shows the words as you say them; the main model still
-writes the text that is typed. Two engines (Settings → Live preview → Preview engine):
+writes the text that is typed. Two engines (Settings → Dictation → Live preview → Preview engine):
 
 - **Parakeet** (the default when its model is on disk): more accurate, 25 languages, about
   1.1 GB of memory. When Parakeet is also the main model, both share one copy.
@@ -180,7 +182,7 @@ Turn the preview off in Settings (`live_preview = false`). Details and measureme
 Record a call or a talk, as text next to your notes (Linux for now). No bot joins the call.
 
 - **The meeting key** (<kbd>Super</kbd>+<kbd>Ctrl</kbd>+<kbd>M</kbd> on Linux,
-  <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>M</kbd> on macOS and Windows; change it in Settings → Shortcuts)
+  <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>M</kbd> on macOS and Windows; change it in Settings → Meetings)
   starts a recording from any app, and stops it. On Hyprland (or with your own desktop bind)
   it also starts the app when it is closed; on X11, macOS and Windows the app must run. A
   strip at the bottom of the screen shows the time, a two-colour wave (Me light grey, Them steel blue) and the newest line,
@@ -190,7 +192,7 @@ Record a call or a talk, as text next to your notes (Linux for now). No bot join
 - **Record** (in the window, next to the search field) does the same, and so does the tray menu. It records two sources: your microphone (**Me**) and the computer's sound
   (**Them**: the others in Zoom, Meet, Teams…, through PipeWire or PulseAudio).
 - The text comes a few seconds after someone speaks: each source is cut at pauses (4–20 s
-  pieces) and the speech model chosen in Settings → Models writes them.
+  pieces) and the speech model chosen in Settings → Speech writes them.
 - **Stop** transcribes the last seconds and saves. The list shows all meetings, newest first,
   grouped by day; open one to read it (the notes, or the transcript in their place with the
   **Notes | Transcript** switch; the chat on the right), change the title, **Copy** or
@@ -205,7 +207,7 @@ Record a call or a talk, as text next to your notes (Linux for now). No bot join
   like a name or a term ("Lisando" → "Lisandro") offers to add it to the Vocabulary, so the
   model writes it right next time. Copy, Export, search, the note-app file and AI agents use
   the fixed text; the notes stay as written, with **Write notes again** for the fixed text.
-- **Who is speaking** (Linux x86_64; Settings → Models → Who is speaking, off by default):
+- **Who is speaking** (Linux x86_64; Settings → Meetings → Who is speaking, off by default):
   after Stop, the others in the call are told apart by their voices, and each "Them" line gets
   a speaker: **Speaker 1**, **Speaker 2**… Click a speaker to type a name; give two speakers the
   same name when they are one person, and their lines merge. Copy, Export, the note-app file,
@@ -230,7 +232,7 @@ Record a call or a talk, as text next to your notes (Linux for now). No bot join
   click fixes the text); each time in the transcript plays it from there; a place under a point
   of the notes has **Play**. While the video plays, or when you move it, the paragraph said at
   that moment is marked and kept in view. The first time, your desktop asks what to share; it
-  then remembers it (Settings → General → Screen video → **Choose the screen again** asks
+  then remembers it (Settings → Meetings → Screen video → **Choose the screen again** asks
   again). 10 frames a second, at most 1920 pixels wide, about 450 MB for one hour. It needs
   GStreamer: `gst-plugins-good` (VP8 on the CPU), and `gst-plugin-va` for AV1, VP9 or H.264 on
   the GPU; Settings says what it found. Details: [docs/screen.md](docs/screen.md).
@@ -244,9 +246,9 @@ Record a call or a talk, as text next to your notes (Linux for now). No bot join
   organized like the meeting: one section for each topic, with a bullet for each decision, fact,
   figure or task (the person in bold), and sub-bullets for the details. Built in:
   **Qwen3.5 4B** (Apache-2.0), run by llama.cpp on this computer (a 2.7 GB download the first
-  time; ~25 s for 8 minutes of meeting on the Radeon 780M, ~1 min on a CPU). Settings → Models →
+  time; ~25 s for 8 minutes of meeting on the Radeon 780M, ~1 min on a CPU). Settings → Meetings →
   Notes also offers Qwen3.5 2B (1.3 GB, faster, less exact) and Gemma 4 E4B (5 GB). Or your own
-  server in Settings → Models → Notes (Ollama, LM Studio, any OpenAI-compatible API; a warning shows
+  server in Settings → Meetings → Notes (Ollama, LM Studio, any OpenAI-compatible API; a warning shows
   when it is not on this computer). They are written by themselves when a meeting stops (the
   first time, after the model's download), or with **Write notes** when a meeting has none;
   they are a draft, and Copy/Export include them. Measurements: [bench/summary/results.md](bench/summary/results.md).
@@ -256,7 +258,7 @@ Record a call or a talk, as text next to your notes (Linux for now). No bot join
   questions and answers are saved with the meeting (**Clear** deletes them); search and the
   export do not include them. <kbd>Enter</kbd> asks, <kbd>Shift</kbd>+<kbd>Enter</kbd> starts a
   new line, and the button stops an answer.
-- **Calls are detected** (Linux; Settings → General → Offer to record calls, on by default): when Zoom,
+- **Calls are detected** (Linux; Settings → Meetings → Offer to record calls, on by default): when Zoom,
   Teams, Slack, Discord, Signal… or a browser on Google Meet, Teams, Jitsi… uses the
   microphone for 2 s (an unknown browser page: 20 s), the strip says "Zoom call detected ·
   Super+Ctrl+M records it", for 20 s. The meeting key then records it as "Zoom call". Per call:
@@ -277,7 +279,7 @@ Details: [docs/meetings.md](docs/meetings.md).
 
 ## Microphone
 
-Settings → General → Microphone: the system default or any input, with a line that says which
+Settings → Speech → Microphone: the system default or any input, with a line that says which
 one is in use and why, and **Test** (a level meter for 4 s). On Linux the list is the
 PipeWire/PulseAudio sources (`pactl`), and the app records the exact source through PipeWire.
 **Use another microphone instead of a Bluetooth headset** (on by default, Linux): with the
@@ -297,13 +299,13 @@ app): every word you type must be there, in any order and any case, also inside 
 30 days or forever; turning it off deletes what was kept. The file is
 `~/.local/share/lowkey/history.json` (0600). **Paste last dictation**
 (<kbd>Super</kbd>+<kbd>Alt</kbd>+<kbd>V</kbd> on Linux, <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>V</kbd>
-elsewhere; Settings → Shortcuts) types the last dictation again into the app you are in, also
+elsewhere; Settings → Dictation) types the last dictation again into the app you are in, also
 with the history off; with the app closed it reads the last one from the file. (Ideas from
 [Hex](https://github.com/anomalyco/hex), MIT.)
 
 ## Vocabulary
 
-Settings → General → Vocabulary: names and terms the model gets wrong (people, projects,
+Settings → Speech → Vocabulary: names and terms the model gets wrong (people, projects,
 products), each with "sounds like" spellings. In every transcript (dictation, files,
 meetings) those spellings, and the term in another case, become the term, whole words only.
 Whisper also gets the terms as a prompt, so it spells them right more often; the AI notes get
@@ -323,7 +325,7 @@ brings another build of libstdc++'s `std::regex` and the linker keeps one copy f
 
 ## Note apps
 
-Settings → Note apps: each meeting as a Markdown note in a folder you choose. Nothing leaves the
+Settings → Connections → Note apps: each meeting as a Markdown note in a folder you choose. Nothing leaves the
 computer; the folder decides where the notes go:
 
 - **Obsidian:** your vault, or a folder in it. The meeting then has **Open in Obsidian**.
@@ -351,7 +353,7 @@ app is never overwritten: the app keeps a hash of what it wrote, and says so ins
 
 Claude Code, Codex, Gemini CLI, Cursor and other agents can use Lowkey over the
 [Model Context Protocol](https://modelcontextprotocol.io): `lowkey --mcp` serves it on stdin and
-stdout. The agent starts it when it needs it; the app does not have to run. Settings → AI agents
+stdout. The agent starts it when it needs it; the app does not have to run. Settings → Connections → AI agents
 has the line for each agent, with your path, and a Copy button:
 
 ```sh
@@ -371,7 +373,7 @@ Other agents: `{"mcpServers": {"lowkey": {"command": "/usr/bin/lowkey", "args": 
 | `last_dictation` | The last dictation in the history |
 | `transcribe_file` | An audio or video file through the local model (absolute path) |
 | `recording_status` | Whether the app runs and records a meeting now |
-| `start_meeting`, `stop_meeting` | Record a meeting; **only** with Settings → AI agents → "Let agents start and stop recordings" (`mcp_recording = true`; off by default) |
+| `start_meeting`, `stop_meeting` | Record a meeting; **only** with Settings → Connections → AI agents → "Let agents start and stop recordings" (`mcp_recording = true`; off by default) |
 
 Meetings are MCP resources too (`lowkey://meeting/<id>`). The server only reads the app's files
 (never writes them), never downloads a model (`transcribe_file` uses the downloaded ones) and

@@ -60,7 +60,7 @@ export interface Backend {
   saveOptions(o: Options): Promise<void>;
   /** Quit the app (as the tray menu's Quit). */
   quit(): Promise<void>;
-  /** Settings → Note apps: the system's folder dialog (saved at once); false when cancelled. */
+  /** Settings → Connections → Note apps: the system's folder dialog (saved at once); false when cancelled. */
   chooseExportFolder(): Promise<boolean>;
   /** Settings → Screen video → Choose the screen again: the next Record screen shows the picker. */
   screenForget(): Promise<void>;
@@ -106,6 +106,8 @@ export interface MeetingsBackend {
   remove(id: string): Promise<void>;
   /** Notes and transcript as Markdown, with times in this computer's time zone. */
   markdown(id: string): Promise<string>;
+  /** One part, for the Copy button of its tab: the AI notes, or the transcript (no title or date). */
+  text(id: string, part: "notes" | "transcript"): Promise<string>;
   onLive(cb: (l: MeetingLive) => void): void;
   onLevels(cb: (lv: { me: number; them: number }) => void): void;
   /** Start writing the AI notes of a saved meeting; progress comes through onAiNotes. */
@@ -243,6 +245,7 @@ async function desktopBackend(): Promise<Backend> {
       update: (id, patch) => invoke("meeting_update", { id, title: patch.title ?? null, notes: patch.notes ?? null }),
       remove: (id) => invoke("meeting_delete", { id }),
       markdown: (id) => invoke<string>("meeting_markdown", { id, utcOffsetMinutes: -new Date().getTimezoneOffset() }),
+      text: (id, part) => invoke<string>("meeting_text", { id, part }),
       onLive(cb) {
         void listen<MeetingLive>("meeting", (e) => cb(e.payload));
       },

@@ -1,7 +1,7 @@
 # Who is speaking: measurements
 
 Meetings record two sources, the microphone ("Me") and the computer's sound ("Them"). All the
-others in a call were one "Them". With Settings → Models → Who is speaking, the app tells them
+others in a call were one "Them". With Settings → Meetings → Who is speaking, the app tells them
 apart by voice after Stop (`desktop/src-tauri/src/voices.rs`). This page records why it works
 the way it does. Script: [bench/voices/measure.py](../bench/voices/measure.py).
 

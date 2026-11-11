@@ -38,7 +38,7 @@ pub fn new_tap(on_level: LevelFn, on_end: EndFn, on_audio: AudioFn) -> Box<dyn R
     open(on_level, on_end, Some(on_audio), false)
 }
 
-/// Which microphone to open (Settings → General → Microphone): a source name on Linux, a
+/// Which microphone to open (Settings → Speech → Microphone): a source name on Linux, a
 /// device name elsewhere; None = the system default. Set by the app, asked at every open.
 pub type ResolveFn = Arc<dyn Fn() -> Option<String> + Send + Sync>;
 static RESOLVER: Mutex<Option<ResolveFn>> = Mutex::new(None);

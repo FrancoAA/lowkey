@@ -154,7 +154,7 @@ impl Engines {
         }
     }
 
-    /// Settings → General → Vocabulary changed (or the app started).
+    /// Settings → Speech → Vocabulary changed (or the app started).
     pub fn set_vocabulary(&self, terms: &[crate::vocabulary::Term]) {
         *self.vocabulary.lock() = Arc::new(crate::vocabulary::Vocabulary::new(terms));
     }

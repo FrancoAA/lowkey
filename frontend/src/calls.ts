@@ -1,5 +1,5 @@
 /**
- * Settings → General → Offer to record calls: offer to record when a call app uses the microphone (Linux), and each call's
+ * Settings → Meetings → Offer to record calls: offer to record when a call app uses the microphone (Linux), and each call's
  * choice: ask, always record, or never (desktop/src-tauri/src/calls.rs).
  */
 import type { Status } from "./api";

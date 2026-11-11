@@ -17,7 +17,7 @@ then. Linux only for now.
 - Closing the dialog, or a missing encoder, does not stop the meeting: a notice says why. If
   the sharing is stopped from the desktop, the video so far is kept, with a notice, and
   **Record screen** can start a new one.
-- Settings → General → **Screen video** says what this computer has ("Ready: VP8 on the CPU", or
+- Settings → Meetings → **Screen video** says what this computer has ("Ready: VP8 on the CPU", or
   what to install, with **Check again**). **Choose the screen again** makes the next Record
   screen ask again.
 - In a saved meeting the video is on the left, the chat under it, and the notes and the

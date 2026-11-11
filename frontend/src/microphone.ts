@@ -1,5 +1,5 @@
 /**
- * Settings → General → Microphone: which input to record (desktop/src-tauri/src/microphones.rs),
+ * Settings → Speech → Microphone: which input to record (desktop/src-tauri/src/microphones.rs),
  * which one is in use and why, a 4-second test with a level meter, and (Linux) the switch that
  * keeps a Bluetooth headset out of call mode.
  */

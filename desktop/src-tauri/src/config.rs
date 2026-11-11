@@ -118,7 +118,7 @@ pub struct Config {
     pub export_auto: bool,
     /// What the file has: ai_notes, notes, transcript.
     pub export_parts: Vec<String>,
-    /// Names and terms the speech model gets wrong (Settings → General → Vocabulary). Last:
+    /// Names and terms the speech model gets wrong (Settings → Speech → Vocabulary). Last:
     /// a list of tables goes after the plain values in config.toml.
     pub vocabulary: Vec<crate::vocabulary::Term>,
 }
