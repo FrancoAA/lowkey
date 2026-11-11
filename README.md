@@ -244,7 +244,9 @@ Record a call or a talk, as text next to your notes (Linux for now). No bot join
   <kbd>Tab</kbd>) or from the open meeting. A dialog asks first (Cancel has the focus).
 - **Notes**: a language model writes the meeting's notes from your notes and the transcript,
   organized like the meeting: one section for each topic, with a bullet for each decision, fact,
-  figure or task (the person in bold), and sub-bullets for the details. Built in:
+  figure or task (the person in bold), and sub-bullets for the details. Each bullet ends with its
+  time in the transcript, e.g. (12:40), and the app puts the bullets and the sections in the
+  order of the meeting by these times. Built in:
   **Qwen3.5 4B** (Apache-2.0), run by llama.cpp on this computer (a 2.7 GB download the first
   time; ~25 s for 8 minutes of meeting on the Radeon 780M, ~1 min on a CPU). Settings → Meetings →
   Notes also offers Qwen3.5 2B (1.3 GB, faster, less exact) and Gemma 4 E4B (5 GB). Or your own

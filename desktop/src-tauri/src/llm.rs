@@ -443,6 +443,10 @@ fn builtin_endpoint(exe: &Path, model: &Path, gpu: bool, cancel: &AtomicBool) ->
     cmd.env("LLAMA_API_KEY", &key);
     cmd.args(["-m", &model.to_string_lossy(), "--host", "127.0.0.1", "--port", &port.to_string()]);
     cmd.args(["-c", &CONTEXT.to_string(), "-np", "1", "-fa", "on", "--jinja", "--no-webui"]);
+    // The KV cache in 8 bits: 1,088 MB at 64K instead of 2,048 MB (f16), at the same speed. The
+    // cost, measured: the 4B model drops more points in the longest meetings (bench/summary/
+    // results.md, "Quantized KV cache"). q4_0 gave a task to the wrong person and looped.
+    cmd.args(["-ctk", "q8_0", "-ctv", "q8_0"]);
     cmd.args(["-ngl", if gpu { "99" } else { "0" }]);
     cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(std::fs::File::create(&log).map(Stdio::from).unwrap_or_else(|_| Stdio::null()));
     #[cfg(windows)]
@@ -503,7 +507,11 @@ pub enum Engine {
 /// The instructions. Measured in bench/summary (the language must be named: with "the
 /// language of the meeting", two of three models wrote English notes for a Spanish meeting).
 /// The notes follow the meeting's topics, not fixed sections (bench/summary/results.md, "Notes
-/// by topic"); the rule about "I" keeps the recorder's own tasks with **Me**.
+/// by topic"); the rule about "I" keeps the recorder's own tasks with **Me**. Each bullet ends
+/// with its time in the transcript: `in_meeting_order` sorts by it (a small model does not keep
+/// the order of a long meeting), and a click on the point finds its place (frontend crossref).
+/// bench/summary/results.md, "Time order": the time at the start of a bullet made the 4B model
+/// copy the transcript line by line; the task rule before the time rule keeps the owners right.
 pub fn system_prompt(lang: &str, names: &[String]) -> String {
     format!(
         "You write meeting notes from a transcript. \"Me\" is the person who recorded the meeting; \
@@ -513,16 +521,23 @@ notes written by \"Me\" during the meeting show what mattered to them.
 
 Write in {lang}. Use only facts from the transcript; never invent names, dates or numbers.
 
-Organize the notes by topic, in the order the meeting discussed them. Markdown:
+Organize the notes by topic and keep the order of the meeting. Markdown:
 - One section for each topic: \"## \" and a short title that names it. Each subject gets its own \
-section, also a short one (a hire, the month's figures, a customer).
-- Under the heading, one bullet (\"- \") for each decision, fact, figure or task. Write each bullet \
-as a short statement, without a label in front (\"Decision:\", \"Action:\").
+section, also a short one (a hire, the month's figures, a customer). The sections go in the order \
+in which the meeting first talked about each topic.
+- Under the heading, one bullet (\"- \") for each decision, fact, figure or task, in the order they \
+were said. Write each bullet as a short statement, without a label in front (\"Decision:\", \
+\"Action:\").
 - A task starts with the name of the person who does it, in bold: \"- **Ana** sends the contract \
-by Friday\". Find that person in the transcript: a line by **Me** that says \"I\" will do something \
-(\"I call them on Friday\") is a task for **Me**, never for the person Me talks to.
+by Friday\". Find that person in the transcript: a line by **Me** that says \"I\" will do \
+something (\"I call them on Friday\") is a task for **Me**, never for the person Me talks to.
 - Details of a bullet go in sub-bullets, indented with two spaces (\"  - \"): the reason, the \
 options that were dropped, the next date. Only one level of sub-bullets.
+- End each bullet with the time of the transcript line it comes from, in brackets: \"- **Ana** \
+sends the contract by Friday (31:05)\". Copy that time from the transcript; never make up a time.
+- When the meeting comes back to a topic that it talked about before, put the new bullets in that \
+topic's section, after its earlier bullets. Never make a second section for the same topic, and \
+never put a bullet under another topic only because it was said near it.
 - A question left without a decision is a bullet too: say it is open, and the next date if one \
 was set.
 - No summary, no introduction, no closing words. Leave out small talk and greetings.{}",
@@ -595,8 +610,101 @@ pub fn write_notes(
     anyhow::ensure!(input.chars().count() <= MAX_INPUT_CHARS, "this meeting is too long for notes for now (over about four hours)");
     let messages = vec![json!({"role": "system", "content": system_prompt(lang, names)}), json!({"role": "user", "content": input})];
     // Temperature 0: at 0.2 the 4B model gave the recorder's own task to someone else in half
-    // of the runs (bench/summary/results.md, "Notes by topic").
-    complete(engine, messages, 2000, 0.0, progress, on_text, cancel)
+    // of the runs (bench/summary/results.md, "Notes by topic"). 3000 tokens: the times make the
+    // notes about a third longer; it still fits in `CONTEXT` after `MAX_INPUT_CHARS`.
+    let text = complete(engine, messages, 3000, 0.0, progress, on_text, cancel)?;
+    Ok(match text.strip_suffix(CUT_NOTE) {
+        Some(notes) => in_meeting_order(notes) + CUT_NOTE,
+        None => in_meeting_order(&text),
+    })
+}
+
+/// "(04:19)", "(1:04:19)" → seconds: the first time in brackets in `line`, as the transcript
+/// gives them. Also "(04:19, 05:02)" and "(04:19-05:02)". "at 10:30" is a time of day: not taken.
+fn first_time(line: &str) -> Option<u32> {
+    static TIME: OnceLock<regex::Regex> = OnceLock::new();
+    let re = TIME.get_or_init(|| regex::Regex::new(r"\((?:(\d{1,2}):)?(\d{1,2}):(\d{2})\s*[),;\-–]").expect("time"));
+    re.captures_iter(line)
+        .map(|c| {
+            let n = |i: usize| c.get(i).map_or(0, |m| m.as_str().parse::<u32>().unwrap_or(0));
+            n(1) * 3600 + n(2) * 60 + n(3)
+        })
+        .min()
+}
+
+/// Sorts `items` by their time; an item without one stays after the item before it.
+fn sort_by_time<T>(items: Vec<(Option<u32>, T)>, start: u32) -> Vec<T> {
+    let mut last = start;
+    let mut keyed: Vec<(u32, T)> = items
+        .into_iter()
+        .map(|(t, item)| {
+            last = t.unwrap_or(last);
+            (last, item)
+        })
+        .collect();
+    keyed.sort_by_key(|(t, _)| *t); // stable: equal times keep the model's order
+    keyed.into_iter().map(|(_, item)| item).collect()
+}
+
+/// The notes in the order of the meeting: the bullets of each section by their time, and the
+/// sections by the time of their first bullet. A small model puts a point said in the middle at
+/// the end, or a topic that came back later before the earlier ones. Text before the first
+/// "## " stays at the top; sub-bullets stay with their bullet. Notes without times do not change.
+pub fn in_meeting_order(notes: &str) -> String {
+    let notes = notes.trim();
+    let mut top: Vec<&str> = Vec::new();
+    // Each section: its heading, the lines before its first bullet, its bullets (with sub-lines).
+    let mut sections: Vec<(&str, Vec<&str>, Vec<Vec<&str>>)> = Vec::new();
+    for line in notes.lines() {
+        if line.starts_with("## ") {
+            sections.push((line, Vec::new(), Vec::new()));
+            continue;
+        }
+        let Some((_, head, items)) = sections.last_mut() else {
+            top.push(line);
+            continue;
+        };
+        let bullet = line.starts_with("- ") || line.starts_with("* ") || line.starts_with("+ ");
+        match items.last_mut() {
+            _ if bullet => items.push(vec![line]),
+            Some(item) => item.push(line),
+            None => head.push(line),
+        }
+    }
+    if sections.iter().all(|(_, _, items)| items.iter().all(|i| i.iter().all(|l| first_time(l).is_none()))) {
+        return notes.to_string();
+    }
+    let sections: Vec<(Option<u32>, String)> = sections
+        .into_iter()
+        .map(|(heading, head, items)| {
+            let items: Vec<(Option<u32>, Vec<&str>)> = items
+                .into_iter()
+                .map(|lines| {
+                    // The bullet's own time; else the first time in its sub-bullets.
+                    let t = first_time(lines[0]).or_else(|| lines[1..].iter().filter_map(|l| first_time(l)).min());
+                    (t, lines)
+                })
+                .collect();
+            let first = items.iter().filter_map(|(t, _)| *t).min();
+            let items = sort_by_time(items, first.unwrap_or(0));
+            let mut s = String::from(heading);
+            for l in head.iter().chain(items.iter().flat_map(|lines| {
+                let end = lines.iter().rposition(|l| !l.trim().is_empty()).map_or(0, |i| i + 1);
+                lines[..end].iter()
+            })) {
+                s.push('\n');
+                s.push_str(l);
+            }
+            (first, s.trim_end().to_string())
+        })
+        .collect();
+    let mut out: Vec<String> = Vec::new();
+    let top = top.join("\n");
+    if !top.trim().is_empty() {
+        out.push(top.trim().to_string());
+    }
+    out.extend(sort_by_time(sections, 0));
+    out.join("\n\n")
 }
 
 /// The earlier questions and answers that the model reads again (the newest; characters).
@@ -780,11 +888,14 @@ pub fn read_stream(reader: impl BufRead, on_text: &mut dyn FnMut(&str), cancel: 
     }
     let mut text = strip_thinking(&text);
     if cut {
-        text.push_str("\n\n_(The model stopped at its length limit: the end may be missing.)_");
+        text.push_str(CUT_NOTE);
     }
     on_text(&text);
     Ok(text)
 }
+
+/// Added after an answer that the model stopped at `max_tokens`.
+const CUT_NOTE: &str = "\n\n_(The model stopped at its length limit: the end may be missing.)_";
 
 /// Some models (and servers) put their reasoning in <think>…</think> before the answer.
 fn strip_thinking(text: &str) -> String {
@@ -1021,5 +1132,54 @@ mod tests {
         }
         assert!(system_prompt("Spanish", &[]).contains("Write in Spanish"));
         assert!(system_prompt("Spanish", &["Lisandro".into(), "NMR".into()]).contains("write them exactly like this): Lisandro, NMR."));
+    }
+
+    #[test]
+    fn the_notes_are_put_in_the_order_of_the_meeting() {
+        // As the 4B model wrote them for a 55-minute meeting: a point from 07:30 at the end of a
+        // section, and a topic of 04:29 after the topics of 13:23.
+        let model = "## Interfaz
+- Historial dentro del mismo panel (09:18)
+- **Pachu** quita el botón de colapsar (07:30)
+  - siempre visible
+- Gráficos con Highcharts (40:12)
+
+## Alquiler
+Lo que dijo Liso.
+- Actualización por IPC (14:59)
+- Fotos y videos al entregar (13:23)
+- Sin hora: queda después de la anterior
+
+## Tickets
+- Se cierran los tickets sin merge (04:29)
+
+## Sin horas
+- Nada";
+        // A section without times stays after the one before it (Tickets).
+        let want = "## Tickets
+- Se cierran los tickets sin merge (04:29)
+
+## Sin horas
+- Nada
+
+## Interfaz
+- **Pachu** quita el botón de colapsar (07:30)
+  - siempre visible
+- Historial dentro del mismo panel (09:18)
+- Gráficos con Highcharts (40:12)
+
+## Alquiler
+Lo que dijo Liso.
+- Fotos y videos al entregar (13:23)
+- Sin hora: queda después de la anterior
+- Actualización por IPC (14:59)";
+        assert_eq!(in_meeting_order(model), want);
+        // Over an hour, a range, and a time in a sub-bullet only.
+        let model = "## B\n- b (1:02:03-1:03:00)\n\n## A\n- a\n  - dicho en (59:59)";
+        assert_eq!(in_meeting_order(model), "## A\n- a\n  - dicho en (59:59)\n\n## B\n- b (1:02:03-1:03:00)");
+        // Without times (an old prompt, another model): as written.
+        let model = "Intro\n\n## B\n- b at 10:30\n\n\n## A\n- a";
+        assert_eq!(in_meeting_order(model), model);
+        assert_eq!(first_time("a las 10:30 (en 12:00) y (03:05, 09:00) (01:00)"), Some(60));
     }
 }
