@@ -1,6 +1,6 @@
 /**
- * The form of an AI provider, in Settings → Speech (it transcribes) and Settings → Meetings →
- * Notes (it writes the notes and answers questions): your own server's address, the model, the
+ * The form of an AI provider, in Settings → Models: Speech to text (it transcribes) and Meeting
+ * notes (it writes the notes and answers questions): your own server's address, the model, the
  * API key, and where the data goes.
  *
  * The model is a short list of the provider's models (providers.rs, with a note on each), the
@@ -44,7 +44,7 @@ export function isLocal(url: string): boolean | null {
 }
 
 /** A note in a tinted box with an icon; "busy" is an info box with a spinner. */
-type AlertKind = "info" | "ok" | "error" | "warn" | "busy";
+export type AlertKind = "info" | "ok" | "error" | "warn" | "busy";
 
 const ICONS: Record<Exclude<AlertKind, "busy">, string> = {
   info: '<circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/>',
@@ -54,7 +54,7 @@ const ICONS: Record<Exclude<AlertKind, "busy">, string> = {
 };
 
 /** Shows the text in the alert (the text goes in as text, never as HTML); empty hides it. */
-function setAlert(el: HTMLElement, kind: AlertKind, text: string): void {
+export function setAlert(el: HTMLElement, kind: AlertKind, text: string): void {
   el.hidden = !text;
   el.dataset.kind = kind === "busy" ? "info" : kind;
   el.innerHTML = kind === "busy" ? '<span class="spinner" aria-hidden="true"></span>' : `<svg class="alert-icon" viewBox="0 0 24 24" aria-hidden="true">${ICONS[kind]}</svg>`;
@@ -63,13 +63,27 @@ function setAlert(el: HTMLElement, kind: AlertKind, text: string): void {
   el.append(span);
 }
 
-const hostOf = (url: string) => {
+export const hostOf = (url: string) => {
   try {
     return new URL(url).hostname;
   } catch {
     return url;
   }
 };
+
+/** Words for a failed test: a server that is not there says where nothing answers (not the
+ * HTTP library's words). Other errors come as the app wrote them. */
+export function failureText(err: unknown, url: string): string {
+  const e = String(err instanceof Error ? err.message : err).replace(/^Error:\s*/, "");
+  if (!/could not reach/i.test(e)) return e;
+  let host = url;
+  try {
+    host = new URL(url).host;
+  } catch {
+    /* not an address: shown as it is */
+  }
+  return `Nothing answers at ${host}. Start the server, then test again.`;
+}
 
 export interface ProviderForm {
   /** Show the form for this provider; null hides it. */
@@ -202,7 +216,7 @@ export function initProviderForm(backend: Backend, use: Use, root: HTMLElement, 
       },
       (err) => {
         if (listedFor !== sig) return;
-        setAlert(modelNote, "error", String(err));
+        setAlert(modelNote, "error", failureText(err, p.id === CUSTOM ? saved(status).url : p.url));
         listedFor = ""; // the next status asks again (the server may be up by then)
       },
     );

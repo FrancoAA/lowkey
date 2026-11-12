@@ -201,7 +201,7 @@ pub type ProgressFn<'a> = &'a mut dyn FnMut(&str, u64, u64);
 
 /// The server and the model, downloaded and checked once. Returns (server, model).
 pub fn ensure_builtin(m: &Model, progress: ProgressFn, cancel: &AtomicBool) -> anyhow::Result<(PathBuf, PathBuf)> {
-    let rt = RUNTIME.as_ref().ok_or_else(|| anyhow::anyhow!("the built-in model is not available for this system; use your own server in Settings → Meetings → Notes"))?;
+    let rt = RUNTIME.as_ref().ok_or_else(|| anyhow::anyhow!("the built-in model is not available for this system; choose your own server or a service in Settings → Models → Meeting notes"))?;
     let rdir = runtime_dir();
     if server_exe(&rdir).is_none() {
         let archive = dir().join(rt.url.rsplit('/').next().unwrap_or("llama.archive"));
@@ -551,7 +551,7 @@ was set.
 /// The placeholder for the meeting's language in the instructions ("Spanish").
 pub const LANGUAGE: &str = "{language}";
 
-/// The instructions sent with the meeting: `custom` (Settings → Meetings → Notes; "" = the
+/// The instructions sent with the meeting: `custom` (Settings → Meeting settings → Notes; "" = the
 /// built-in NOTES_PROMPT) with the language in place of {language} (added at the end when the
 /// text does not have it: notes in the wrong language otherwise), and the vocabulary's names.
 pub fn system_prompt(lang: &str, names: &[String], custom: &str) -> String {

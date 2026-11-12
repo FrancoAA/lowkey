@@ -103,6 +103,8 @@ export interface Backend {
   pickFile(): Promise<FileRef | null>;
   onFileDrop(onHover: (over: boolean) => void, onDrop: (files: FileRef[]) => void): void;
   onOpenFiles(cb: (files: FileRef[]) => void): void;
+  /** The tray's "Change in Settings…": open that section ("models"). */
+  onShowSection(cb: (name: string) => void): void;
   meetings: MeetingsBackend;
 }
 
@@ -248,6 +250,9 @@ async function desktopBackend(): Promise<Backend> {
     onOpenFiles(cb) {
       void listen<string[]>("open-files", (e) => cb(toRefs(e.payload)));
       void invoke<string[]>("take_open_files").then((paths) => paths.length && cb(toRefs(paths)));
+    },
+    onShowSection(cb) {
+      void listen<string>("show-section", (e) => cb(e.payload));
     },
     meetings: {
       start: (title) => invoke<MeetingLive>("meeting_start", { title }),

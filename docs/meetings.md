@@ -13,7 +13,7 @@ macOS and Windows, a prompt when a call starts, and questions over past meetings
 
 ## The meeting key and the capsule
 
-- Settings → Meetings → **Meeting key**: Super+Ctrl+M on Linux, Ctrl+Alt+M on macOS and Windows
+- Settings → Meeting settings → **Meeting key**: Super+Ctrl+M on Linux, Ctrl+Alt+M on macOS and Windows
   (`meeting_hotkey` in config.toml). It runs `lowkey --meeting toggle`: a tap starts a
   meeting, the next tap stops and saves it. A tap while it starts is remembered (it stops
   right after the start). On Hyprland a closed app starts in the background for it; on X11,
@@ -43,7 +43,7 @@ macOS and Windows, a prompt when a call starts, and questions over past meetings
   the capsule too (with no keys at all, the app adds the window rule itself). The time is not
   in the screen-reader region, so it is not read out every second.
 - If the meeting key cannot be added (e.g. `config.toml` gives it the dictation key's
-  combination), Settings → Meetings shows it "not active" with the reason; moving the dictation key
+  combination), Settings → Meeting settings shows it "not active" with the reason; moving the dictation key
   adds it again.
 - A meeting started with the key gets the title "Meeting"; the list shows its date.
 
@@ -106,7 +106,7 @@ says so. macOS (ScreenCaptureKit) and Windows (WASAPI loopback) are not built ye
 - Each block carries its time by the clock: when a source stops sending for over a second, its
   next audio starts at the right time.
 
-One thread sends the pieces, in order, to the model chosen in Settings → Speech (Parakeet or
+One thread sends the pieces, in order, to the model chosen in Settings → Models (Parakeet or
 Whisper; the VAD drops pieces with no speech). `Engines` runs one transcription at a time, so
 the meeting, dictation and files share the model safely. Lines are kept in time order; sound
 labels such as `[Music]` are dropped.
@@ -162,12 +162,12 @@ failed), **Write notes again** when the transcript was fixed after them, and **R
 otherwise (it asks first). The notes are saved only when the model is done: an error, a cancel
 or an empty answer keeps the notes there.
 
-Settings → Meetings → Notes → **Instructions for the notes** (`ai_prompt` in config.toml; ""
+Settings → Meeting settings → Notes → **Instructions for the notes** (`ai_prompt` in config.toml; ""
 = the built-in `llm::NOTES_PROMPT`). The box shows the app's text until it is changed; saving
 the app's text again stores "" (so later improvements reach it), and **Restore the original**
 (it asks first) goes back to it. `{language}` becomes the meeting's language; without it, "Write
 in <language>." is added at the end (the measurement above). The Vocabulary's names are always
-added. Notes without times in brackets are not sorted (see above). The language is named in the instructions (Settings → Speech,
+added. Notes without times in brackets are not sorted (see above). The language is named in the instructions (Settings → Models,
 else found in the transcript with whatlang): with "the language of the meeting" two of three
 models wrote English notes for a Spanish meeting (bench/summary/results.md).
 
@@ -185,7 +185,7 @@ models wrote English notes for a Spanish meeting (bench/summary/results.md).
   "Quantized KV cache"). It stops 2 minutes after the
   last use (never during a job), on Cancel, and when the app quits; a pid file lets the next
   start stop one that a crash or a kill left behind (only if that pid is our llama-server).
-- **The built-in model** (Settings → Meetings → Notes → Notes model, `ai_builtin_model`; its status, "Ready · Qwen3.5 4B
+- **The built-in model** (Settings → Meeting settings → Notes → Notes model, `ai_builtin_model`; its status, "Ready · Qwen3.5 4B
   on GPU" or "downloads on first use", is next to the heading): Qwen3.5 4B
   (`qwen3.5-4b`, 2.7 GB, recommended), Qwen3.5 2B (`qwen3.5-2b`, 1.3 GB) or Gemma 4 E4B
   (`gemma-4-e4b`, 5.0 GB), each pinned to a Hugging Face commit and its SHA-256, with the

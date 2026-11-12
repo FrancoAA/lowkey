@@ -56,6 +56,10 @@ fn is_zero(n: &u32) -> bool {
     *n == 0
 }
 
+fn is_zero_u64(n: &u64) -> bool {
+    *n == 0
+}
+
 /// The longest name of a speaker (characters).
 pub const MAX_NAME: usize = 60;
 
@@ -80,6 +84,12 @@ pub struct Meeting {
     /// Which model wrote them, and when (unix seconds).
     pub ai_model: String,
     pub ai_at: u64,
+    /// The last time the notes could not be written: why, and when (unix seconds). Cleared when
+    /// they are written. It stays with the meeting, so the reason shows when it is opened later.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub ai_error: String,
+    #[serde(skip_serializing_if = "is_zero_u64")]
+    pub ai_error_at: u64,
     /// Questions about the meeting and the model's answers (Ask about this meeting), oldest first.
     pub chat: Vec<ChatMessage>,
     /// Settings → Connections → Note apps: the file it was saved as (in the chosen folder), and the hash of

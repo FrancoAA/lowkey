@@ -92,10 +92,15 @@ the CPU. Windows must have the Visual C++ runtime (`MSVCP140.dll`). The installe
 - **Appearance** (Settings → General): System (follows the desktop's light or dark setting),
   Light or Dark. The recording strip stays dark.
 - **The tray icon's menu:** Open, Start/Stop dictation (the text goes to the app that has the
-  focus), Start/Stop meeting recording, **Microphone** (the system default or one input),
-  **Speech-to-text model** (Automatic or one model; a model that is not on disk downloads when
-  you choose it), Exit. The menu follows the app: it says Stop while a
-  recording runs, and it shows a microphone when you plug it in.
+  focus), Start/Stop meeting recording, **Microphone** (the system default or one input), the
+  speech and notes models in use (**Change in Settings…** opens Settings → Models), Exit. The
+  menu follows the app: it says Stop while a recording runs, and it shows a microphone when you
+  plug it in.
+- **Settings → Models:** every job that uses a model (speech to text, the live preview, the
+  meeting notes), where it runs and its status. A server or a service in the cloud is used only
+  after **Test and use** passes: the server answers, the key works, the server has the model.
+  Until then the model in use stays. A green dot shows only after a real test, and a meeting
+  whose notes could not be written keeps the reason (with **Try again**).
 
 ## Dictate into any app
 
@@ -170,7 +175,7 @@ sees it and does not add it again. Classic `hyprland.conf`: `--print-snippet con
 ### Live preview
 
 While you hold the key, the overlay shows the words as you say them; the main model still
-writes the text that is typed. Two engines (Settings → Dictation → Live preview → Preview engine):
+writes the text that is typed. Two engines (Settings → Models → Live preview → Preview engine):
 
 - **Parakeet** (the default when its model is on disk): more accurate, 25 languages, about
   1.1 GB of memory. When Parakeet is also the main model, both share one copy.
@@ -185,7 +190,7 @@ Turn the preview off in Settings (`live_preview = false`). Details and measureme
 Record a call or a talk, as text next to your notes (Linux for now). No bot joins the call.
 
 - **The meeting key** (<kbd>Super</kbd>+<kbd>Ctrl</kbd>+<kbd>M</kbd> on Linux,
-  <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>M</kbd> on macOS and Windows; change it in Settings → Meetings)
+  <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>M</kbd> on macOS and Windows; change it in Settings → Meeting settings)
   starts a recording from any app, and stops it. On Hyprland (or with your own desktop bind)
   it also starts the app when it is closed; on X11, macOS and Windows the app must run. A
   small capsule at the bottom of the screen shows a red dot, Lowkey's mark and the time. The
@@ -197,7 +202,7 @@ Record a call or a talk, as text next to your notes (Linux for now). No bot join
 - **Record** (in the window, next to the search field) does the same, and so does the tray menu. It records two sources: your microphone (**Me**) and the computer's sound
   (**Them**: the others in Zoom, Meet, Teams…, through PipeWire or PulseAudio).
 - The text comes a few seconds after someone speaks: each source is cut at pauses (4–20 s
-  pieces) and the speech model chosen in Settings → Speech writes them.
+  pieces) and the speech model chosen in Settings → Models writes them.
 - **Stop** transcribes the last seconds and saves. The list shows all meetings, newest first,
   grouped by day; open one to read it (the notes, or the transcript in their place with the
   **Notes | Transcript** switch; the chat on the right), change the title, **Copy** or
@@ -212,7 +217,7 @@ Record a call or a talk, as text next to your notes (Linux for now). No bot join
   like a name or a term ("Lisando" → "Lisandro") offers to add it to the Vocabulary, so the
   model writes it right next time. Copy, Export, search, the note-app file and AI agents use
   the fixed text; the notes stay as written, with **Write notes again** for the fixed text.
-- **Who is speaking** (Linux x86_64; Settings → Meetings → Who is speaking, off by default):
+- **Who is speaking** (Linux x86_64; Settings → Meeting settings → Who is speaking, off by default):
   after Stop, the others in the call are told apart by their voices, and each "Them" line gets
   a speaker: **Speaker 1**, **Speaker 2**… Click a speaker to type a name; give two speakers the
   same name when they are one person, and their lines merge. Copy, Export, the note-app file,
@@ -238,7 +243,7 @@ Record a call or a talk, as text next to your notes (Linux for now). No bot join
   click fixes the text); each time in the transcript plays it from there; a place under a point
   of the notes has **Play**. While the video plays, or when you move it, the paragraph said at
   that moment is marked and kept in view. The first time, your desktop asks what to share; it
-  then remembers it (Settings → Meetings → Screen video → **Choose the screen again** asks
+  then remembers it (Settings → Meeting settings → Screen video → **Choose the screen again** asks
   again). 10 frames a second, at most 1920 pixels wide, about 450 MB for one hour. It needs
   GStreamer: `gst-plugins-good` (VP8 on the CPU), and `gst-plugin-va` for AV1, VP9 or H.264 on
   the GPU; Settings says what it found. Details: [docs/screen.md](docs/screen.md).
@@ -254,16 +259,16 @@ Record a call or a talk, as text next to your notes (Linux for now). No bot join
   time in the transcript, e.g. (12:40), and the app puts the bullets and the sections in the
   order of the meeting by these times. Built in:
   **Qwen3.5 4B** (Apache-2.0), run by llama.cpp on this computer (a 2.7 GB download the first
-  time; ~25 s for 8 minutes of meeting on the Radeon 780M, ~1 min on a CPU). Settings → Meetings →
+  time; ~25 s for 8 minutes of meeting on the Radeon 780M, ~1 min on a CPU). Settings → Meeting settings →
   Notes also offers Qwen3.5 2B (1.3 GB, faster, less exact) and Gemma 4 E4B (5 GB). Or your own
-  server in Settings → Meetings → Notes (Ollama, LM Studio, any OpenAI-compatible API; a warning shows
+  server in Settings → Meeting settings → Notes (Ollama, LM Studio, any OpenAI-compatible API; a warning shows
   when it is not on this computer), or a provider in the cloud: OpenAI, Anthropic, OpenRouter,
   Vercel AI Gateway, Groq, Gemini or Mistral ([AI providers](#ai-providers-optional)). They are
   written by themselves when a meeting stops (the
   first time, after the model's download), or with **Write notes** when a meeting has none.
   **Regenerate** writes them again (it asks first; the new notes replace the old ones only when
   they are complete, so a failed or cancelled try keeps them). They are a draft, and
-  Copy/Export include them. **Instructions for the notes** (Settings → Meetings → Notes) shows
+  Copy/Export include them. **Instructions for the notes** (Settings → Meeting settings → Notes) shows
   what the model is told: change it to try other notes, and **Restore the original** brings
   back the app's instructions. `{language}` becomes the meeting's language (when the text does
   not have it, "Write in …" is added at the end), and the Vocabulary's names are added. Measurements: [bench/summary/results.md](bench/summary/results.md).
@@ -273,7 +278,7 @@ Record a call or a talk, as text next to your notes (Linux for now). No bot join
   questions and answers are saved with the meeting (**Clear** deletes them); search and the
   export do not include them. <kbd>Enter</kbd> asks, <kbd>Shift</kbd>+<kbd>Enter</kbd> starts a
   new line, and the button stops an answer.
-- **Calls are detected** (Linux; Settings → Meetings → Offer to record calls, on by default): when Zoom,
+- **Calls are detected** (Linux; Settings → Meeting settings → Offer to record calls, on by default): when Zoom,
   Teams, Slack, Discord, Signal… or a browser on Google Meet, Teams, Jitsi… uses the
   microphone for 2 s (an unknown browser page: 20 s), the strip says "Zoom call detected ·
   Super+Ctrl+M records it", for 20 s. The meeting key then records it as "Zoom call". Per call:
@@ -294,7 +299,7 @@ Details: [docs/meetings.md](docs/meetings.md).
 
 ## Microphone
 
-Settings → Speech → Microphone: the system default or any input, with a line that says which
+Settings → General → Microphone: the system default or any input, with a line that says which
 one is in use and why, and **Test** (a level meter for 4 s). On Linux the list is the
 PipeWire/PulseAudio sources (`pactl`), and the app records the exact source through PipeWire.
 **Use another microphone instead of a Bluetooth headset** (on by default, Linux): with the
@@ -320,7 +325,7 @@ with the history off; with the app closed it reads the last one from the file. (
 
 ## Vocabulary
 
-Settings → Speech → Vocabulary: names and terms the model gets wrong (people, projects,
+Settings → General → Vocabulary: names and terms the model gets wrong (people, projects,
 products), each with "sounds like" spellings. In every transcript (dictation, files,
 meetings) those spellings, and the term in another case, become the term, whole words only.
 Whisper also gets the terms as a prompt, so it spells them right more often; the AI notes get
@@ -366,9 +371,9 @@ app is never overwritten: the app keeps a hash of what it wrote, and says so ins
 
 ## AI providers (optional)
 
-Settings → Speech → **Where it runs**: on this computer (the default), or a provider that
+Settings → Models → **Where it runs**: on this computer (the default), or a provider that
 transcribes: **OpenAI**, **OpenRouter**, **Groq**, **Mistral**, **Deepgram**, **ElevenLabs**, or your own
-OpenAI-compatible server (Speaches, LocalAI…). Settings → Meetings → Notes → **Notes model**: the
+OpenAI-compatible server (Speaches, LocalAI…). Settings → Models → Meeting notes: the
 built-in model, your own server, or **OpenAI**, **Anthropic**, **OpenRouter**, **Vercel AI
 Gateway**, **Groq**, **Google Gemini** or **Mistral** for the notes and the chat.
 
@@ -441,7 +446,7 @@ speech_provider = ""            # "" = the model here | openai | groq | mistral 
 speech_model = ""               # "" = the provider's default model
 speech_url = "http://localhost:8000/v1"   # your own speech server (OpenAI-compatible)
 ai_auto = true                  # write AI notes when a meeting stops
-ai_prompt = ""                  # the instructions for the notes ("" = the app's; Settings → Meetings → Notes)
+ai_prompt = ""                  # the instructions for the notes ("" = the app's; Settings → Meeting settings → Notes)
 export_dir = ""                  # Note apps: the folder for each meeting's Markdown note ("" = off)
 export_auto = true              # save there when a meeting stops and when its AI notes are written
 export_parts = ["ai_notes", "notes", "transcript"]

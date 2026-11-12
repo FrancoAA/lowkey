@@ -1,5 +1,5 @@
 //! The tray icon's menu: open the window, start or stop a dictation or a meeting recording,
-//! choose the microphone and the speech-to-text model, exit.
+//! choose the microphone, see the speech and notes models (chosen in Settings → Models), exit.
 //!
 //! The menu is a pure description (`entries`) of the app's state (`View`); the app builds it
 //! again only when that description changes (a recording starts, a model is chosen, a
@@ -14,14 +14,10 @@ pub struct View {
     /// The dictation's state: idle | starting | listening | transcribing | error.
     pub dictation: String,
     pub meeting: Meeting,
-    /// The models this build can run.
-    pub models: Vec<ModelItem>,
-    /// The saved choice ("" = automatic).
-    pub model_choice: String,
-    /// What "Automatic" picks on this computer (a label).
-    pub auto_model: String,
-    /// A provider transcribes (Settings → Speech): its label ("gpt-4o-transcribe · OpenAI").
-    pub cloud: Option<String>,
+    /// The model that transcribes now: "Parakeet v3 · this computer", "gpt-4o-transcribe · OpenAI".
+    pub speech: String,
+    /// The model that writes the notes: "Qwen3.5 4B · this computer", "llama3 · your server".
+    pub notes: String,
     /// None: the microphone cannot be chosen here (no PipeWire/PulseAudio).
     pub mics: Option<Vec<MicItem>>,
     /// The saved choice ("" = the system default).
@@ -37,16 +33,6 @@ pub enum Meeting {
     Starting,
     Recording,
     Saving,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct ModelItem {
-    pub id: String,
-    pub label: String,
-    /// On disk (else choosing it starts the download).
-    pub downloaded: bool,
-    pub downloading: bool,
-    pub download_mb: u32,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -71,8 +57,8 @@ pub enum Entry {
 pub enum Action {
     Dictate,
     Meeting,
-    /// "" = automatic.
-    Model(String),
+    /// Open the window on Settings → Models.
+    Models,
     /// "" = the system default.
     Mic(String),
     Open,
@@ -84,11 +70,10 @@ pub fn action(id: &str) -> Option<Action> {
         "dictate" => Action::Dictate,
         "meeting" => Action::Meeting,
         "open" => Action::Open,
+        "models" => Action::Models,
         "exit" => Action::Exit,
         _ => {
-            if let Some(m) = id.strip_prefix("model:") {
-                Action::Model(m.into())
-            } else if let Some(m) = id.strip_prefix("mic:") {
+            if let Some(m) = id.strip_prefix("mic:") {
                 Action::Mic(m.into())
             } else {
                 return None;
@@ -136,21 +121,6 @@ pub fn entries(v: &View) -> Vec<Entry> {
         }
     };
 
-    // A provider in the cloud is chosen in Settings; a model here, chosen in this menu, takes over.
-    let local = v.cloud.is_none();
-    let mut models: Vec<Entry> = v.cloud.iter().map(|c| check("speech:cloud".into(), format!("Cloud — {c}"), true)).collect();
-    models.push(check("model:".into(), format!("Automatic — {}", v.auto_model), local && v.model_choice.is_empty()));
-    for m in &v.models {
-        let label = if m.downloading {
-            format!("{} · downloading…", m.label)
-        } else if m.downloaded {
-            m.label.clone()
-        } else {
-            format!("{} · {} download", m.label, size(m.download_mb))
-        };
-        models.push(check(format!("model:{}", m.id), label, local && v.model_choice == m.id));
-    }
-
     let mut out = vec![item("open", "Open", true), Entry::Separator];
     if v.omarchy_shell {
         // Omarchy's shell hides a divider in row 1 or 2 (it takes it for the line under a
@@ -162,7 +132,11 @@ pub fn entries(v: &View) -> Vec<Entry> {
         meeting,
         Entry::Separator,
         Entry::Sub { label: "Microphone".into(), entries: mics },
-        Entry::Sub { label: "Speech-to-text model".into(), entries: models },
+        Entry::Separator,
+        // The models: one place to choose them (Settings → Models), seen here.
+        item("speech-model", &format!("Speech: {}", v.speech), false),
+        item("notes-model", &format!("Notes: {}", v.notes), false),
+        item("models", "Change in Settings…", true),
         Entry::Separator,
         item("exit", "Exit", true),
     ]);
@@ -172,14 +146,6 @@ pub fn entries(v: &View) -> Vec<Entry> {
 /// Omarchy's shell (Quickshell) draws the tray menus on this computer.
 pub fn omarchy_shell() -> bool {
     cfg!(target_os = "linux") && std::path::Path::new("/usr/share/omarchy/shell").is_dir()
-}
-
-fn size(mb: u32) -> String {
-    if mb >= 1000 {
-        format!("{:.1} GB", mb as f64 / 1000.0)
-    } else {
-        format!("{mb} MB")
-    }
 }
 
 /// The Tauri menu for `entries`.
@@ -214,13 +180,8 @@ mod tests {
         View {
             dictation: "idle".into(),
             meeting: Meeting::Idle,
-            models: vec![
-                ModelItem { id: "large-v3-turbo-q5_0".into(), label: "Large v3 Turbo (q5)".into(), downloaded: true, downloading: false, download_mb: 547 },
-                ModelItem { id: "medium".into(), label: "Medium".into(), downloaded: false, downloading: false, download_mb: 1463 },
-            ],
-            model_choice: String::new(),
-            auto_model: "Large v3 Turbo (q5)".into(),
-            cloud: None,
+            speech: "Parakeet v3 · this computer".into(),
+            notes: "Qwen3.5 4B · this computer".into(),
             mics: Some(vec![
                 MicItem { id: "alsa.usb".into(), name: "USB mic".into(), bluetooth: false, default: true },
                 MicItem { id: "bluez.g733".into(), name: "G733".into(), bluetooth: true, default: false },
@@ -257,10 +218,22 @@ mod tests {
         let e = entries(&view());
         assert_eq!(
             labels(&e),
-            vec!["Open", "--", "Start dictation", "Start meeting recording", "--", "Microphone >", "Speech-to-text model >", "--", "Exit"]
+            vec![
+                "Open",
+                "--",
+                "Start dictation",
+                "Start meeting recording",
+                "--",
+                "Microphone >",
+                "--",
+                "Speech: Parakeet v3 · this computer (off)",
+                "Notes: Qwen3.5 4B · this computer (off)",
+                "Change in Settings…",
+                "--",
+                "Exit"
+            ]
         );
         assert_eq!(sub(&e, "Microphone"), vec!["[x] System default — USB mic", "[ ] USB mic", "[ ] G733 · Bluetooth"]);
-        assert_eq!(sub(&e, "Speech-to-text model"), vec!["[x] Automatic — Large v3 Turbo (q5)", "[ ] Large v3 Turbo (q5)", "[ ] Medium · 1.5 GB download"]);
     }
 
     #[test]
@@ -268,24 +241,19 @@ mod tests {
         let mut v = view();
         v.dictation = "listening".into();
         v.meeting = Meeting::Recording;
-        v.model_choice = "medium".into();
-        v.models[1].downloading = true;
         v.mic_choice = "bluez.old".into();
         let e = entries(&v);
         assert_eq!(labels(&e)[2..4], ["Stop dictation", "Stop meeting recording"]);
-        assert_eq!(sub(&e, "Speech-to-text model")[2], "[x] Medium · downloading…");
         assert_eq!(sub(&e, "Microphone").last().unwrap(), "[x] bluez.old · not connected");
         v.dictation = "transcribing".into();
         v.meeting = Meeting::Saving;
         assert_eq!(labels(&entries(&v))[2..4], ["Transcribing… (off)", "Saving the recording… (off)"]);
         v.mics = None;
         assert_eq!(sub(&entries(&v), "Microphone"), vec!["System default (choosing one needs PipeWire or PulseAudio) (off)"]);
-        // A provider transcribes: it is the checked entry; a model here takes over when chosen.
-        v.cloud = Some("gpt-4o-transcribe · OpenAI".into());
-        let m = sub(&entries(&v), "Speech-to-text model");
-        assert_eq!(m[..2], ["[x] Cloud — gpt-4o-transcribe · OpenAI", "[ ] Automatic — Large v3 Turbo (q5)"]);
-        assert!(m.iter().filter(|l| l.starts_with("[x]")).count() == 1, "{m:?}");
-        assert_eq!(action("speech:cloud"), None, "the checked entry does nothing");
+        // A provider transcribes, your server writes the notes: the menu says so.
+        v.speech = "gpt-4o-transcribe · OpenAI".into();
+        v.notes = "llama3 · your server".into();
+        assert_eq!(labels(&entries(&v))[7..9], ["Speech: gpt-4o-transcribe · OpenAI (off)", "Notes: llama3 · your server (off)"]);
     }
 
     #[test]
@@ -299,8 +267,9 @@ mod tests {
     fn clicks_are_read_back() {
         assert_eq!(action("dictate"), Some(Action::Dictate));
         assert_eq!(action("exit"), Some(Action::Exit));
-        assert_eq!(action("model:"), Some(Action::Model(String::new())));
-        assert_eq!(action("model:small"), Some(Action::Model("small".into())));
+        assert_eq!(action("models"), Some(Action::Models));
+        assert_eq!(action("model:small"), None, "the models are chosen in Settings");
+        assert_eq!(action("speech-model"), None, "the model lines do nothing");
         assert_eq!(action("mic:alsa_input.usb-x:y"), Some(Action::Mic("alsa_input.usb-x:y".into())));
         assert_eq!(action("other"), None);
     }
