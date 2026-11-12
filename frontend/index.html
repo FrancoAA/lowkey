@@ -375,26 +375,38 @@
                 <div class="model-bar" hidden><div id="model-bar-fill"></div></div>
               </div>
             </div>
-            <p class="field-desc group-desc">Runs on this computer and writes what you say as text. It downloads once.</p>
+            <p id="speech-desc" class="field-desc group-desc">Writes what you say as text, for dictation, meetings and files.</p>
             <div class="field field-stacked">
               <div class="field-text">
-                <label for="model-select">Model</label>
-                <p id="model-details" class="field-desc"></p>
+                <label for="speech-where">Where it runs</label>
+                <p id="speech-where-note" class="field-desc"></p>
               </div>
-              <select id="model-select" class="select select-wide"></select>
-            </div>
-            <div class="field">
-              <div class="field-text">
-                <label for="idle-select">Free memory when idle</label>
-                <p class="field-desc">Unload the model after a while without use. It loads again on the next use.</p>
-              </div>
-              <select id="idle-select" class="select">
-                <option value="0">Never</option>
-                <option value="5">After 5 minutes</option>
-                <option value="15" selected>After 15 minutes</option>
-                <option value="60">After 1 hour</option>
+              <select id="speech-where" class="select select-wide">
+                <option value="">On this computer: private, free, works offline</option>
               </select>
             </div>
+            <div id="speech-local" class="settings-group">
+              <div class="field field-stacked">
+                <div class="field-text">
+                  <label for="model-select">Model</label>
+                  <p id="model-details" class="field-desc"></p>
+                </div>
+                <select id="model-select" class="select select-wide"></select>
+              </div>
+              <div class="field">
+                <div class="field-text">
+                  <label for="idle-select">Free memory when idle</label>
+                  <p class="field-desc">Unload the model after a while without use. It loads again on the next use.</p>
+                </div>
+                <select id="idle-select" class="select">
+                  <option value="0">Never</option>
+                  <option value="5">After 5 minutes</option>
+                  <option value="15" selected>After 15 minutes</option>
+                  <option value="60">After 1 hour</option>
+                </select>
+              </div>
+            </div>
+            <div id="speech-cloud" class="ai-server" hidden></div>
           </div>
         </section>
 
@@ -538,24 +550,7 @@
                 <option value="server">My own server: Ollama, LM Studio, or an OpenAI-compatible API</option>
               </select>
             </div>
-            <div id="ai-server" class="ai-server" hidden>
-              <div class="field field-stacked">
-                <label for="ai-url" class="label">Server address</label>
-                <input id="ai-url" class="input" type="url" spellcheck="false" placeholder="http://localhost:11434/v1" />
-                <p id="ai-url-note" class="field-desc"></p>
-              </div>
-              <div class="field field-stacked">
-                <label for="ai-model" class="label">Model name</label>
-                <input id="ai-model" class="input" type="text" spellcheck="false" placeholder="e.g. qwen3.5:4b" />
-              </div>
-              <div class="field field-stacked">
-                <label for="ai-key" class="label">API key (only if the server asks for one)</label>
-                <div class="key-line">
-                  <input id="ai-key" class="input" type="password" autocomplete="off" spellcheck="false" />
-                  <button id="ai-key-clear" type="button" class="btn btn-outline btn-sm" hidden>Remove the key</button>
-                </div>
-              </div>
-            </div>
+            <div id="ai-server" class="ai-server" hidden></div>
             <!-- The instructions for the notes: the app's, or the user's own (Restore brings the app's back). -->
             <div class="field field-stacked">
               <div class="field-text">

@@ -191,10 +191,13 @@ models wrote English notes for a Spanish meeting (bench/summary/results.md).
   (`gemma-4-e4b`, 5.0 GB), each pinned to a Hugging Face commit and its SHA-256, with the
   note of its test in the menu. A model downloads the first time it writes notes; the runner
   restarts with the new model when the choice changes.
-- **Own server**: any OpenAI-compatible API (`ai_url`, `ai_model`, `ai_key`). Ollama:
-  `http://localhost:11434/v1`, LM Studio: `http://localhost:1234/v1`. Settings warns when the
-  address is not on this computer (the address is parsed as the HTTP client parses it). The key
+- **Own server**: any OpenAI-compatible API (`ai_provider = "custom"`, `ai_url`, `ai_model`; its
+  key in `api_keys.custom`). Ollama: `http://localhost:11434/v1`, LM Studio:
+  `http://localhost:1234/v1`. Settings warns when the address is not on this computer. The key
   stays in config.toml (written 0600 from its first byte) and never goes to the page.
+- **A provider in the cloud**: OpenAI, Anthropic, OpenRouter, Vercel AI Gateway, Groq, Gemini or
+  Mistral (`ai_provider`; its key in `api_keys`). The transcript goes there; Settings says so.
+  Up to 32,000 tokens per answer (a reasoning model's thinking counts too). See [providers.md](providers.md).
 - The text streams into the meeting while it is written. **Cancel** works at every step: the
   download (the partial file stays and resumes), the start, the model's reading, the writing.
   One job at a time; deleting the meeting cancels its job. Notes cut at the length limit say so.
@@ -210,7 +213,7 @@ models wrote English notes for a Spanish meeting (bench/summary/results.md).
 ## Ask about this meeting
 
 `llm::chat`, the `meeting_chat` command. The chat on the right of a saved meeting sends a
-question to the same engine as the AI notes (built in or your own server). The model reads:
+question to the same engine as the AI notes (built in, your own server, or a provider). The model reads:
 
 1. instructions (only what the meeting says; say so when the answer is not in it; the
    transcript wins over the AI notes; answer in the language of the question; give times like

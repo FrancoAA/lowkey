@@ -4,7 +4,9 @@
 
 Local speech to text as a desktop app. Drop an audio or video file and get the text, hold
 a key and talk into any app, or record a meeting as text next to your notes. Everything runs on your computer with open-source software and
-open model weights. No account, no API key, no cloud.
+open model weights. No account, no API key, no cloud, unless you choose one: a provider such as
+OpenAI, Anthropic, Groq or Deepgram can transcribe or write the notes in its place
+([AI providers](#ai-providers-optional)).
 
 It is one native program (Rust + Tauri v2) with whisper.cpp inside: on the GPU through Vulkan
 (Linux, Windows) or Metal (macOS), else on the CPU.
@@ -74,9 +76,9 @@ the CPU. Windows must have the Visual C++ runtime (`MSVCP140.dll`). The installe
 - **The window** has sections on the left: **Transcribe** (files, dictation in the window, the
   result; it opens there), **Meetings** (below), **History**, and the settings, sorted by task —
   General (start at login, appearance), Speech (microphone, language, vocabulary, the speech
-  model and free memory when idle), Dictation (the dictation key, the paste key, live preview),
+  model and free memory when idle, or a provider in the cloud), Dictation (the dictation key, the paste key, live preview),
   Meetings (the meeting key, call detection, screen video, who is speaking, the notes model and
-  automatic notes), Connections (note apps, AI agents), About (also a list of the keys).
+  automatic notes; a provider in the cloud for the notes), Connections (note apps, AI agents), About (also a list of the keys).
   Each model shows its status next to its setting.
   <kbd>Ctrl</kbd>+<kbd>,</kbd> jumps to the settings, <kbd>Esc</kbd> back to Transcribe.
 - Files given on the command line open in the app. **Closing the window keeps the app
@@ -255,7 +257,9 @@ Record a call or a talk, as text next to your notes (Linux for now). No bot join
   time; ~25 s for 8 minutes of meeting on the Radeon 780M, ~1 min on a CPU). Settings → Meetings →
   Notes also offers Qwen3.5 2B (1.3 GB, faster, less exact) and Gemma 4 E4B (5 GB). Or your own
   server in Settings → Meetings → Notes (Ollama, LM Studio, any OpenAI-compatible API; a warning shows
-  when it is not on this computer). They are written by themselves when a meeting stops (the
+  when it is not on this computer), or a provider in the cloud: OpenAI, Anthropic, OpenRouter,
+  Vercel AI Gateway, Groq, Gemini or Mistral ([AI providers](#ai-providers-optional)). They are
+  written by themselves when a meeting stops (the
   first time, after the model's download), or with **Write notes** when a meeting has none.
   **Regenerate** writes them again (it asks first; the new notes replace the old ones only when
   they are complete, so a failed or cancelled try keeps them). They are a draft, and
@@ -360,6 +364,23 @@ lowkey_id: m-1793800000000
 Then the parts you chose: AI notes, your notes, the transcript. A note you changed in the other
 app is never overwritten: the app keeps a hash of what it wrote, and says so instead.
 
+## AI providers (optional)
+
+Settings → Speech → **Where it runs**: on this computer (the default), or a provider that
+transcribes: **OpenAI**, **OpenRouter**, **Groq**, **Mistral**, **Deepgram**, **ElevenLabs**, or your own
+OpenAI-compatible server (Speaches, LocalAI…). Settings → Meetings → Notes → **Notes model**: the
+built-in model, your own server, or **OpenAI**, **Anthropic**, **OpenRouter**, **Vercel AI
+Gateway**, **Groq**, **Google Gemini** or **Mistral** for the notes and the chat.
+
+- Type the provider's API key once; Speech and Notes share it. It stays in config.toml (0600) and
+  never goes to the page. With the key saved, Settings checks it and lists the provider's models.
+- Your audio (Speech) or the transcript (Notes) then goes to that provider: Settings says so in
+  orange. Silence is never sent (Silero VAD checks first). The live preview still runs here.
+- Long files go in 10-minute pieces; a busy server or the network is tried again 3 times.
+- AI agents (`lowkey --mcp`) and `lowkey --transcribe` always use the model on this computer.
+
+Details, the defaults and how the times come back: [docs/providers.md](docs/providers.md).
+
 ## AI agents (MCP)
 
 Claude Code, Codex, Gemini CLI, Cursor and other agents can use Lowkey over the
@@ -411,9 +432,14 @@ call_detection = true           # offer to record when a call app uses the micro
 
 [call_policies]                 # per call: ask (default) | always | never
 zoom = "always"
-ai_engine = "builtin"           # AI notes: builtin | server
+ai_engine = "builtin"           # AI notes: builtin | server (a provider: ai_provider)
 ai_builtin_model = "qwen3.5-4b" # qwen3.5-4b (recommended) | qwen3.5-2b | gemma-4-e4b
-ai_url = "http://localhost:11434/v1"   # own server (OpenAI-compatible); ai_model, ai_key too
+ai_provider = "custom"          # custom (your own server) | openai | anthropic | openrouter | vercel | groq | gemini | mistral
+ai_url = "http://localhost:11434/v1"   # your own notes server (OpenAI-compatible)
+ai_model = ""                   # "" = the provider's default model
+speech_provider = ""            # "" = the model here | openai | groq | mistral | deepgram | elevenlabs | custom
+speech_model = ""               # "" = the provider's default model
+speech_url = "http://localhost:8000/v1"   # your own speech server (OpenAI-compatible)
 ai_auto = true                  # write AI notes when a meeting stops
 ai_prompt = ""                  # the instructions for the notes ("" = the app's; Settings → Meetings → Notes)
 export_dir = ""                  # Note apps: the folder for each meeting's Markdown note ("" = off)
@@ -426,6 +452,9 @@ live_preview = true             # words in the overlay while you talk
 overlay_collapsed = false       # the strip as a small pill (its corner button; a click opens it)
 # overlay_at = [0.5, 0.9]       # where you left the strip (fractions of the screen's free room)
 preview_engine = "auto"         # auto (Parakeet when on disk, else Whistle) | whistle | parakeet
+
+[api_keys]                      # one key per provider (docs/providers.md); never sent to the page
+openai = "sk-…"
 ```
 
 A model that the app no longer has (the faster-whisper `fw:` models) falls back to the
@@ -460,7 +489,8 @@ segmentation 3.0 and NVIDIA TitaNet-S, run by sherpa-onnx on the CPU.
 `desktop/src-tauri/src/` (Rust):
 
 - `engine.rs` loads one model at a time (download with progress, idle unload) and runs
-  whisper.cpp with VAD (threshold 0.3) and beam size 5. `jobs.rs` is a queue with one worker;
+  whisper.cpp with VAD (threshold 0.3) and beam size 5. A `cloud:<provider>/<model>` id goes to
+  `cloud_stt.rs` instead; `providers.rs` lists the providers, their APIs and default models. `jobs.rs` is a queue with one worker;
   dictation goes first.
 - `mic.rs` records the microphone (cpal); `dictation.rs` is the global key's state machine;
   `output.rs` types and copies the text; `hyprland.rs` adds the key and the overlay rule.

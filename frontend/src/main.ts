@@ -7,6 +7,7 @@ import { initHistory } from "./history";
 import { initMeetings } from "./meetings";
 import { initMicrophone } from "./microphone";
 import { initVocabulary } from "./vocabulary";
+import { CUSTOM, hasKey, initProviderForm, provider, type ProviderForm } from "./providers";
 import { confirmDialog } from "./confirm";
 import { Waveform } from "./waveform";
 
@@ -51,11 +52,11 @@ const meetingKeyNote = $<HTMLElement>("meeting-key-note");
 const aiEngine = $<HTMLSelectElement>("ai-engine");
 const aiEngineNote = $<HTMLElement>("ai-engine-note");
 const aiServer = $<HTMLDivElement>("ai-server");
-const aiUrl = $<HTMLInputElement>("ai-url");
-const aiUrlNote = $<HTMLElement>("ai-url-note");
-const aiModel = $<HTMLInputElement>("ai-model");
-const aiKey = $<HTMLInputElement>("ai-key");
-const aiKeyClear = $<HTMLButtonElement>("ai-key-clear");
+const speechWhere = $<HTMLSelectElement>("speech-where");
+const speechWhereNote = $<HTMLElement>("speech-where-note");
+const speechDesc = $<HTMLElement>("speech-desc");
+const speechLocal = $<HTMLDivElement>("speech-local");
+const speechCloud = $<HTMLDivElement>("speech-cloud");
 const aiAuto = $<HTMLInputElement>("ai-auto");
 const aiPrompt = $<HTMLTextAreaElement>("ai-prompt");
 const aiPromptState = $<HTMLElement>("ai-prompt-state");
@@ -146,8 +147,17 @@ function modelPhrase(m: ModelInfo): string {
   }
 }
 
+/** A provider in the cloud (or your own server) transcribes: Settings → Speech → Where it runs. */
+function speechInCloud(): boolean {
+  return !!status?.speech?.provider;
+}
+
 // ------------------------------------------------------------------ status
 function renderStatus(): void {
+  if (speechInCloud()) {
+    renderCloudSpeech();
+    return;
+  }
   const m = selectedModel();
   if (!m) return;
   modelStatus.dataset.state = m.state === "downloaded" ? "ready" : m.state;
@@ -223,7 +233,7 @@ async function refreshStatus(): Promise<void> {
   }
   const m = selectedModel();
   // Poll fast only while something is changing; a model that is merely not downloaded yet is idle.
-  const settling = !m || ["downloading", "loading"].includes(m.state) || (m.name === status?.default_model && m.state === "missing");
+  const settling = !speechInCloud() && (!m || ["downloading", "loading"].includes(m.state) || (m.name === status?.default_model && m.state === "missing"));
   clearTimeout(statusTimer);
   statusTimer = window.setTimeout(refreshStatus, settling ? 1000 : 10000);
 }
@@ -300,7 +310,9 @@ function applyStatus(next: Status): void {
   }
   if (!modelSelect.options.length) {
     for (const m of status.models) modelSelect.add(new Option(m.label, m.name));
-    modelSelect.value = status.default_model;
+    // With a provider in the cloud, the model here that comes back when it is chosen again.
+    const local = status.models.some((m) => m.name === status!.default_model);
+    modelSelect.value = local ? status.default_model : status.options?.model || status.auto_model || "";
     if (status.options) idleSelect.value = String(status.options.idle_unload_minutes);
     if (status.options?.live_preview !== undefined) previewCheck.checked = status.options.live_preview;
     if (status.options?.preview_engine) previewEngine.value = status.options.preview_engine;
@@ -315,9 +327,10 @@ function applyStatus(next: Status): void {
     const pk = status.models.some((m) => m.name === "parakeet-v3");
     previewEngine.querySelector<HTMLOptionElement>('option[value="parakeet"]')!.hidden = !pk;
     savedMic = status.options?.microphone ?? "";
-  } else if (document.activeElement !== modelSelect && modelSelect.value !== status.default_model) {
+  } else if (document.activeElement !== modelSelect && modelSelect.value !== status.default_model && status.models.some((m) => m.name === status!.default_model)) {
     modelSelect.value = status.default_model; // chosen in the tray menu
   }
+  renderSpeechWhere();
   // Appearance: the saved choice (also from config.toml edited by hand) wins over the boot copy.
   const theme = status.options?.theme ?? "system";
   if (document.activeElement !== themeSelect && themeSelect.value !== theme) {
@@ -448,7 +461,8 @@ async function transcribe(file: FileRef, title: string): Promise<void> {
   beginResult(file.name, title);
   setProgress(null, "Starting…");
   try {
-    follow(await backend.start(file, languageSelect.value, modelSelect.value));
+    // "": the app's choice (a provider in the cloud, when one transcribes).
+    follow(await backend.start(file, languageSelect.value, speechInCloud() ? "" : modelSelect.value));
   } catch (err) {
     busy = false;
     progress.hidden = true;
@@ -518,6 +532,64 @@ modelSelect.addEventListener("change", () => {
   renderStatus();
 });
 idleSelect.addEventListener("change", () => void backend.saveOptions({ idle_unload_minutes: Number(idleSelect.value) }));
+
+// ------------------------------------------------------------------ Speech: where it runs
+let speechForm: ProviderForm | null = null;
+let aiForm: ProviderForm | null = null;
+function saveProvider(o: Parameters<Backend["saveOptions"]>[0]): void {
+  void backend.saveOptions(o).then(refreshStatus, (err) => showError(String(err)));
+}
+
+/** The menu: this computer, the providers that transcribe, your own server. */
+function renderSpeechWhere(): void {
+  const list = status?.providers?.list.filter((p) => p.speech) ?? [];
+  if (!list.length || !status?.speech) return;
+  if (!speechWhere.dataset.filled) {
+    const cloud = document.createElement("optgroup");
+    cloud.label = "In the cloud: your audio is sent";
+    for (const p of list.filter((p) => p.id !== CUSTOM)) cloud.append(new Option(p.label, p.id));
+    const own = document.createElement("optgroup");
+    own.label = "Your own server";
+    own.append(new Option("An OpenAI-compatible speech server (Speaches, LocalAI…)", CUSTOM));
+    speechWhere.append(cloud, own);
+    speechWhere.dataset.filled = "1";
+  }
+  speechForm ??= initProviderForm(backend, "speech", speechCloud, saveProvider);
+  if (document.activeElement !== speechWhere) speechWhere.value = status.speech.provider;
+  const p = provider(status, speechWhere.value) ?? null;
+  speechLocal.hidden = !!p;
+  speechForm.render(status, p);
+  speechDesc.textContent = p
+    ? "Writes what you say as text, for dictation, meetings and files, through the service below."
+    : "Runs on this computer and writes what you say as text, for dictation, meetings and files. It downloads once.";
+  speechWhereNote.textContent = p
+    ? p.id === CUSTOM
+      ? "Your server gets the audio of each dictation, meeting piece and file. Silence is never sent."
+      : `Fast and accurate, with no download and no load on this computer. It needs the internet and costs per minute of audio (${p.label}'s prices). Silence is never sent.`
+    : "";
+}
+
+/** Settings → Speech's status when a provider transcribes: its model, or what is missing. */
+function renderCloudSpeech(): void {
+  const p = provider(status, status?.speech?.provider ?? "");
+  languageSelect.disabled = false;
+  languageSelect.title = "";
+  modelBar.hidden = true;
+  if (!p) return;
+  if (p.id !== CUSTOM && !hasKey(status, p.id, "speech")) {
+    modelStatus.dataset.state = "error";
+    modelStatusText.textContent = `Add the ${p.label} API key`;
+    return;
+  }
+  modelStatus.dataset.state = "ready";
+  modelStatusText.textContent = `Ready · ${status?.speech?.label ?? p.label}`;
+}
+
+speechWhere.addEventListener("change", () => {
+  // Another service: its default model, until one is typed.
+  saveProvider({ speech_provider: speechWhere.value, speech_model: "" });
+  renderSpeechWhere();
+});
 // ------------------------------------------------------------------ dictation key
 /** "SUPER + CTRL + X" → "Super + Ctrl + X". */
 function prettyKey(key: string): string {
@@ -950,40 +1022,44 @@ let aiFilled = false;
 function renderAi(): void {
   const ai = status?.ai;
   if (!ai) return;
-  // The menu: every built-in model (with its size, or "downloaded"), then the own server.
+  // The menu: every built-in model (with its size, or "downloaded"), your own server, then the
+  // providers in the cloud.
   const b = ai.builtin;
   const gb = (mb: number) => `${(mb / 1000).toFixed(1)} GB`;
-  const options = b.models.map((m) => new Option(`${m.label}${m.id === b.models[0].id ? " (recommended)" : ""} — ${m.downloaded ? "downloaded" : `${gb(m.download_mb)} download`}`, `builtin:${m.id}`));
-  options.push(new Option("My own server: Ollama, LM Studio, or an OpenAI-compatible API", "server"));
-  const chosen = ai.engine === "server" ? "server" : `builtin:${ai.builtin_model}`;
-  const keep = aiFilled ? aiEngine.value : chosen;
+  const here = document.createElement("optgroup");
+  here.label = "On this computer";
+  here.append(...b.models.map((m) => new Option(`${m.label}${m.id === b.models[0].id ? " (recommended)" : ""} — ${m.downloaded ? "downloaded" : `${gb(m.download_mb)} download`}`, `builtin:${m.id}`)));
+  const own = document.createElement("optgroup");
+  own.label = "Your own server";
+  own.append(new Option("Ollama, LM Studio, or another OpenAI-compatible API", `server:${CUSTOM}`));
+  const cloud = document.createElement("optgroup");
+  cloud.label = "In the cloud: the transcript is sent";
+  cloud.append(...(status?.providers?.list ?? []).filter((p) => p.chat && p.id !== CUSTOM).map((p) => new Option(p.label, `server:${p.id}`)));
+  const chosen = ai.engine === "server" ? `server:${ai.provider}` : `builtin:${ai.builtin_model}`;
+  const keep = aiFilled && document.activeElement === aiEngine ? aiEngine.value : chosen;
   // Only when the menu's content changed: never under an open menu for nothing.
-  const signature = options.map((o) => o.value + o.text).join("|");
+  const signature = [here, own, cloud].flatMap((g) => [...g.querySelectorAll("option")].map((o) => o.value + o.text)).join("|");
   if (aiEngine.dataset.signature !== signature) {
-    aiEngine.replaceChildren(...options);
+    aiEngine.replaceChildren(here, own, cloud);
     aiEngine.dataset.signature = signature;
   }
   aiEngine.value = keep;
-  if (!aiFilled) {
-    aiUrl.value = ai.url;
-    aiModel.value = ai.model;
-    aiFilled = true;
-  }
+  aiFilled = true;
   aiAuto.checked = ai.auto;
   if (!aiPromptEdited) aiPrompt.value = ai.prompt || ai.default_prompt;
   renderAiPrompt();
-  aiServer.hidden = aiEngine.value !== "server";
+  const server = aiEngine.value.startsWith("server:") ? (provider(status, aiEngine.value.slice("server:".length)) ?? null) : null;
+  aiForm ??= initProviderForm(backend, "chat", aiServer, saveAi);
+  aiForm.render(status!, server);
   const pick = b.models.find((m) => `builtin:${m.id}` === aiEngine.value);
-  aiEngineNote.textContent =
-    aiEngine.value === "server"
+  aiEngineNote.textContent = server
+    ? server.id === CUSTOM
       ? "The app sends the transcript to this server, and shows its answer."
-      : !b.supported
-        ? "Not available for this system: use your own server."
-        : `${pick?.note ?? ""} ${pick?.downloaded ? "On this computer." : `Downloads once (${gb(b.download_mb)}) the first time notes are written.`} Apache-2.0.`;
+      : `${server.label} writes the notes and answers your questions. Large models in the cloud write better notes of long meetings than a small model here; each meeting costs a few cents.`
+    : !b.supported
+      ? "Not available for this system: use your own server or a service in the cloud."
+      : `${pick?.note ?? ""} ${pick?.downloaded ? "On this computer." : `Downloads once (${gb(b.download_mb)}) the first time notes are written.`} Apache-2.0.`;
   renderAiStatus();
-  aiKey.placeholder = ai.has_key ? "A key is saved (type to replace it)" : "None";
-  aiKeyClear.hidden = !ai.has_key;
-  renderAiUrlNote();
 }
 
 /** The AI job now running (its events), else null: notes, or an answer to a question. */
@@ -1005,6 +1081,12 @@ function renderAiStatus(): void {
     if (aiLive.state === "writing") return set("loading", aiLiveKind === "chat" ? "Answering a question…" : "Writing notes…");
     return set("loading", aiLive.detail);
   }
+  if (ai.engine === "server" && ai.provider !== CUSTOM) {
+    const p = provider(status, ai.provider);
+    if (!p) return set("error", "Unknown service");
+    if (!hasKey(status, p.id, "chat")) return set("error", `Add the ${p.label} API key`);
+    return set("ready", `Ready · ${ai.model || p.chat_model} on ${p.label}`);
+  }
   if (ai.engine === "server") {
     let host = "";
     try {
@@ -1015,26 +1097,9 @@ function renderAiStatus(): void {
     return set("ready", `Own server · ${ai.model ? `${ai.model} on ` : ""}${host}`);
   }
   const b = ai.builtin;
-  if (!b.supported) return set("error", "Not available on this system: use your own server");
+  if (!b.supported) return set("error", "Not available on this system: use your own server or a service in the cloud");
   if (b.downloaded) return set("ready", `Ready · ${b.model} on ${status?.gpu ? "GPU" : "CPU"}`);
   return set("missing", `${b.model} · downloads on first use (${(b.download_mb / 1000).toFixed(1)} GB)`);
-}
-
-function renderAiUrlNote(): void {
-  const url = aiUrl.value.trim();
-  let local = false;
-  try {
-    const host = new URL(url).hostname.replace(/^\[|\]$/g, "");
-    local = host === "localhost" || host.endsWith(".localhost") || host === "::1" || /^127\.\d+\.\d+\.\d+$/.test(host);
-  } catch {
-    aiUrlNote.textContent = "Ollama: http://localhost:11434/v1 · LM Studio: http://localhost:1234/v1";
-    aiUrlNote.dataset.kind = "";
-    return;
-  }
-  aiUrlNote.textContent = local
-    ? "On this computer: nothing leaves it."
-    : `Not on this computer: your notes and the transcript go to ${new URL(url).hostname}.`;
-  aiUrlNote.dataset.kind = local ? "" : "warn";
 }
 
 function saveAi(o: Parameters<Backend["saveOptions"]>[0]): void {
@@ -1042,19 +1107,16 @@ function saveAi(o: Parameters<Backend["saveOptions"]>[0]): void {
 }
 
 aiEngine.addEventListener("change", () => {
-  aiServer.hidden = aiEngine.value !== "server";
   const v = aiEngine.value;
-  saveAi(v.startsWith("builtin:") ? { ai_engine: "builtin", ai_builtin_model: v.slice("builtin:".length) } : { ai_engine: "server" });
+  if (v.startsWith("builtin:")) {
+    saveAi({ ai_engine: "builtin", ai_builtin_model: v.slice("builtin:".length) });
+  } else {
+    const id = v.slice("server:".length);
+    // Another service: its default model, until one is typed.
+    saveAi(id === status?.ai?.provider ? { ai_engine: "server" } : { ai_engine: "server", ai_provider: id, ai_model: "" });
+  }
+  renderAi();
 });
-aiUrl.addEventListener("input", renderAiUrlNote);
-aiUrl.addEventListener("change", () => saveAi({ ai_url: aiUrl.value }));
-aiModel.addEventListener("change", () => saveAi({ ai_model: aiModel.value }));
-aiKey.addEventListener("change", () => {
-  if (!aiKey.value) return;
-  saveAi({ ai_key: aiKey.value });
-  aiKey.value = ""; // never kept in the page
-});
-aiKeyClear.addEventListener("click", () => saveAi({ ai_key: "" }));
 aiAuto.addEventListener("change", () => saveAi({ ai_auto: aiAuto.checked }));
 
 // ------------------------------------------------------------------ the instructions for the notes

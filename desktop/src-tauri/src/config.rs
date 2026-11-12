@@ -92,14 +92,28 @@ pub struct Config {
     /// Per call ("zoom", "google-meet", "browser:firefox"): ask | always | never. Missing = ask.
     /// (A table: the toml writer puts it after the plain values.)
     pub call_policies: std::collections::BTreeMap<String, String>,
-    /// AI notes: "builtin" (Qwen3.5 4B, run by the app) or "server" (an OpenAI-compatible API).
+    /// AI notes: "builtin" (Qwen3.5 4B, run by the app) or "server" (a provider: `ai_provider`).
     pub ai_engine: String,
     /// The built-in model: an id from llm::MODELS ("qwen3.5-4b", "qwen3.5-2b", "gemma-4-e4b").
     pub ai_builtin_model: String,
-    /// The own server: base URL (".../v1"), model name, key ("" = none).
+    /// With "server": "custom" (your own server at `ai_url`) or a provider from providers::ALL
+    /// ("openai", "anthropic", "openrouter"…).
+    pub ai_provider: String,
+    /// Your own server's base URL (".../v1"), and the model name ("" = the provider's default).
     pub ai_url: String,
     pub ai_model: String,
+    /// Older versions kept your own server's key here: it moves to `api_keys.custom` on load.
+    #[serde(skip_serializing_if = "String::is_empty")]
     pub ai_key: String,
+    /// Speech to text: "" = the model on this computer (`model`); else a provider that
+    /// transcribes ("openai", "groq", "deepgram", "custom"…). The audio then goes there.
+    pub speech_provider: String,
+    /// Its model ("" = the provider's default), and your own speech server's base URL.
+    pub speech_model: String,
+    pub speech_url: String,
+    /// The providers' API keys, by provider id ("custom": your own notes server,
+    /// "custom-speech": your own speech server). Never sent to the page.
+    pub api_keys: std::collections::BTreeMap<String, String>,
     /// Write the AI notes when a meeting stops (the first time, the built-in model downloads).
     pub ai_auto: bool,
     /// The instructions for the notes ("" = the built-in llm::NOTES_PROMPT). {language} becomes
@@ -140,9 +154,14 @@ impl Default for Config {
             call_policies: Default::default(),
             ai_engine: "builtin".into(),
             ai_builtin_model: crate::llm::DEFAULT_MODEL.into(),
+            ai_provider: crate::providers::CUSTOM.into(),
             ai_url: "http://localhost:11434/v1".into(),
             ai_model: String::new(),
             ai_key: String::new(),
+            speech_provider: String::new(),
+            speech_model: String::new(),
+            speech_url: "http://localhost:8000/v1".into(),
+            api_keys: Default::default(),
             ai_auto: true,
             ai_prompt: String::new(),
             mcp_recording: false,
@@ -178,9 +197,15 @@ impl Config {
             }),
             Err(_) => Self::default(),
         };
+        // Your own server's key from an older version: with the other keys now.
+        let old_key = std::mem::take(&mut cfg.ai_key);
+        if !old_key.is_empty() {
+            cfg.api_keys.entry(crate::providers::CUSTOM.into()).or_insert(old_key);
+        }
+        cfg.api_keys.retain(|_, k| !k.is_empty());
         // A key typed into an older file (0644): readable by you only.
         #[cfg(unix)]
-        if !cfg.ai_key.is_empty() {
+        if !cfg.api_keys.is_empty() {
             use std::os::unix::fs::PermissionsExt;
             let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
         }
@@ -376,6 +401,17 @@ mod tests {
         assert!(text.contains("[[vocabulary]]") && text.contains("term = \"Lisandro\""), "{text}");
         assert!(text.contains("[call_policies]") && text.contains("zoom = \"always\""), "{text}");
         assert_eq!(Config::load_from(&path), v);
+        // Keys: a table of their own; an older file's ai_key moves there.
+        let mut k = v.clone();
+        k.api_keys.insert("openai".into(), "sk-1".into());
+        k.speech_provider = "openai".into();
+        k.save().unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("[api_keys]") && text.contains("openai = \"sk-1\"") && !text.contains("ai_key"), "{text}");
+        assert_eq!(Config::load_from(&path), k);
+        std::fs::write(&path, "ai_engine = \"server\"\nai_key = \"old\"\n").unwrap();
+        let old = Config::load_from(&path);
+        assert_eq!((old.ai_key.as_str(), old.api_keys.get("custom").map(String::as_str), old.ai_provider.as_str()), ("", Some("old"), "custom"));
     }
 
     #[test]

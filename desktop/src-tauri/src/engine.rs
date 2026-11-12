@@ -3,6 +3,9 @@
 //! whisper.cpp runs inside this process: on the GPU through Vulkan/Metal when there is one,
 //! else on the CPU. Parakeet (NVIDIA, through sherpa-onnx/onnxruntime) runs on the CPU; Silero
 //! VAD only decides whether there is speech, and audio over 60 s is cut at its quietest moment.
+//!
+//! A provider in the cloud (Settings → Speech; src/cloud_stt.rs) takes the place of the model:
+//! its "model" id is `cloud:<provider>/<model>`, and nothing is loaded for it.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -84,6 +87,8 @@ pub struct Engines {
     /// One transcription runs at a time (the job queue and the meeting share the model; a GPU
     /// backend must not run two at once).
     run_lock: Mutex<()>,
+    /// The providers' keys and your own speech server's address, for `cloud:` models.
+    cloud: Mutex<(std::collections::BTreeMap<String, String>, String)>,
     on_change: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
 }
 
@@ -129,6 +134,7 @@ impl Engines {
             vocabulary: Mutex::new(Arc::default()),
             whisper_vocab: Mutex::new(None),
             run_lock: Mutex::new(()),
+            cloud: Mutex::default(),
             on_change: Mutex::new(None),
         });
         let weak = Arc::downgrade(&me);
@@ -159,6 +165,11 @@ impl Engines {
         *self.vocabulary.lock() = Arc::new(crate::vocabulary::Vocabulary::new(terms));
     }
 
+    /// Settings: the providers' keys and your own speech server's address (or the app started).
+    pub fn set_cloud(&self, keys: &std::collections::BTreeMap<String, String>, own_url: &str) {
+        *self.cloud.lock() = (keys.clone(), own_url.to_string());
+    }
+
     pub fn on_change(&self, f: Arc<dyn Fn() + Send + Sync>) {
         *self.on_change.lock() = Some(f);
     }
@@ -179,6 +190,9 @@ impl Engines {
     }
 
     pub fn state(&self, id: &str) -> ModelState {
+        if is_cloud(id) {
+            return ModelState::new("ready"); // nothing to download or load
+        }
         self.states.lock().get(id).cloned().unwrap_or_else(|| ModelState::new("missing"))
     }
 
@@ -195,6 +209,10 @@ impl Engines {
 
     /// Download (if needed) and load `id`. Blocking.
     pub fn prepare(&self, id: &str) -> anyhow::Result<()> {
+        if is_cloud(id) {
+            vad_model(); // the only file a provider needs here
+            return Ok(());
+        }
         let spec = models::spec(id).ok_or_else(|| anyhow::anyhow!("Unknown model {id:?}"))?;
         *self.last_used.lock() = Instant::now();
         self.load(spec).map(|_| ()).inspect_err(|e| {
@@ -290,6 +308,9 @@ impl Engines {
     }
 
     pub fn transcribe(&self, id: &str, input: Input, sink: Sink) -> anyhow::Result<Output> {
+        if is_cloud(id) {
+            return self.transcribe_cloud(id, input, sink);
+        }
         let spec = models::spec(id).ok_or_else(|| anyhow::anyhow!("Unknown model {id:?}"))?;
         *self.last_used.lock() = Instant::now();
         self.busy.fetch_add(1, Ordering::SeqCst);
@@ -314,21 +335,7 @@ impl Engines {
         };
         let _one_at_a_time = self.run_lock.lock();
         let vocab = self.vocabulary.lock().clone();
-        // Segments go to the sink as they come: fixed there too, so live text matches the result.
-        let fixed_sink: Sink = if vocab.is_empty() {
-            sink
-        } else {
-            let (v, s) = (vocab.clone(), sink);
-            Arc::new(move |ev| {
-                s(match ev {
-                    EngineEvent::Segment(mut seg) => {
-                        seg.text = v.apply(&seg.text);
-                        EngineEvent::Segment(seg)
-                    }
-                    other => other,
-                })
-            })
-        };
+        let fixed_sink = vocabulary_sink(&vocab, sink);
         let mut out = match model {
             Loaded::Whisper(ctx) => {
                 let prompt: Vec<std::ffi::c_int> = match vocab.whisper_prompt() {
@@ -347,6 +354,61 @@ impl Engines {
         Ok(out)
     }
 
+    /// Through the provider chosen in Settings → Speech. No lock: requests to a provider can
+    /// run side by side (a dictation during a meeting), and nothing here uses the GPU.
+    fn transcribe_cloud(&self, id: &str, input: Input, sink: Sink) -> anyhow::Result<Output> {
+        let access = {
+            let c = self.cloud.lock();
+            crate::providers::speech_access(id, &c.0, &c.1)?
+        };
+        let pcm = match input.pcm {
+            Some(p) => p,
+            None => audio::decode_file(input.path.as_deref().ok_or_else(|| anyhow::anyhow!("nothing to transcribe"))?).map_err(|e| anyhow::anyhow!("{e}"))?,
+        };
+        let vocab = self.vocabulary.lock().clone();
+        let (prompt, terms) = (vocab.whisper_prompt(), vocab.names());
+        let hints = crate::cloud_stt::Hints { language: input.language.as_deref(), prompt: prompt.as_deref(), terms: &terms };
+        let vad = vad_model();
+        let mut out = crate::cloud_stt::transcribe(&access, &pcm, &hints, vad.as_deref(), &vocabulary_sink(&vocab, sink))?;
+        for seg in &mut out.segments {
+            seg.text = vocab.apply(&seg.text);
+        }
+        Ok(out)
+    }
+}
+
+/// A provider in the cloud (`cloud:<provider>/<model>`), not a model on this computer.
+pub fn is_cloud(id: &str) -> bool {
+    id.starts_with(crate::providers::CLOUD_PREFIX)
+}
+
+/// Silero VAD's file, downloaded once (900 KB); None when it cannot be had (then all audio is sent).
+fn vad_model() -> Option<PathBuf> {
+    let vad = models::local_path(models::VAD_FILE);
+    if !vad.exists() {
+        if let Err(e) = models::download(models::VAD_URL, &vad, |_, _| {}) {
+            eprintln!("  VAD model: {e:#}");
+            return None;
+        }
+    }
+    Some(vad)
+}
+
+/// Segments go to the sink as they come: fixed there too, so live text matches the result.
+fn vocabulary_sink(vocab: &Arc<crate::vocabulary::Vocabulary>, sink: Sink) -> Sink {
+    if vocab.is_empty() {
+        return sink;
+    }
+    let (v, s) = (vocab.clone(), sink);
+    Arc::new(move |ev| {
+        s(match ev {
+            EngineEvent::Segment(mut seg) => {
+                seg.text = v.apply(&seg.text);
+                EngineEvent::Segment(seg)
+            }
+            other => other,
+        })
+    })
 }
 
 /// 0 minutes = keep the model loaded.
@@ -441,7 +503,7 @@ fn speech_pieces(vad_model: &Path, pcm: &[f32]) -> Vec<(usize, usize)> {
 
 /// Join neighbouring ranges while the result fits in `max`; cut longer ones at the quietest
 /// 100 ms in their last quarter (a pause, not the middle of a word, when there is one).
-fn join_and_split(ranges: &[(usize, usize)], pcm: &[f32], max: usize) -> Vec<(usize, usize)> {
+pub(crate) fn join_and_split(ranges: &[(usize, usize)], pcm: &[f32], max: usize) -> Vec<(usize, usize)> {
     let frame = audio::RATE as usize / 10;
     if max <= 2 * frame {
         return ranges.to_vec(); // no room to look for a pause: keep the pieces as they are
@@ -540,7 +602,7 @@ fn vad_params() -> WhisperVadParams {
 
 /// Does the audio contain speech at all? whisper.cpp's built-in VAD falls back to the whole
 /// audio when it finds none, and Whisper then invents text ("Thank you.") on silence.
-fn has_speech(vad_model: &Path, pcm: &[f32]) -> bool {
+pub(crate) fn has_speech(vad_model: &Path, pcm: &[f32]) -> bool {
     let mut cp = WhisperVadContextParams::default();
     cp.set_n_threads(2);
     cp.set_use_gpu(false);
