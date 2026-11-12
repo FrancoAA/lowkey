@@ -47,10 +47,10 @@ export interface Status {
   test?: boolean;
   /** Settings → Connections → AI agents: agents may start and stop recordings; the program they start. */
   agents?: { recording: boolean; program: string };
-  /** Settings → Meetings → Tell the other voices apart: on, this build can, the models are on
+  /** Settings → Meeting settings → Tell the other voices apart: on, this build can, the models are on
    * disk, their download (state "" | downloading | error), and the meetings being worked on. */
   voices?: { on: boolean; supported: boolean; present: boolean; download: { state: string; progress: number; error: string }; working: string[] };
-  /** Settings → Meetings → Screen video: this build can, a screen is remembered, and what this
+  /** Settings → Meeting settings → Screen video: this build can, a screen is remembered, and what this
    * computer has (state checking | ready | missing; the encoder; what to install). */
   screen?: { supported: boolean; chosen: boolean; check: { state: "checking" | "ready" | "missing"; encoder: string; problem: string } };
   /** Settings → Connections → Note apps: the folder ("" = off), by itself, the parts, the Obsidian vault it is in. */
@@ -58,7 +58,7 @@ export interface Status {
   /** The AI providers (desktop/src-tauri/src/providers.rs), and the key slots that have a key
    * ("custom-speech": your own speech server). The keys never come to the page. */
   providers?: { list: Provider[]; keys: string[] };
-  /** Settings → Speech: provider "" = the model on this computer; `label`: the provider's model
+  /** Settings → Models → Speech to text: provider "" = the model on this computer; `label`: the provider's model
    * that transcribes now ("gpt-4o-transcribe · OpenAI"), else null. */
   speech?: { provider: string; model: string; url: string; label: string | null };
   /** AI notes settings (the API key itself never comes to the page). */
@@ -179,6 +179,9 @@ export interface Meeting {
   ai_notes?: string;
   ai_model?: string;
   ai_at?: number;
+  /** The last time the notes could not be written: why, and when (unix seconds). Cleared when they are written. */
+  ai_error?: string;
+  ai_error_at?: number;
   /** Questions about the meeting and their answers, oldest first. */
   chat?: ChatMessage[];
   /** Settings → Connections → Note apps: the file it was saved as in the chosen folder ("" = not yet). */

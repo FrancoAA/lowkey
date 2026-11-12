@@ -286,7 +286,7 @@ impl Access {
         let url = if p.id == CUSTOM { own_url.trim() } else { p.url }.trim_end_matches('/').to_string();
         anyhow::ensure!(!url.is_empty(), "Your own server has no address yet: add it in Settings.");
         let key = keys.get(&key_slot(p.id, for_speech)).cloned().unwrap_or_default();
-        let place = if for_speech { "Settings → Speech" } else { "Settings → Meetings → Notes" };
+        let place = if for_speech { "Settings → Models → Speech to text" } else { "Settings → Models → Meeting notes" };
         anyhow::ensure!(p.id == CUSTOM || !key.is_empty(), "There is no {} API key yet: add it in {place}.", p.label);
         let default = if for_speech { p.speech_model } else { p.chat_model };
         let model = if model.trim().is_empty() { default } else { model.trim() }.to_string();
@@ -294,7 +294,7 @@ impl Access {
     }
 }
 
-/// The notes provider chosen in Settings → Meetings → Notes (`ai_engine = "server"`).
+/// The notes provider chosen in Settings → Models → Meeting notes (`ai_engine = "server"`).
 pub fn chat_access(cfg: &Config) -> anyhow::Result<Access> {
     let p = chat(&cfg.ai_provider).unwrap_or_else(|| get(CUSTOM).expect("custom"));
     Access::resolve(p, &cfg.ai_url, &cfg.api_keys, false, &cfg.ai_model)
@@ -501,7 +501,7 @@ mod tests {
 
         let mut keys = BTreeMap::new();
         let e = speech_access("cloud:groq/whisper-large-v3", &keys, "").unwrap_err().to_string();
-        assert!(e.contains("Groq API key") && e.contains("Settings → Speech"), "{e}");
+        assert!(e.contains("Groq API key") && e.contains("Settings → Models → Speech to text"), "{e}");
         keys.insert("groq".to_string(), "gsk-1".to_string());
         let a = speech_access("cloud:groq/whisper-large-v3", &keys, "").unwrap();
         assert_eq!((a.url.as_str(), a.key.as_str(), a.model.as_str()), ("https://api.groq.com/openai/v1", "gsk-1", "whisper-large-v3"));

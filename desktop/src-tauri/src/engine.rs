@@ -4,7 +4,7 @@
 //! else on the CPU. Parakeet (NVIDIA, through sherpa-onnx/onnxruntime) runs on the CPU; Silero
 //! VAD only decides whether there is speech, and audio over 60 s is cut at its quietest moment.
 //!
-//! A provider in the cloud (Settings → Speech; src/cloud_stt.rs) takes the place of the model:
+//! A provider in the cloud (Settings → Models; src/cloud_stt.rs) takes the place of the model:
 //! its "model" id is `cloud:<provider>/<model>`, and nothing is loaded for it.
 
 use std::collections::HashMap;
@@ -160,7 +160,7 @@ impl Engines {
         }
     }
 
-    /// Settings → Speech → Vocabulary changed (or the app started).
+    /// Settings → General → Vocabulary changed (or the app started).
     pub fn set_vocabulary(&self, terms: &[crate::vocabulary::Term]) {
         *self.vocabulary.lock() = Arc::new(crate::vocabulary::Vocabulary::new(terms));
     }
@@ -354,7 +354,7 @@ impl Engines {
         Ok(out)
     }
 
-    /// Through the provider chosen in Settings → Speech. No lock: requests to a provider can
+    /// Through the provider chosen in Settings → Models. No lock: requests to a provider can
     /// run side by side (a dictation during a meeting), and nothing here uses the GPU.
     fn transcribe_cloud(&self, id: &str, input: Input, sink: Sink) -> anyhow::Result<Output> {
         let access = {

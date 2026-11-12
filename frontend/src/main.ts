@@ -7,7 +7,7 @@ import { initHistory } from "./history";
 import { initMeetings } from "./meetings";
 import { initMicrophone } from "./microphone";
 import { initVocabulary } from "./vocabulary";
-import { CUSTOM, hasKey, initProviderForm, provider, type ProviderForm } from "./providers";
+import { CUSTOM, failureText, hasKey, hostOf, initProviderForm, provider, setAlert, type ProviderForm, type Use } from "./providers";
 import { confirmDialog } from "./confirm";
 import { Waveform } from "./waveform";
 
@@ -84,6 +84,16 @@ const aiStatusText = $<HTMLSpanElement>("ai-status-text");
 const aiBar = aiStatus.querySelector<HTMLDivElement>(".model-bar")!;
 const aiBarFill = $<HTMLDivElement>("ai-bar-fill");
 const idleSelect = $<HTMLSelectElement>("idle-select");
+const modelsOverview = $<HTMLUListElement>("models-overview");
+const aiModelLine = $<HTMLElement>("ai-model-line");
+const aiUseRow = $<HTMLDivElement>("ai-use-row");
+const aiUse = $<HTMLButtonElement>("ai-use");
+const aiUseCancel = $<HTMLButtonElement>("ai-use-cancel");
+const aiUseNote = $<HTMLElement>("ai-use-note");
+const speechUseRow = $<HTMLDivElement>("speech-use-row");
+const speechUse = $<HTMLButtonElement>("speech-use");
+const speechUseCancel = $<HTMLButtonElement>("speech-use-cancel");
+const speechUseNote = $<HTMLElement>("speech-use-note");
 
 const MEDIA_EXT = /\.(mp3|wav|wave|m4a|aac|ogg|oga|opus|flac|webm|weba|wma|aiff?|amr|mp4|m4v|mov|mkv|avi|3gp)$/i;
 const langNames = new Intl.DisplayNames(["en"], { type: "language" });
@@ -147,7 +157,7 @@ function modelPhrase(m: ModelInfo): string {
   }
 }
 
-/** A provider in the cloud (or your own server) transcribes: Settings → Speech → Where it runs. */
+/** A provider in the cloud (or your own server) transcribes: Settings → Models → Speech to text. */
 function speechInCloud(): boolean {
   return !!status?.speech?.provider;
 }
@@ -186,6 +196,7 @@ function renderStatus(): void {
     opt.textContent = `${info.label}${info.name === auto ? " — recommended here" : ""}${here}`;
   }
   modelDetails.textContent = details(m);
+  renderOverview();
 }
 
 /** "0.5 GB download · ~0.9 GB RAM · 10.9× real time on GPU · WER 3.2%". */
@@ -215,6 +226,7 @@ function renderPreview(): void {
     previewNote.textContent = base + (previewCheck.checked && p.state === "unavailable" ? ` Not available: ${p.error ?? "unknown error"}` : "");
   }
   previewEngine.disabled = !previewCheck.checked;
+  renderOverview();
 }
 
 let lastModelState = "";
@@ -533,11 +545,145 @@ modelSelect.addEventListener("change", () => {
 });
 idleSelect.addEventListener("change", () => void backend.saveOptions({ idle_unload_minutes: Number(idleSelect.value) }));
 
+// ------------------------------------------------------------------ Models: tests of the services
+/** The last test of the service a job uses: what was tested, and its answer. A service is shown
+ * as ready only after a test passes. */
+interface ServiceTest {
+  sig: string;
+  at: number;
+  state: "checking" | "ok" | "error";
+  text: string;
+  models: string[];
+}
+const tests: Record<Use, ServiceTest | null> = { speech: null, chat: null };
+/** A saved service is tested again after this long (on the next status). */
+const RETEST_MS = 30_000;
+
+/** Ask the service for its models now: the server answers, or the key works. */
+async function testService(use: Use, id: string, url: string): Promise<string[]> {
+  try {
+    return await backend.providerModels(id, use === "speech");
+  } catch (err) {
+    throw new Error(failureText(err, id === CUSTOM ? url : provider(status, id)?.url ?? ""));
+  }
+}
+
+/** The test of the service a job uses now: started when the service changes, again after
+ * RETEST_MS. `rerender` draws the answer when it comes. */
+function savedTest(use: Use, id: string, url: string, rerender: () => void): ServiceTest {
+  const sig = `${id}|${id === CUSTOM ? url : ""}|${hasKey(status, id, use)}`;
+  const last = tests[use];
+  if (last && last.sig === sig && (last.state === "checking" || Date.now() - last.at < RETEST_MS)) return last;
+  const t: ServiceTest = { sig, at: Date.now(), state: last?.sig === sig ? last.state : "checking", text: last?.sig === sig ? last.text : "", models: last?.sig === sig ? last.models : [] };
+  tests[use] = t;
+  testService(use, id, url).then(
+    (models) => {
+      if (tests[use] !== t) return;
+      Object.assign(t, { state: "ok", text: "", models, at: Date.now() });
+      rerender();
+    },
+    (err: Error) => {
+      if (tests[use] !== t) return;
+      Object.assign(t, { state: "error", text: err.message, at: Date.now() });
+      rerender();
+    },
+  );
+  return t;
+}
+
+/** "Test and use": the chosen service is used only when it answers and has the model. Returns
+ * the model to save ("" = the service's default), or throws why it can not be used. */
+async function testForUse(use: Use, id: string, typed: string, url: string): Promise<string> {
+  const p = provider(status, id);
+  if (!p) throw new Error("Unknown service");
+  if (p.id !== CUSTOM && !hasKey(status, id, use)) throw new Error(`Add the ${p.label} API key first.`);
+  const fallback = use === "speech" ? p.speech_model : p.chat_model;
+  const model = typed.trim() || fallback;
+  const models = await testService(use, id, url);
+  const where = p.id === CUSTOM ? hostOf(url) : p.label;
+  const some = (list: string[]) => list.slice(0, 6).join(", ") + (list.length > 6 ? "…" : "");
+  if (!model) throw new Error(models.length ? `Choose the model. ${where} has: ${some(models)}.` : "Type the model name.");
+  // Your own notes server: the model must be one it has (Ollama refuses another name).
+  if (use === "chat" && p.id === CUSTOM && models.length && !models.includes(model)) {
+    throw new Error(`${where} has no model “${model}”. It has: ${some(models)}.`);
+  }
+  tests[use] = null; // the new service: tested again for its status
+  return model === fallback ? "" : model;
+}
+
+/** "Llama 3 on localhost:11434", "gpt-5-mini on OpenAI", "Qwen3.5 4B on this computer". */
+function notesLabel(): string {
+  const ai = status?.ai;
+  if (!ai) return "";
+  if (ai.engine !== "server") return `${ai.builtin.model} on this computer`;
+  const p = provider(status, ai.provider);
+  const model = ai.model || p?.chat_model || "no model chosen";
+  return p?.id === CUSTOM || !p ? `${model} on ${hostOf(ai.url)}` : `${model} on ${p.label}`;
+}
+
+// ------------------------------------------------------------------ Models: the overview
+/** One line per job: where it runs and its status (the same words as its group below). */
+function renderOverview(): void {
+  if (!status) return;
+  const sp = speechInCloud() ? provider(status, status.speech!.provider) : undefined;
+  const ai = status.ai;
+  const np = ai?.engine === "server" ? provider(status, ai.provider) : undefined;
+  const where = (p: { id: string; label: string } | undefined) => (!p ? "This computer" : p.id === CUSTOM ? "Your server" : `${p.label} · cloud`);
+  const pv = status.preview;
+  const previewState = !previewCheck.checked ? ["missing", "Off"] : pv?.state === "preparing" ? ["loading", "Getting ready…"] : pv?.state === "unavailable" ? ["error", "Not available"] : ["ready", pv?.engine === "parakeet" ? "On · Parakeet" : "On · Whistle"];
+  const rows: [string, string, string, string, string][] = [
+    ["speech-group", "Speech to text", where(sp), modelStatus.dataset.state ?? "", modelStatusText.textContent ?? ""],
+    ["preview-group", "Live preview", "This computer", previewState[0], previewState[1]],
+  ];
+  if (ai) rows.push(["notes-group", "Meeting notes", where(np), aiStatus.dataset.state ?? "", aiStatusText.textContent ?? ""]);
+  // Built once, then only their words change: a status never takes the focus from a job.
+  for (const [group, job, place, state, text] of rows) {
+    let li = modelsOverview.querySelector<HTMLLIElement>(`li[data-group="${group}"]`);
+    if (!li) {
+      li = document.createElement("li");
+      li.dataset.group = group;
+      const go = document.createElement("button");
+      go.type = "button";
+      go.className = "overview-job";
+      go.textContent = job;
+      go.addEventListener("click", () => document.getElementById(group)?.scrollIntoView({ behavior: "smooth", block: "start" }));
+      const at = document.createElement("span");
+      at.className = "overview-where";
+      const st = document.createElement("span");
+      st.className = "model-status";
+      const dot = document.createElement("span");
+      dot.className = "dot";
+      st.append(dot, document.createElement("span"));
+      li.append(go, at, st);
+      modelsOverview.append(li);
+    }
+    li.querySelector(".overview-where")!.textContent = place;
+    const st = li.querySelector<HTMLElement>(".model-status")!;
+    st.dataset.state = state;
+    st.lastElementChild!.textContent = text;
+  }
+  aiModelLine.textContent = notesLabel();
+}
+
 // ------------------------------------------------------------------ Speech: where it runs
 let speechForm: ProviderForm | null = null;
 let aiForm: ProviderForm | null = null;
 function saveProvider(o: Parameters<Backend["saveOptions"]>[0]): void {
   void backend.saveOptions(o).then(refreshStatus, (err) => showError(String(err)));
+}
+
+/** A service chosen in the menu and not used yet ("" = none): "Test and use" switches to it. */
+let speechPending = "";
+/** The model typed for it (kept here: the saved one belongs to the service in use). */
+let speechPendingModel: string | null = null;
+
+/** The form's saves: the model of a service not in use yet waits for "Test and use". */
+function saveSpeechForm(o: Parameters<Backend["saveOptions"]>[0]): void {
+  if (speechPending && o.speech_model !== undefined) {
+    speechPendingModel = o.speech_model;
+    if (speechInCloud()) return; // the saved model is the one in use
+  }
+  saveProvider(o);
 }
 
 /** The menu: this computer, the providers that transcribe, your own server. */
@@ -554,40 +700,79 @@ function renderSpeechWhere(): void {
     speechWhere.append(cloud, own);
     speechWhere.dataset.filled = "1";
   }
-  speechForm ??= initProviderForm(backend, "speech", speechCloud, saveProvider);
-  if (document.activeElement !== speechWhere) speechWhere.value = status.speech.provider;
+  speechForm ??= initProviderForm(backend, "speech", speechCloud, saveSpeechForm);
+  if (document.activeElement !== speechWhere) speechWhere.value = speechPending || status.speech.provider;
   const p = provider(status, speechWhere.value) ?? null;
   speechLocal.hidden = !!p;
   speechForm.render(status, p);
+  speechUseRow.hidden = !speechPending;
+  if (!speechPending) speechUseNote.hidden = true;
   speechDesc.textContent = p
     ? "Writes what you say as text, for dictation, meetings and files, through the service below."
     : "Runs on this computer and writes what you say as text, for dictation, meetings and files. It downloads once.";
-  speechWhereNote.textContent = p
-    ? p.id === CUSTOM
-      ? "Your server gets the audio of each dictation, meeting piece and file. Silence is never sent."
-      : `Fast and accurate, with no download and no load on this computer. It needs the internet and costs per minute of audio (${p.label}'s prices). Silence is never sent.`
-    : "";
+  const now = speechInCloud() ? `${status.speech.label ?? "the service in use"}` : "the model on this computer";
+  speechWhereNote.textContent = speechPending
+    ? `Not in use yet: Test and use checks it, then switches to it. Until then, ${now} transcribes.`
+    : p
+      ? p.id === CUSTOM
+        ? "Your server gets the audio of each dictation, meeting piece and file. Silence is never sent."
+        : `Fast and accurate, with no download and no load on this computer. It needs the internet and costs per minute of audio (${p.label}'s prices). Silence is never sent.`
+      : "";
 }
 
-/** Settings → Speech's status when a provider transcribes: its model, or what is missing. */
+/** Speech to text's status when a provider transcribes: the test of the service, its model. */
 function renderCloudSpeech(): void {
   const p = provider(status, status?.speech?.provider ?? "");
   languageSelect.disabled = false;
   languageSelect.title = "";
   modelBar.hidden = true;
+  const set = (state: string, text: string) => {
+    modelStatus.dataset.state = state;
+    modelStatusText.textContent = text;
+    renderOverview();
+  };
   if (!p) return;
-  if (p.id !== CUSTOM && !hasKey(status, p.id, "speech")) {
-    modelStatus.dataset.state = "error";
-    modelStatusText.textContent = `Add the ${p.label} API key`;
-    return;
-  }
-  modelStatus.dataset.state = "ready";
-  modelStatusText.textContent = `Ready · ${status?.speech?.label ?? p.label}`;
+  if (p.id !== CUSTOM && !hasKey(status, p.id, "speech")) return set("error", `Add the ${p.label} API key`);
+  const t = savedTest("speech", p.id, status?.speech?.url ?? "", renderCloudSpeech);
+  if (t.state === "checking") return set("loading", `Testing ${p.id === CUSTOM ? hostOf(status?.speech?.url ?? "") : p.label}…`);
+  if (t.state === "error") return set("error", t.text);
+  set("ready", `Ready · ${status?.speech?.label ?? p.label}`);
 }
 
 speechWhere.addEventListener("change", () => {
-  // Another service: its default model, until one is typed.
-  saveProvider({ speech_provider: speechWhere.value, speech_model: "" });
+  const id = speechWhere.value;
+  speechPendingModel = null;
+  if (!id || id === status?.speech?.provider) {
+    // This computer is always there (its model downloads when needed); the service in use stays.
+    speechPending = "";
+    if (id !== status?.speech?.provider) saveProvider({ speech_provider: "" });
+  } else {
+    speechPending = id;
+  }
+  renderSpeechWhere();
+});
+
+speechUse.addEventListener("click", async () => {
+  const id = speechPending;
+  const typed = speechPendingModel ?? (status?.speech?.provider === id ? status.speech.model : "");
+  speechUse.disabled = true;
+  setAlert(speechUseNote, "busy", "Testing…");
+  try {
+    const model = await testForUse("speech", id, typed, status?.speech?.url ?? "");
+    speechPending = "";
+    speechPendingModel = null;
+    speechUseNote.hidden = true;
+    saveProvider({ speech_provider: id, speech_model: model });
+    announce("Speech to text now uses the new service.");
+  } catch (err) {
+    setAlert(speechUseNote, "error", err instanceof Error ? err.message : String(err));
+  } finally {
+    speechUse.disabled = false;
+  }
+});
+speechUseCancel.addEventListener("click", () => {
+  speechPending = "";
+  speechPendingModel = null;
   renderSpeechWhere();
 });
 // ------------------------------------------------------------------ dictation key
@@ -600,7 +785,7 @@ function prettyKey(key: string): string {
     .join(" + ");
 }
 
-/** One key row: Settings → Dictation (the dictation key, the paste key), Settings → Meetings (the meeting key). */
+/** One key row: Settings → Dictation (the dictation key, the paste key), Settings → Meeting settings (the meeting key). */
 interface KeyUi {
   row: HTMLElement;
   current: HTMLElement;
@@ -986,7 +1171,7 @@ function showSection(name: string, focus = false): void {
   }
   for (const p of document.querySelectorAll<HTMLElement>(".settings-content .section")) p.hidden = p.dataset.section !== name;
   if (name === "history") history?.refresh();
-  if (name === "speech") microphone?.refresh();
+  if (name === "general") microphone?.refresh();
 }
 showSection("transcribe");
 
@@ -1018,7 +1203,21 @@ document.addEventListener("keydown", (e) => {
 
 // ------------------------------------------------------------------ Notes settings
 let aiFilled = false;
-/** Settings → Meetings → Notes, from the status. Fields being edited are left alone. */
+/** A service chosen in the notes menu and not used yet ("" = none): "Test and use" switches to it. */
+let aiPending = "";
+/** The model typed for it (kept here: the saved one belongs to the service in use). */
+let aiPendingModel: string | null = null;
+
+/** The form's saves: the model of a service not in use yet waits for "Test and use". */
+function saveAiForm(o: Parameters<Backend["saveOptions"]>[0]): void {
+  if (aiPending && o.ai_model !== undefined) {
+    aiPendingModel = o.ai_model;
+    if (status?.ai?.engine === "server") return; // the saved model is the one in use
+  }
+  saveAi(o);
+}
+
+/** Settings → Models → Meeting notes, from the status. Fields being edited are left alone. */
 function renderAi(): void {
   const ai = status?.ai;
   if (!ai) return;
@@ -1035,7 +1234,7 @@ function renderAi(): void {
   const cloud = document.createElement("optgroup");
   cloud.label = "In the cloud: the transcript is sent";
   cloud.append(...(status?.providers?.list ?? []).filter((p) => p.chat && p.id !== CUSTOM).map((p) => new Option(p.label, `server:${p.id}`)));
-  const chosen = ai.engine === "server" ? `server:${ai.provider}` : `builtin:${ai.builtin_model}`;
+  const chosen = aiPending ? `server:${aiPending}` : ai.engine === "server" ? `server:${ai.provider}` : `builtin:${ai.builtin_model}`;
   const keep = aiFilled && document.activeElement === aiEngine ? aiEngine.value : chosen;
   // Only when the menu's content changed: never under an open menu for nothing.
   const signature = [here, own, cloud].flatMap((g) => [...g.querySelectorAll("option")].map((o) => o.value + o.text)).join("|");
@@ -1049,10 +1248,14 @@ function renderAi(): void {
   if (!aiPromptEdited) aiPrompt.value = ai.prompt || ai.default_prompt;
   renderAiPrompt();
   const server = aiEngine.value.startsWith("server:") ? (provider(status, aiEngine.value.slice("server:".length)) ?? null) : null;
-  aiForm ??= initProviderForm(backend, "chat", aiServer, saveAi);
+  aiForm ??= initProviderForm(backend, "chat", aiServer, saveAiForm);
   aiForm.render(status!, server);
   const pick = b.models.find((m) => `builtin:${m.id}` === aiEngine.value);
-  aiEngineNote.textContent = server
+  aiUseRow.hidden = !aiPending;
+  if (!aiPending) aiUseNote.hidden = true;
+  aiEngineNote.textContent = aiPending
+    ? `Not in use yet: Test and use checks it, then switches to it. Until then, the notes use ${notesLabel()}.`
+    : server
     ? server.id === CUSTOM
       ? "The app sends the transcript to this server, and shows its answer."
       : `${server.label} writes the notes and answers your questions. Large models in the cloud write better notes of long meetings than a small model here; each meeting costs a few cents.`
@@ -1075,26 +1278,26 @@ function renderAiStatus(): void {
     aiStatusText.textContent = text;
     aiBar.hidden = progress === null;
     aiBarFill.style.width = `${Math.floor((progress ?? 0) * 100)}%`;
+    renderOverview();
   };
   if (aiLive && ["preparing", "downloading", "writing"].includes(aiLive.state)) {
     if (aiLive.state === "downloading") return set("downloading", aiLive.detail, aiLive.progress);
     if (aiLive.state === "writing") return set("loading", aiLiveKind === "chat" ? "Answering a question…" : "Writing notes…");
     return set("loading", aiLive.detail);
   }
-  if (ai.engine === "server" && ai.provider !== CUSTOM) {
+  if (ai.engine === "server") {
+    // Ready only after a test: the server answers (or the key works), and it has the model.
     const p = provider(status, ai.provider);
     if (!p) return set("error", "Unknown service");
-    if (!hasKey(status, p.id, "chat")) return set("error", `Add the ${p.label} API key`);
-    return set("ready", `Ready · ${ai.model || p.chat_model} on ${p.label}`);
-  }
-  if (ai.engine === "server") {
-    let host = "";
-    try {
-      host = new URL(ai.url).host;
-    } catch {
-      return set("error", "Own server: no valid address yet");
-    }
-    return set("ready", `Own server · ${ai.model ? `${ai.model} on ` : ""}${host}`);
+    if (p.id !== CUSTOM && !hasKey(status, p.id, "chat")) return set("error", `Add the ${p.label} API key`);
+    const where = p.id === CUSTOM ? hostOf(ai.url) : p.label;
+    const model = ai.model || p.chat_model;
+    const t = savedTest("chat", p.id, ai.url, renderAiStatus);
+    if (t.state === "checking") return set("loading", `Testing ${where}…`);
+    if (t.state === "error") return set("error", t.text);
+    if (!model) return set("error", `No model chosen for ${where}`);
+    if (p.id === CUSTOM && t.models.length && !t.models.includes(model)) return set("error", `${where} has no model “${model}”`);
+    return set("ready", `Ready · ${model} on ${where}`);
   }
   const b = ai.builtin;
   if (!b.supported) return set("error", "Not available on this system: use your own server or a service in the cloud");
@@ -1108,14 +1311,49 @@ function saveAi(o: Parameters<Backend["saveOptions"]>[0]): void {
 
 aiEngine.addEventListener("change", () => {
   const v = aiEngine.value;
+  aiPendingModel = null;
   if (v.startsWith("builtin:")) {
+    // A model on this computer is always there (it downloads the first time it writes).
+    aiPending = "";
     saveAi({ ai_engine: "builtin", ai_builtin_model: v.slice("builtin:".length) });
   } else {
+    // A server or a service: used only after "Test and use" passes.
     const id = v.slice("server:".length);
-    // Another service: its default model, until one is typed.
-    saveAi(id === status?.ai?.provider ? { ai_engine: "server" } : { ai_engine: "server", ai_provider: id, ai_model: "" });
+    aiPending = status?.ai?.engine === "server" && id === status.ai.provider ? "" : id;
   }
   renderAi();
+});
+
+aiUse.addEventListener("click", async () => {
+  const id = aiPending;
+  const typed = aiPendingModel ?? (status?.ai?.provider === id ? status.ai.model : "");
+  aiUse.disabled = true;
+  setAlert(aiUseNote, "busy", "Testing…");
+  try {
+    const model = await testForUse("chat", id, typed, status?.ai?.url ?? "");
+    aiPending = "";
+    aiPendingModel = null;
+    aiUseNote.hidden = true;
+    saveAi({ ai_engine: "server", ai_provider: id, ai_model: model });
+    announce("Meeting notes now use the new service.");
+  } catch (err) {
+    setAlert(aiUseNote, "error", err instanceof Error ? err.message : String(err));
+  } finally {
+    aiUse.disabled = false;
+  }
+});
+aiUseCancel.addEventListener("click", () => {
+  aiPending = "";
+  aiPendingModel = null;
+  renderAi();
+});
+
+// Links to other sections ("Change in Models", "Dictation"), also in the meeting view.
+document.addEventListener("click", (e) => {
+  const a = (e.target as Element).closest?.("a.go-models, a.go-dictation");
+  if (!a) return;
+  e.preventDefault();
+  showSection(a.classList.contains("go-models") ? "models" : "dictation", true);
 });
 aiAuto.addEventListener("change", () => saveAi({ ai_auto: aiAuto.checked }));
 
@@ -1258,7 +1496,7 @@ agentsRecording.addEventListener("change", () => {
 /** The switch's save is on its way (as for the agents' switch). */
 let voicesSaving = false;
 
-/** Settings → Meetings → Who is speaking: the switch and the models' state. */
+/** Settings → Meeting settings → Who is speaking: the switch and the models' state. */
 function renderVoices(): void {
   const v = status?.voices;
   if (!v) return;
@@ -1287,7 +1525,7 @@ voicesOn.addEventListener("change", () => {
     .finally(() => (voicesSaving = false));
 });
 
-/** Settings → Meetings → Screen video: what this computer has, the screen remembered. */
+/** Settings → Meeting settings → Screen video: what this computer has, the screen remembered. */
 let screenChecking = false;
 function renderScreen(): void {
   const s = status?.screen;
@@ -1348,8 +1586,9 @@ void getBackend().then((b) => {
     (files) => files[0] && handleRef(files[0]),
   );
   b.onOpenFiles((files) => files[0] && handleRef(files[0]));
+  b.onShowSection((name) => showSection(name, true));
   const liveDot = document.querySelector<HTMLElement>('.nav-item[data-section="meetings"] .nav-live')!;
-  // Settings → Meetings → Notes shows the model at work: notes, or an answer (also its first download).
+  // Settings → Models → Meeting notes shows the model at work: notes, or an answer (also its first download).
   const onAi = (kind: "notes" | "chat") => (e: AiNotesEvent) => {
     aiLive = e;
     aiLiveKind = kind;

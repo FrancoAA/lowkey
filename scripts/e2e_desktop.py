@@ -799,25 +799,27 @@ esac
             return [x["label"] for x in tray_menu() if not x["sep"]]
 
         menu = wait(lambda: tray_menu() or None, 10, "the tray menu on D-Bus")
-        check(tray_labels() == ["Open", "Start dictation", "Start meeting recording", "Microphone", "Speech-to-text model", "Exit"]
-              and menu[1]["sep"], f"tray menu: Open first, a divider under it, Exit last: {tray_labels()}")
+        check(tray_labels() == ["Open", "Start dictation", "Start meeting recording", "Microphone", "Speech: Large v3 Turbo (q5) · this computer",
+                                "Notes: Qwen3.5 4B · this computer", "Change in Settings…", "Exit"]
+              and menu[1]["sep"], f"tray menu: Open first, a divider under it, the models, Exit last: {tray_labels()}")
         mics = [(m["label"], m["checked"]) for m in tray_find(menu, "Microphone")["items"]]
         check(mics == [("System default — WH-1000XM4", True), ("WH-1000XM4 · Bluetooth", False), ("Built-in Microphone", False)],
               f"tray microphones: {mics}")
-        models_menu = [(m["label"], m["checked"]) for m in tray_find(menu, "Speech-to-text model")["items"]]
-        check(models_menu[0] == ("Automatic — Large v3 Turbo (q5)", True) and ("Small", False) in models_menu,
-              f"tray models, Automatic chosen: {models_menu[:3]}…")
-        # Microphone and model from the tray: saved, and the window follows.
+        # The microphone from the tray: saved, and the window follows.
         tray_click("Microphone", "Built-in Microphone")
         wait(lambda: 'microphone = "alsa_input.pci.e2e"' in cfg_file.read_text(), 10, "microphone saved from the tray")
-        wait(lambda: tray_find(tray_menu(), "Microphone", "Built-in Microphone")["checked"], 10, "the tray ticks the microphone")
-        tray_click("Speech-to-text model", "Small")
-        wait(lambda: 'model = "small"' in cfg_file.read_text(), 10, "model saved from the tray")
-        wait(lambda: any(s["default_model"] == "small" for s in events("status")[-5:]), 15, "status follows the tray's model")
-        check(tray_find(tray_menu(), "Speech-to-text model", "Small")["checked"], "the tray ticks the model; the microphone and model are saved")
-        tray_click("Speech-to-text model", "Automatic")
+        check(wait(lambda: tray_find(tray_menu(), "Microphone", "Built-in Microphone")["checked"], 10, "the tray ticks the microphone"),
+              "the tray ticks the microphone; it is saved")
         tray_click("Microphone", "System default")
-        wait(lambda: 'model = ""' in cfg_file.read_text() and 'microphone = ""' in cfg_file.read_text(), 10, "back to automatic choices")
+        wait(lambda: 'microphone = ""' in cfg_file.read_text(), 10, "back to the system default")
+        # The models are chosen in Settings → Models: the tray opens the window there.
+        n_s = len(events("show-section"))
+        tray_click("Change in Settings…")
+        check(wait(lambda: events("show-section")[n_s:], 5, "show-section from the tray")[0] == "models" and win("Lowkey") is not None,
+              "the tray's Change in Settings… opens the window on Settings → Models")
+        # Back to Transcribe (Escape leaves Settings): the steps below start there.
+        focus(wait(lambda: win("Lowkey"), 10, "main window")["address"])
+        press_key("Escape")
         # A dictation from the tray: typed into the app that has the focus.
         focus(target["address"])
         before = typed.read_text()
@@ -857,15 +859,16 @@ esac
         cfg_file = tmp / "config" / "lowkey" / "config.toml"
         main_win = wait(lambda: win("Lowkey"), 10, "main window")
         focus(main_win["address"])
-        # Settings: Ctrl+, opens them with the focus on the section list; Down moves to Model,
-        # Tab to its first control (the model list).
+        # Settings: Ctrl+, opens them with the focus on the section list; Down moves to Models.
+        # Its tab stops: the three jobs in the overview, Where it runs, then the model list.
         for st in ("down", "up"):
             run(["hyprctl", "dispatch", f'hl.dsp.send_key_state({{ mods = "CTRL", key = "comma", state = "{st}" }})'], env)
             time.sleep(0.05)
         time.sleep(0.3)
         shot("20-desktop-settings-general.png")
-        press_key("Down")  # Model
-        press_key("Tab")  # the model list
+        press_key("Down")  # Models
+        for _ in range(5):
+            press_key("Tab")  # to the model list
         # Parakeet (670 MB) only when it is cached, so the run stays offline-capable; else Small.
         with_pk = BENCH_PARAKEET.is_dir()
         last = "parakeet-v3" if with_pk else "small"
@@ -922,9 +925,10 @@ esac
         def latest_status() -> dict:
             return events("status")[-1] if events("status") else {}
 
-        for st in ("down", "up"):  # Shift+Tab: back to the section list (on Model)
-            run(["hyprctl", "dispatch", f'hl.dsp.send_key_state({{ mods = "SHIFT", key = "Tab", state = "{st}" }})'], env)
-            time.sleep(0.05)
+        for _ in range(5):  # Shift+Tab, as many as the Tabs in: back to the section list (on Models)
+            for st in ("down", "up"):
+                run(["hyprctl", "dispatch", f'hl.dsp.send_key_state({{ mods = "SHIFT", key = "Tab", state = "{st}" }})'], env)
+                time.sleep(0.05)
         press_key("Down")  # Dictation
         press_key("Tab")  # its first control: the key button (Change, or "Let the app manage it")
         if config_bind:
@@ -1008,18 +1012,19 @@ esac
         check([f.exists() for f in real_autostart] == real_before, "your real ~/.config/autostart was not touched")
         print("  ok  start at login turned off again")
         press_key("Escape")
-        # Settings → Models → AI notes (General, down to Models, then Tab past the speech model
-        # and the idle menu to the notes model: the view scrolls to it).
+        # Settings → Models → Meeting notes (General, down to Models, then Tab past the overview's
+        # three jobs, Where it runs, the speech model, the idle menu and the preview engine to the
+        # notes model: the view scrolls to it).
         for st in ("down", "up"):
             run(["hyprctl", "dispatch", f'hl.dsp.send_key_state({{ mods = "CTRL", key = "comma", state = "{st}" }})'], env)
             time.sleep(0.05)
         press_key("Down")
-        for _ in range(3):
+        for _ in range(8):
             press_key("Tab")
         time.sleep(0.6)
         shot("28-desktop-settings-ai-notes.png")
         press_key("Escape")
-        # Settings → Note apps (General, Models, Shortcuts, Live preview, Note apps): the folder in a vault.
+        # Settings → Connections → Note apps (General, Models, Dictation, Meeting settings, Connections): the folder in a vault.
         for st in ("down", "up"):
             run(["hyprctl", "dispatch", f'hl.dsp.send_key_state({{ mods = "CTRL", key = "comma", state = "{st}" }})'], env)
             time.sleep(0.05)

@@ -4,9 +4,9 @@ By default everything runs on this computer: the speech model (whisper.cpp or Pa
 notes model (llama.cpp). You can choose a provider in the cloud, or your own server, for two
 jobs, each on its own:
 
-- **Speech** (Settings → Speech → Speech model → **Where it runs**): it transcribes dictations,
+- **Speech** (Settings → Models → Speech to text → **Where it runs**): it transcribes dictations,
   meetings and files.
-- **Notes** (Settings → Meetings → Notes → **Notes model**): it writes the meeting notes and
+- **Notes** (Settings → Models → Meeting notes): it writes the meeting notes and
   answers the questions in the chat.
 
 Nothing goes to a provider until you choose it. Settings then says in orange what is sent and
@@ -86,14 +86,17 @@ or Parakeet); only the text that is typed comes from the provider.
   prompt is asked again without it; the app keeps that for the next request. Text without times
   is shared over the piece by the length of its sentences. Deepgram gives utterances, ElevenLabs
   words: both give real times.
-- **Language:** the one set in Settings → Speech, else the provider finds it.
+- **Language:** the one set in Settings → General, else the provider finds it.
 - **Vocabulary:** the terms go as the prompt (OpenAI-compatible) or as key terms (Deepgram
   Nova-3). The "sounds like" replacements apply to every provider's text.
 - **Errors:** the network, 408, 429 and 5xx are tried 3 times (1 s, then 3 s, or what
   `Retry-After` says, up to 20 s). A refused key is not tried again; the message says which
   provider refused it and why. In a meeting, a piece that fails shows a notice in the meeting.
-- The tray menu shows "Cloud — gpt-4o-transcribe · OpenAI" as the checked model. Choosing a
-  model on this computer there takes over (the audio stays here again).
+- The tray menu shows the models in use ("Speech: gpt-4o-transcribe · OpenAI"); they are chosen
+  in Settings → Models only.
+- A provider is used only after **Test and use** passes in Settings → Models (the key works, or
+  your server answers and has the model). Until then the model in use stays. The status of the
+  provider in use is tested again when Settings draws it, at most every 30 s.
 - AI agents (`lowkey --mcp`, `transcribe_file`) and `lowkey --transcribe` always use the model on
   this computer.
 

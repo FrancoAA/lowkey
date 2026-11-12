@@ -1,5 +1,5 @@
 /**
- * Settings → Speech → Vocabulary: one row per term (term | sounds like | remove). Saved while
+ * Settings → General → Vocabulary: one row per term (term | sounds like | remove). Saved while
  * you type (the app cleans the list: blank rows and duplicates go).
  */
 import type { VocabTerm } from "./api";

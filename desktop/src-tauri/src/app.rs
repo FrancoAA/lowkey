@@ -169,7 +169,7 @@ fn test_event(event: String, payload: Value) {
 }
 
 impl App {
-    /// CLI --model > a provider chosen in Settings → Speech (`cloud:<provider>/<model>`) >
+    /// CLI --model > a provider chosen in Settings → Models (`cloud:<provider>/<model>`) >
     /// config.toml > automatic choice for this machine.
     pub fn current_model(&self) -> String {
         if let Some(id) = self.cli.model.clone().filter(|m| models::spec(m).is_some()) {
@@ -326,7 +326,7 @@ impl App {
             "test": std::env::var_os("OPENWHISPER_TEST_LOG").is_some(),
             // The providers (chat, speech, default models) and which have a key; never the keys.
             "providers": crate::providers::status(&cfg.api_keys),
-            // Settings → Speech: "" = the model on this computer; `label`: the provider's model that transcribes now.
+            // Settings → Models: "" = the model on this computer; `label`: the provider's model that transcribes now.
             "speech": { "provider": cfg.speech_provider, "model": cfg.speech_model, "url": cfg.speech_url, "label": crate::providers::speech_label(&current) },
             "ai": {
                 "engine": cfg.ai_engine, "provider": crate::providers::chat(&cfg.ai_provider).map_or(crate::providers::CUSTOM, |p| p.id),
@@ -339,13 +339,13 @@ impl App {
             },
             // Settings → Connections → AI agents: the command an agent starts (`lowkey --mcp`).
             "agents": { "recording": cfg.mcp_recording, "program": crate::autostart::launcher() },
-            // Settings → Meetings → Tell the other voices apart.
+            // Settings → Meeting settings → Tell the other voices apart.
             "voices": {
                 "on": cfg.meeting_voices, "supported": crate::voices::SUPPORTED, "present": crate::voices::present(),
                 "download": crate::voices::download_state(),
                 "working": *self.voices_working.lock(),
             },
-            // Settings → Meetings → Screen video; `chosen`: a screen is remembered.
+            // Settings → Meeting settings → Screen video; `chosen`: a screen is remembered.
             "screen": {
                 "supported": crate::screen::SUPPORTED, "chosen": !cfg.screen_token.is_empty(),
                 "check": crate::screen::status(),
@@ -366,7 +366,7 @@ impl App {
 
     // ------------------------------------------------------------- tray menu
     fn tray_view(&self) -> crate::tray::View {
-        use crate::tray::{Meeting, MicItem, ModelItem, View};
+        use crate::tray::{Meeting, MicItem, View};
         let cfg = self.config.lock().clone();
         let meeting = if self.meeting_stopping.load(Ordering::SeqCst) {
             Meeting::Saving
@@ -377,26 +377,24 @@ impl App {
         } else {
             Meeting::Idle
         };
-        let auto = models::auto_model(&self.engines.hw);
+        // The models, as Settings → Models names them (the tray only shows them).
+        let current = self.current_model();
+        let speech = crate::providers::speech_label(&current)
+            .unwrap_or_else(|| format!("{} · this computer", models::spec(&current).map(|m| m.label).unwrap_or(current.as_str())));
+        let notes = if cfg.ai_engine == "server" {
+            match crate::providers::chat_access(&cfg) {
+                Ok(a) if a.provider.id == crate::providers::CUSTOM => format!("{} · your server", if a.model.is_empty() { "no model" } else { a.model.as_str() }),
+                Ok(a) => format!("{} · {}", a.model, a.provider.label),
+                Err(_) => "not set up".into(),
+            }
+        } else {
+            format!("{} · this computer", llm::model(&cfg.ai_builtin_model).label)
+        };
         View {
             dictation: self.tray_dictation.lock().clone(),
             meeting,
-            models: models::catalog()
-                .map(|m| {
-                    let st = self.engines.state(m.id);
-                    ModelItem {
-                        id: m.id.into(),
-                        label: m.label.into(),
-                        downloaded: matches!(st.state.as_str(), "downloaded" | "ready" | "loading"),
-                        downloading: st.state == "downloading",
-                        download_mb: m.download_mb,
-                    }
-                })
-                .collect(),
-            // A saved name this build does not know counts as automatic (as current_model does).
-            model_choice: if models::spec(&cfg.model).is_some() { cfg.model.clone() } else { String::new() },
-            cloud: crate::providers::speech_model_id(&cfg).and_then(|id| crate::providers::speech_label(&id)),
-            auto_model: models::spec(auto).map(|m| m.label).unwrap_or(auto).to_string(),
+            speech,
+            notes,
             mics: self.tray_mics.lock().as_ref().map(|l| {
                 l.iter().map(|m| MicItem { id: m.id.clone(), name: m.name.clone(), bluetooth: m.bluetooth, default: m.default }).collect()
             }),
@@ -445,14 +443,6 @@ impl App {
                 let me = self.clone();
                 std::thread::spawn(move || me.meeting_key("toggle", "", false));
             }
-            Action::Model(m) => {
-                let me = self.clone();
-                std::thread::spawn(move || {
-                    if let Err(e) = apply_options(&me, OptionsIn::only(json!({ "model": m }))) {
-                        output::notify(&format!("Model not changed: {e}"));
-                    }
-                });
-            }
             Action::Mic(m) => {
                 let me = self.clone();
                 std::thread::spawn(move || {
@@ -462,6 +452,10 @@ impl App {
                 });
             }
             Action::Open => self.show_main(),
+            Action::Models => {
+                self.show_main();
+                emit_logged(&self.handle, "show-section", "models"); // the page opens Settings → Models
+            }
             Action::Exit => self.request_quit(),
         }
         // A click on a check item ticks it by itself: always build the menu again.
@@ -1357,7 +1351,7 @@ fn valid_server_url(u: &str, example: &str) -> Result<String, String> {
 }
 
 /// Settings: the provider's models, as suggestions for the model field. It checks the saved key
-/// too (an error says why it was refused). `speech`: for Settings → Speech.
+/// too (an error says why it was refused). `speech`: for Settings → Models.
 #[tauri::command]
 async fn provider_models(app: State<'_, AppRef>, provider: String, speech: bool) -> Result<Vec<String>, String> {
     let cfg = app.config.lock().clone();
@@ -1635,7 +1629,7 @@ async fn meeting_start(app: State<'_, AppRef>, title: String) -> Result<meeting:
 
 const ALREADY_RECORDING: &str = "A meeting is already being recorded.";
 
-/// Settings → Meetings → Notes: the longest instructions (the built-in ones are about 2,600).
+/// Settings → Meeting settings → Notes: the longest instructions (the built-in ones are about 2,600).
 const MAX_PROMPT_CHARS: usize = 20_000;
 
 /// Two key strings name the same combination ("super+alt+v" = "SUPER + ALT + V").
@@ -1693,7 +1687,7 @@ fn meeting_open(app: &AppRef, title: &str) -> Result<meeting::Live, String> {
     let session = meeting::Session::new(meeting::dir(), doc, transcribe, emit).map_err(|e| format!("Could not save the meeting: {e:#}"))?;
     if app.config.lock().meeting_voices && crate::voices::SUPPORTED {
         if !crate::voices::present() {
-            session.notice("The voice models are not downloaded yet (Settings → Meetings → Who is speaking): this meeting keeps \"Them\".".into());
+            session.notice("The voice models are not downloaded yet (Settings → Meeting settings → Who is speaking): this meeting keeps \"Them\".".into());
         } else if let Err(e) = session.keep_their_sound(&crate::voices::tape_path(&meeting::dir(), &id)) {
             session.notice(format!("The others' voices will not be told apart in this meeting: {e:#}."));
         }
@@ -1752,7 +1746,7 @@ fn meeting_screen(app: State<'_, AppRef>, on: bool) -> Result<(), String> {
     Ok(())
 }
 
-/// Settings → Meetings → Choose the screen again: the next Record screen shows the screen picker.
+/// Settings → Meeting settings → Choose the screen again: the next Record screen shows the screen picker.
 #[tauri::command]
 fn screen_forget(app: State<'_, AppRef>) -> Result<(), String> {
     {
@@ -1764,7 +1758,7 @@ fn screen_forget(app: State<'_, AppRef>) -> Result<(), String> {
     Ok(())
 }
 
-/// Settings → Meetings → Check again: what this computer has for the screen video (GStreamer may have been
+/// Settings → Meeting settings → Check again: what this computer has for the screen video (GStreamer may have been
 /// installed since). Returns when it is known (seconds: each encoder is tried).
 #[tauri::command]
 async fn screen_check(app: State<'_, AppRef>) -> Result<(), String> {
@@ -2240,7 +2234,7 @@ fn vocabulary_add(app: State<'_, AppRef>, term: crate::vocabulary::Term) -> Resu
     let list = crate::vocabulary::with_term(&app.config.lock().vocabulary, term.clone());
     if !crate::vocabulary::has(&list, &term) {
         return Err(format!(
-            "“{}” was not added: the Vocabulary is full ({} terms, {} spellings each). Remove some in Settings → Speech.",
+            "“{}” was not added: the Vocabulary is full ({} terms, {} spellings each). Remove some in Settings → Models.",
             term.term,
             crate::vocabulary::MAX_TERMS,
             crate::vocabulary::MAX_SPELLINGS
@@ -2275,7 +2269,7 @@ fn auto_export_after_edits(app: &AppRef, id: &str) {
 }
 
 // ------------------------------------------------------------------ AI notes
-/// Settings → Meetings → Notes: the engine to use now.
+/// Settings → Meeting settings → Notes: the engine to use now.
 fn ai_engine(app: &AppRef) -> anyhow::Result<llm::Engine> {
     let cfg = app.config.lock().clone();
     Ok(if cfg.ai_engine == "server" {
@@ -2394,6 +2388,8 @@ fn run_ai_notes(app: &AppRef, id: &str) {
                 m.ai_notes = text.clone();
                 m.ai_model = label.clone();
                 m.ai_at = now;
+                m.ai_error.clear();
+                m.ai_error_at = 0;
                 m.ai_version = read_version; // a fix made meanwhile: still "write again"
             }) {
                 Ok(_) => {
@@ -2404,7 +2400,16 @@ fn run_ai_notes(app: &AppRef, id: &str) {
             }
         }
         Err(_) if app.ai_cancel.load(Ordering::SeqCst) => send("cancelled", "Cancelled", 0.0, ""),
-        Err(e) => send("error", &format!("{e:#}"), 0.0, ""),
+        Err(e) => {
+            // Kept with the meeting: opened later, it says why it has no (new) notes.
+            let why = format!("{e:#}");
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+            let _ = meeting::edit_in(&meeting::dir(), id, |m| {
+                m.ai_error = why.clone();
+                m.ai_error_at = now;
+            });
+            send("error", &why, 0.0, "");
+        }
     }
 }
 
@@ -2592,7 +2597,7 @@ fn window_titles() -> std::collections::HashMap<u32, String> {
 }
 
 // ------------------------------------------------------------------ microphone
-/// Settings → Speech → Microphone: the inputs, and the one the app uses now (with why).
+/// Settings → General → Microphone: the inputs, and the one the app uses now (with why).
 #[tauri::command]
 async fn microphones(app: State<'_, AppRef>) -> Result<Value, String> {
     let app = app.inner().clone();
@@ -2612,7 +2617,7 @@ async fn microphones(app: State<'_, AppRef>) -> Result<Value, String> {
     .map_err(|e| e.to_string())
 }
 
-/// Settings → Speech → Microphone → Test: the chosen microphone for 4 s, its level as
+/// Settings → General → Microphone → Test: the chosen microphone for 4 s, its level as
 /// "mic-level" events (nothing is kept).
 #[tauri::command]
 async fn mic_test(app: State<'_, AppRef>) -> Result<(), String> {
@@ -2885,7 +2890,7 @@ pub fn transcribe_json(engines: &Engines, cfg: &Config, path: &std::path::Path, 
         .or_else(|| models::spec(&cfg.model).map(|m| m.id.to_string()))
         .unwrap_or_else(|| models::auto_model(&engines.hw).to_string());
     if !download && !models::spec(&model).is_some_and(models::present) {
-        return (model.clone(), Err(anyhow::anyhow!("The model {model} is not on this computer. Download it in Lowkey (Settings → Speech), or name a downloaded one.")));
+        return (model.clone(), Err(anyhow::anyhow!("The model {model} is not on this computer. Download it in Lowkey (Settings → Models), or name a downloaded one.")));
     }
     let t_load = Instant::now();
     let _ = engines.prepare(&model);
@@ -3142,7 +3147,7 @@ pub fn run() {
             // Files from the command line: queued before the page exists, so it always finds them.
             app.open_files.lock().extend(cli.files.iter().filter(|p| p.is_file()).cloned());
             tauri_app.manage(app.clone());
-            // Settings → Meetings → Screen video: what this computer has (a second or two; once).
+            // Settings → Meeting settings → Screen video: what this computer has (a second or two; once).
             if crate::screen::SUPPORTED {
                 let a2 = app.clone();
                 std::thread::spawn(move || {
@@ -3308,7 +3313,7 @@ pub fn run() {
             } else if wayland_other {
                 "this Wayland desktop does not let apps add keys: bind `lowkey --paste-last` in your desktop's keyboard settings".to_string()
             } else if same_key(&pkey, &app.hotkey_key()) || same_key(&pkey, &app.key_of(KeyKind::Meeting)) {
-                format!("not added: {pkey} is already used by another key here. Choose another key in Settings → Dictation or Settings → Meetings.")
+                format!("not added: {pkey} is already used by another key here. Choose another key in Settings → Dictation or Settings → Meeting settings.")
             } else if !hyprland::running() {
                 register_global_shortcut(&app, &pkey, KeyKind::PasteLast)
             } else {

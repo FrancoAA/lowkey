@@ -542,7 +542,7 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
       clearTimeout(timer);
       void api.addVocabulary(s).then(
         () => {
-          bar.replaceChildren(`“${s.term}” is in the Vocabulary (Settings → Speech).`);
+          bar.replaceChildren(`“${s.term}” is in the Vocabulary (Settings → General).`);
           setTimeout(() => bar.remove(), 3000);
           ui.refreshStatus();
         },
@@ -926,6 +926,18 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
   }
 
   // ---------------------------------------------------------------- Notes
+  /** A failure in words: a server that is not there says where nothing answers. */
+  const notesFailure = (why: string): string => {
+    const m = /could not reach (\S+?):? /i.exec(why);
+    if (!m) return why;
+    let host = m[1];
+    try {
+      host = new URL(host).host;
+    } catch {
+      /* not an address: as it is */
+    }
+    return `nothing answers at ${host}.`;
+  };
   const running = (e: AiNotesEvent | null) => !!e && ["preparing", "downloading", "writing"].includes(e.state);
   const aiRunning = () => running(aiJob);
   const chatRunning = () => running(chatJob);
@@ -949,11 +961,11 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
     const stale = !!shown.ai_notes && (shown.transcript_version ?? 0) > (shown.ai_version ?? 0);
     const regenerate = !!shown.ai_notes?.trim() && !stale;
     aiWrite.hidden = running || tab !== "notes";
-    aiWrite.textContent = stale ? "Write notes again" : regenerate ? "Regenerate" : "Write notes";
+    aiWrite.textContent = stale ? "Write notes again" : regenerate ? "Regenerate" : shown.ai_error ? "Try again" : "Write notes";
     aiWrite.title = stale
       ? "The transcript was fixed after these notes were written"
       : regenerate
-        ? "Write these notes again from the transcript, with the instructions in Settings → Meetings → Notes"
+        ? "Write these notes again from the transcript, with the instructions in Settings → Meeting settings → Notes"
         : "";
     aiWrite.disabled = aiRunning() || chatRunning() || voicesWorking.has(shown.id); // at work for something else, or the speakers come first
     if (voicesWorking.has(shown.id)) aiWrite.title = "Wait until the voices are told apart: then the notes have the speakers";
@@ -964,8 +976,18 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
       aiProgressFill.style.width = mine!.state === "downloading" ? `${Math.max(2, Math.round(mine!.progress * 100))}%` : "30%";
       aiProgressText.textContent = mine!.detail;
     }
-    aiError.hidden = !(mine && mine.state === "error");
-    aiError.textContent = mine && mine.state === "error" ? mine.detail : "";
+    // Why the notes were not written: now, or kept with the meeting from an earlier try.
+    const failed = mine && mine.state === "error" ? mine.detail : !running ? (shown.ai_error ?? "") : "";
+    aiError.hidden = !failed;
+    if (failed) {
+      const at = mine && mine.state === "error" ? Date.now() / 1000 : (shown.ai_error_at ?? 0);
+      const when = at ? new Date(at * 1000).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : "";
+      const go = document.createElement("a");
+      go.href = "#";
+      go.className = "go-models";
+      go.textContent = "Change the notes model";
+      aiError.replaceChildren(`The notes were not written${when ? ` (${when})` : ""}: ${notesFailure(failed)} `, go);
+    }
     const text = running && mine!.text ? mine!.text : shown.ai_notes ?? "";
     aiBody.classList.toggle("streaming", running && !!mine!.text);
     const linked = !running && !!text && shown.lines.length > 0;
@@ -1177,7 +1199,7 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
     if (shown.ai_notes?.trim() && !stale) {
       const ok = await confirmDialog({
         title: "Write the notes again?",
-        body: "The model writes new notes from the transcript, with the instructions in Settings → Meetings → Notes. They replace these notes when they are complete. If the writing fails or you cancel it, these notes stay.",
+        body: "The model writes new notes from the transcript, with the instructions in Settings → Meeting settings → Notes. They replace these notes when they are complete. If the writing fails or you cancel it, these notes stay.",
         action: "Regenerate",
       });
       if (!ok || shown?.id !== id || aiRunning()) return;
@@ -1201,7 +1223,12 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
 
   api.onAiNotes((e) => {
     aiJob = e;
+    if (e.state === "error" && shown?.id === e.id) {
+      shown.ai_error = e.detail; // the app keeps it with the meeting too
+      shown.ai_error_at = Math.floor(Date.now() / 1000);
+    }
     if (e.state === "done" && shown?.id === e.id) {
+      shown.ai_error = "";
       shown.ai_notes = e.text;
       shown.ai_model = e.detail;
       shown.ai_version = e.ai_version ?? shown.ai_version;
@@ -1819,7 +1846,7 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
     if (shown) void confirmDelete(shown.id, title.value.trim() || shown.title);
   });
 
-  // After Stop, with Settings → Meetings → Tell the other voices apart: the speakers come later.
+  // After Stop, with Settings → Meeting settings → Tell the other voices apart: the speakers come later.
   api.onVoices((e) => {
     if (e.state === "working") voicesWorking.add(e.id);
     else voicesWorking.delete(e.id);

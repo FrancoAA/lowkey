@@ -39,17 +39,17 @@
             <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7h-9M14 17H5" /><circle cx="17" cy="17" r="3" /><circle cx="7" cy="7" r="3" /></svg>
             General
           </button>
-          <button type="button" role="tab" class="nav-item" data-section="speech" aria-controls="section-speech">
-            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 10v3M6 6v11M10 3v18M14 8v7M18 5v13M22 10v3" /></svg>
-            Speech
+          <button type="button" role="tab" class="nav-item" data-section="models" aria-controls="section-models">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect width="16" height="16" x="4" y="4" rx="2" /><rect width="6" height="6" x="9" y="9" rx="1" /><path d="M15 2v2M15 20v2M2 15h2M2 9h2M20 15h2M20 9h2M9 2v2M9 20v2" /></svg>
+            Models
           </button>
           <button type="button" role="tab" class="nav-item" data-section="dictation" aria-controls="section-dictation">
             <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect width="20" height="16" x="2" y="4" rx="2" /><path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M8 12h.01M12 12h.01M16 12h.01M7 16h10" /></svg>
             Dictation
           </button>
-          <button type="button" role="tab" class="nav-item" data-section="meeting-settings" aria-controls="section-meeting-settings" aria-label="Meeting settings">
+          <button type="button" role="tab" class="nav-item" data-section="meeting-settings" aria-controls="section-meeting-settings">
             <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect width="18" height="18" x="3" y="4" rx="2" /><path d="M16 2v4M8 2v4M3 10h18M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01" /></svg>
-            Meetings
+            Meeting settings
           </button>
           <button type="button" role="tab" class="nav-item" data-section="connections" aria-controls="section-connections">
             <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" /><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" /></svg>
@@ -288,7 +288,7 @@
         <section id="section-general" class="section" role="tabpanel" data-section="general" hidden>
           <header class="section-head">
             <h2>General</h2>
-            <p>How the app starts and how it looks.</p>
+            <p>How the app starts and looks, and how it hears you.</p>
           </header>
           <div class="field">
             <div class="field-text">
@@ -309,14 +309,7 @@
               <option value="dark">Dark</option>
             </select>
           </div>
-        </section>
-
-        <!-- Speech: what dictations and meetings both use to turn sound into text -->
-        <section id="section-speech" class="section" role="tabpanel" data-section="speech" hidden>
-          <header class="section-head">
-            <h2>Speech</h2>
-            <p>How your speech becomes text, in dictations and in meetings.</p>
-          </header>
+          <div class="separator"></div>
           <div class="field field-stacked">
             <div class="field-text">
               <label for="mic-select">Microphone</label>
@@ -366,10 +359,20 @@
               <span id="vocab-note" class="field-desc" aria-live="polite"></span>
             </div>
           </div>
+        </section>
 
-          <div class="model-group">
+
+        <!-- Models: every job, where it runs, its model and a status from a real test -->
+        <section id="section-models" class="section" role="tabpanel" data-section="models" hidden>
+          <header class="section-head">
+            <h2>Models</h2>
+            <p>Each job and the model that does it. A green dot shows only after a real test.</p>
+          </header>
+          <ul id="models-overview" class="models-overview" aria-label="Jobs"></ul>
+
+          <div class="model-group" id="speech-group">
             <div class="group-head">
-              <h3>Speech model</h3>
+              <h3>Speech to text</h3>
               <div id="model-status" class="model-status" data-state="loading" aria-live="off">
                 <span class="dot"></span><span id="model-status-text">Starting…</span>
                 <div class="model-bar" hidden><div id="model-bar-fill"></div></div>
@@ -407,6 +410,56 @@
               </div>
             </div>
             <div id="speech-cloud" class="ai-server" hidden></div>
+            <div id="speech-use-row" class="key-line ai-use-row" hidden>
+              <button id="speech-use" type="button" class="btn btn-default">Test and use</button>
+              <button id="speech-use-cancel" type="button" class="btn btn-ghost">Cancel</button>
+            </div>
+            <p id="speech-use-note" class="alert" aria-live="polite" hidden></p>
+          </div>
+
+          <div class="model-group" id="preview-group">
+            <div class="group-head">
+              <h3>Live preview</h3>
+            </div>
+            <p class="field-desc group-desc">Shows the words in the dictation overlay while you talk. It always runs on this computer. Turn it on or off in <a href="#" class="go-dictation">Dictation</a>.</p>
+            <div class="field">
+              <div class="field-text">
+                <label for="preview-engine">Preview engine</label>
+                <p class="field-desc">Automatic uses Parakeet when it is on this computer, else Whistle.</p>
+              </div>
+              <select id="preview-engine" class="select">
+                <option value="auto">Automatic</option>
+                <option value="whistle">Whistle · light (17 MB)</option>
+                <option value="parakeet">Parakeet · more accurate (~1.1 GB)</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="model-group" id="notes-group">
+            <div class="group-head">
+              <h3>Meeting notes</h3>
+              <div id="ai-status" class="model-status" data-state="loading" aria-live="off">
+                <span class="dot"></span><span id="ai-status-text">Checking…</span>
+                <div class="model-bar" hidden><div id="ai-bar-fill"></div></div>
+              </div>
+            </div>
+            <p class="field-desc group-desc">Writes the notes of a meeting and answers your questions about it. Another service is used only after its test passes.</p>
+            <div class="field field-stacked">
+              <div class="field-text">
+                <label for="ai-engine">Notes model</label>
+                <p id="ai-engine-note" class="field-desc"></p>
+              </div>
+              <select id="ai-engine" class="select select-wide">
+                <option value="builtin:qwen3.5-4b">Qwen3.5 4B — runs on this computer</option>
+                <option value="server">My own server: Ollama, LM Studio, or an OpenAI-compatible API</option>
+              </select>
+            </div>
+            <div id="ai-server" class="ai-server" hidden></div>
+            <div id="ai-use-row" class="key-line ai-use-row" hidden>
+              <button id="ai-use" type="button" class="btn btn-default">Test and use</button>
+              <button id="ai-use-cancel" type="button" class="btn btn-ghost">Cancel</button>
+            </div>
+            <p id="ai-use-note" class="alert" aria-live="polite" hidden></p>
           </div>
         </section>
 
@@ -443,7 +496,7 @@
             <div class="group-head">
               <h3>Live preview</h3>
             </div>
-            <p class="field-desc group-desc">Words in the dictation overlay while you talk. The speech model (in Speech) still writes the text that is typed.</p>
+            <p class="field-desc group-desc">Words in the dictation overlay while you talk. The speech model still writes the text that is typed. Which engine shows the words: <a href="#" class="go-models">Models</a>.</p>
             <div class="field">
               <div class="field-text">
                 <label for="preview-check">Show the words while you talk</label>
@@ -451,24 +504,13 @@
               </div>
               <input id="preview-check" type="checkbox" role="switch" class="switch" checked />
             </div>
-            <div class="field">
-              <div class="field-text">
-                <label for="preview-engine">Preview engine</label>
-                <p class="field-desc">Automatic uses Parakeet when it is on this computer, else Whistle.</p>
-              </div>
-              <select id="preview-engine" class="select">
-                <option value="auto">Automatic</option>
-                <option value="whistle">Whistle · light (17 MB)</option>
-                <option value="parakeet">Parakeet · more accurate (~1.1 GB)</option>
-              </select>
-            </div>
           </div>
         </section>
 
         <!-- Meetings: recording, who is speaking, notes -->
         <section id="section-meeting-settings" class="section" role="tabpanel" data-section="meeting-settings" hidden>
           <header class="section-head">
-            <h2>Meetings</h2>
+            <h2>Meeting settings</h2>
             <p>How meetings are recorded, and how their notes are written.</p>
           </header>
           <div id="meeting-key-row" class="field field-stacked key-row">
@@ -527,10 +569,6 @@
           <div class="model-group">
             <div class="group-head">
               <h3>Notes</h3>
-              <div id="ai-status" class="model-status" data-state="loading" aria-live="off">
-                <span class="dot"></span><span id="ai-status-text">Checking…</span>
-                <div class="model-bar" hidden><div id="ai-bar-fill"></div></div>
-              </div>
             </div>
             <p class="field-desc group-desc">Writes the notes of a meeting from its transcript, one section for each topic, and answers your questions about the meeting. The notes are a draft: check them against the transcript.</p>
             <div class="field">
@@ -540,17 +578,12 @@
               </div>
               <input id="ai-auto" type="checkbox" role="switch" class="switch" />
             </div>
-            <div class="field field-stacked">
+            <div class="field">
               <div class="field-text">
-                <label for="ai-engine">Notes model</label>
-                <p id="ai-engine-note" class="field-desc"></p>
+                <span class="label">Notes model</span>
+                <p class="field-desc"><span id="ai-model-line">…</span> · <a href="#" class="go-models">Change in Models</a></p>
               </div>
-              <select id="ai-engine" class="select select-wide">
-                <option value="builtin:qwen3.5-4b">Qwen3.5 4B — runs on this computer</option>
-                <option value="server">My own server: Ollama, LM Studio, or an OpenAI-compatible API</option>
-              </select>
             </div>
-            <div id="ai-server" class="ai-server" hidden></div>
             <!-- The instructions for the notes: the app's, or the user's own (Restore brings the app's back). -->
             <div class="field field-stacked">
               <div class="field-text">

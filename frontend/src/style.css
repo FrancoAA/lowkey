@@ -157,6 +157,8 @@ h1 { font-size: 20px; font-weight: 600; }
 .model-status[data-state="error"] { color: var(--destructive); border-color: var(--destructive); }
 .model-status[data-state="error"] .dot { background: var(--destructive); }
 .model-status[data-state="downloading"] { border-radius: var(--radius); height: auto; padding: 6px 12px; }
+/* A reason can be long (a server that does not answer): it wraps in the box. */
+.model-status[data-state="error"] { border-radius: var(--radius); height: auto; min-height: 36px; padding: 6px 12px; }
 .model-bar { grid-column: 1 / -1; height: 4px; background: var(--muted); border-radius: 4px; overflow: hidden; }
 .model-bar > div { height: 100%; width: 0; background: var(--brand); transition: width 0.3s; }
 
@@ -826,7 +828,23 @@ dialog.confirm p { margin: 8px 0 0; color: var(--muted-foreground); font-size: 1
 .screen-status { margin-top: 4px; }
 
 
-/* Settings → Meetings → Notes: the instructions for the notes. */
+/* Settings → Meeting settings → Notes: the instructions for the notes. */
 .prompt-input { height: auto; min-height: 12em; padding: 8px 12px; resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.8rem; line-height: 1.5; }
 .prompt-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .prompt-actions > .field-desc { flex: 1 1 12em; margin: 0; }
+
+/* Settings → Models: each job, where it runs, and its status (the same dots as the groups below). */
+.models-overview { list-style: none; margin: 0; padding: 0; border: 1px solid var(--border); border-radius: var(--radius); }
+.models-overview li { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.6fr); gap: 12px; align-items: center; padding: 10px 14px; border-top: 1px solid var(--border); }
+.models-overview li:first-child { border-top: 0; }
+.overview-job { justify-self: start; padding: 0; border: 0; background: none; color: var(--foreground); font: inherit; font-weight: 500; text-align: left; cursor: pointer; }
+.overview-job:hover { text-decoration: underline; text-underline-offset: 3px; }
+.overview-job:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; border-radius: 4px; }
+.overview-where { color: var(--muted-foreground); font-size: 13px; }
+/* Here the status is a line of text, not a pill: a long reason wraps under its dot. */
+.models-overview .model-status { justify-self: start; align-items: start; height: auto; padding: 0; border: 0; background: none; border-radius: 0; font-size: 13px; }
+.models-overview .model-status .dot { margin-top: 5px; }
+@media (max-width: 560px) {
+  .models-overview li { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+}
+.ai-use-row { flex-wrap: wrap; }
