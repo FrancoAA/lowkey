@@ -14,7 +14,7 @@ Hyprland ignores binds from virtual keyboards, so the key bind's command is run 
 Hyprland's own exec dispatcher, exactly as a key press/release would.
 
 Usage: python3 scripts/e2e_desktop.py [--first-run] [--config-bind] [--strip-only]   (standard library only)
-  --strip-only   only the meeting's capsule: drag, buttons, place (a quick run)
+  --strip-only   only the meeting's capsule, the strip collapsed to its pill: drag, buttons, place (a quick run)
   OW_E2E_HOLD=<dir> with --strip-only: keep the nested session open (env in <dir>/env.json)
                  until <dir>/stop exists, to try things by hand
   --first-run    empty model folder: the key-started app downloads the model (~550 MB)
@@ -381,6 +381,15 @@ esac
             time.sleep(0.8)
             check(True, f"a meeting shows in the 184x40 capsule ({s0['at']})")
             (x, y), (sw, sh) = s0["at"], s0["size"]
+            # At rest: the red dot (#f87171) and the time (light text), not an empty capsule.
+            png = tmp / "capsule-rest.png"
+            run(["grim", "-g", f"{x},{y} {sw}x{sh}", png], env)
+            raw = subprocess.run(["ffmpeg", "-loglevel", "error", "-i", str(png), "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+                                 capture_output=True, check=True).stdout
+            px = [raw[i:i + 3] for i in range(0, len(raw) - 2, 3)]
+            rec = sum(1 for r, g, b in px if r > 225 and 90 < g < 140 and 90 < b < 140)
+            light = sum(1 for r, g, b in px if min(r, g, b) > 200)
+            check(rec >= 15 and light >= 30, f"the capsule shows its red dot and the time ({rec} red, {light} light pixels)")
             if os.environ.get("OW_E2E_HOLD"):  # debugging: keep the session for commands from outside
                 (Path(os.environ["OW_E2E_HOLD"]) / "env.json").write_text(json.dumps({**env, "OW_TMP": str(tmp), "OW_PTR": str(pointer_tool)}))
                 wait(lambda: (Path(os.environ["OW_E2E_HOLD"]) / "stop").exists(), 1800, "the stop file")
@@ -560,8 +569,11 @@ esac
         vault_notes = tmp / "vault" / "Meetings"
         vault_notes.mkdir(parents=True)
         (tmp / "vault" / ".obsidian").mkdir()
+        # The quick run starts with the strip collapsed to its pill (as many keep it): the
+        # meeting's capsule must still show its content (the two shapes once hid it all).
+        collapsed = "overlay_collapsed = true\n" if "--strip-only" in sys.argv else ""
         (tmp / "config" / "open-whisper" / "config.toml").write_text(
-            f'idle_unload_minutes = 5\npreview_engine = "{PREVIEW}"\nai_auto = {ai_auto}\nexport_dir = "{vault_notes}"\n'
+            f'{collapsed}idle_unload_minutes = 5\npreview_engine = "{PREVIEW}"\nai_auto = {ai_auto}\nexport_dir = "{vault_notes}"\n'
             f'meeting_voices = {"true" if voices else "false"}\n\n'
             '[[vocabulary]]\nterm = "OpenWhisper"\nsounds_like = ["open whisper", "Open Wish"]\n')
         app = subprocess.Popen([APP], env=env, stdout=open(tmp / "app.log", "w"), stderr=subprocess.STDOUT)

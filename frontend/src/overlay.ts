@@ -156,12 +156,18 @@ function setPlace(c: boolean, cap: boolean): void {
   renderShape();
 }
 
+/** What the capsule shows: a recording, "Saving" and "saved". */
+const CAPSULE_STATES = ["recording", "transcribing", "done"];
+
 /** The capsule for a meeting; else the pill (collapsed, or what else shows in the capsule's
- * window: a dictation while a meeting records), or the strip. */
+ * window: a dictation while a meeting records, a call offered), or the strip. Never the two
+ * shapes at once: the pill hides all but the dot and its word, the capsule hides those two,
+ * and nothing would be left (an empty circle). */
 function renderShape(): void {
   const meeting = root.dataset.mode === "meeting";
-  root.dataset.capsule = capsule && meeting ? "1" : "";
-  root.dataset.collapsed = collapsed || (capsule && !meeting) ? "1" : "";
+  const cap = capsule && meeting && CAPSULE_STATES.includes(root.dataset.state ?? "");
+  root.dataset.capsule = cap ? "1" : "";
+  root.dataset.collapsed = !cap && (collapsed || capsule) ? "1" : "";
   root.title = capsule ? (meeting ? "Click to open the meeting · drag to move" : "") : collapsed ? "Click to open · drag to move" : "";
 }
 
@@ -432,7 +438,12 @@ void (async () => {
     if (e.payload.state === "done" && meet?.state === "recording" && meet.meeting.id !== e.payload.meeting.id) return;
     meet = e.payload;
     meetAt = performance.now();
-    if (meet.state === "recording") meetError = null;
+    if (meet.state === "recording") {
+      meetError = null;
+      // A meeting records: the call offer is taken (or not needed). Kept, it would come back
+      // in place of the saved meeting when a short meeting ends within its 20 s.
+      if (callNote?.state === "offer") callNote = null;
+    }
     show();
   });
   await listen<{ result: { Ok?: string; Err?: string } }>("meeting-start", (e) => {
