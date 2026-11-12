@@ -20,6 +20,8 @@ pub struct View {
     pub model_choice: String,
     /// What "Automatic" picks on this computer (a label).
     pub auto_model: String,
+    /// A provider transcribes (Settings → Speech): its label ("gpt-4o-transcribe · OpenAI").
+    pub cloud: Option<String>,
     /// None: the microphone cannot be chosen here (no PipeWire/PulseAudio).
     pub mics: Option<Vec<MicItem>>,
     /// The saved choice ("" = the system default).
@@ -134,7 +136,10 @@ pub fn entries(v: &View) -> Vec<Entry> {
         }
     };
 
-    let mut models = vec![check("model:".into(), format!("Automatic — {}", v.auto_model), v.model_choice.is_empty())];
+    // A provider in the cloud is chosen in Settings; a model here, chosen in this menu, takes over.
+    let local = v.cloud.is_none();
+    let mut models: Vec<Entry> = v.cloud.iter().map(|c| check("speech:cloud".into(), format!("Cloud — {c}"), true)).collect();
+    models.push(check("model:".into(), format!("Automatic — {}", v.auto_model), local && v.model_choice.is_empty()));
     for m in &v.models {
         let label = if m.downloading {
             format!("{} · downloading…", m.label)
@@ -143,7 +148,7 @@ pub fn entries(v: &View) -> Vec<Entry> {
         } else {
             format!("{} · {} download", m.label, size(m.download_mb))
         };
-        models.push(check(format!("model:{}", m.id), label, v.model_choice == m.id));
+        models.push(check(format!("model:{}", m.id), label, local && v.model_choice == m.id));
     }
 
     let mut out = vec![item("open", "Open", true), Entry::Separator];
@@ -215,6 +220,7 @@ mod tests {
             ],
             model_choice: String::new(),
             auto_model: "Large v3 Turbo (q5)".into(),
+            cloud: None,
             mics: Some(vec![
                 MicItem { id: "alsa.usb".into(), name: "USB mic".into(), bluetooth: false, default: true },
                 MicItem { id: "bluez.g733".into(), name: "G733".into(), bluetooth: true, default: false },
@@ -274,6 +280,12 @@ mod tests {
         assert_eq!(labels(&entries(&v))[2..4], ["Transcribing… (off)", "Saving the recording… (off)"]);
         v.mics = None;
         assert_eq!(sub(&entries(&v), "Microphone"), vec!["System default (choosing one needs PipeWire or PulseAudio) (off)"]);
+        // A provider transcribes: it is the checked entry; a model here takes over when chosen.
+        v.cloud = Some("gpt-4o-transcribe · OpenAI".into());
+        let m = sub(&entries(&v), "Speech-to-text model");
+        assert_eq!(m[..2], ["[x] Cloud — gpt-4o-transcribe · OpenAI", "[ ] Automatic — Large v3 Turbo (q5)"]);
+        assert!(m.iter().filter(|l| l.starts_with("[x]")).count() == 1, "{m:?}");
+        assert_eq!(action("speech:cloud"), None, "the checked entry does nothing");
     }
 
     #[test]

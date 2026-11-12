@@ -21,6 +21,14 @@ export interface Options {
   ai_model?: string;
   /** "" removes the key. */
   ai_key?: string;
+  /** "custom" (your own server) or a provider that writes notes. */
+  ai_provider?: string;
+  /** "" = the model on this computer; else a provider that transcribes. */
+  speech_provider?: string;
+  speech_model?: string;
+  speech_url?: string;
+  /** One provider's key ("" removes it); slot: the provider's id, or "custom-speech". */
+  api_key?: { slot: string; key: string };
   ai_auto?: boolean;
   /** The instructions for the notes; "" goes back to the app's. */
   ai_prompt?: string;
@@ -60,6 +68,8 @@ export interface Backend {
   /** Returns false when the user cancelled. */
   save(fileName: string, body: string, mime: string): Promise<boolean>;
   saveOptions(o: Options): Promise<void>;
+  /** A provider's models (suggestions), with its saved key: an error says why it was refused. */
+  providerModels(provider: string, speech: boolean): Promise<string[]>;
   /** Quit the app (as the tray menu's Quit). */
   quit(): Promise<void>;
   /** Settings → Connections → Note apps: the system's folder dialog (saved at once); false when cancelled. */
@@ -188,6 +198,7 @@ async function desktopBackend(): Promise<Backend> {
     async saveOptions(o) {
       await invoke("set_options", { options: o });
     },
+    providerModels: (provider, speech) => invoke<string[]>("provider_models", { provider, speech }),
     chooseExportFolder: async () => (await invoke<unknown>("choose_export_folder")) !== null,
     screenForget: () => invoke("screen_forget"),
     screenCheck: () => invoke("screen_check"),

@@ -16,6 +16,7 @@
   --primary-foreground: #fafafa;
   --destructive: #dc2626;
   --success: #16a34a;
+  --warning: #d97706;
   --brand: #27272a;
   --brand-soft: #f4f4f5;
   /* Meeting voices: Me (the microphone) is neutral; Them (the computer's sound) is steel blue. */
@@ -53,6 +54,7 @@
   --primary-foreground: #18181b;
   --destructive: #f87171;
   --success: #4ade80;
+  --warning: #fbbf24;
   --brand: #e4e4e7;
   --brand-soft: #1c1c1f;
   --me: #e4e4e7;
@@ -267,6 +269,21 @@ h1 { font-size: 20px; font-weight: 600; }
 .key-row[data-capturing] .key-current { border-color: var(--brand); box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 25%, transparent); }
 .key-note[data-kind="error"] { color: var(--destructive); }
 .key-note[data-kind="ok"] { color: var(--success); }
+
+/* Alerts (the provider forms): a note with an icon, in a box tinted by its kind. */
+.alert {
+  --tone: var(--muted-foreground); display: flex; gap: 10px; align-items: flex-start; margin: 0; padding: 9px 12px;
+  border: 1px solid color-mix(in srgb, var(--tone) 35%, transparent); border-radius: calc(var(--radius) - 2px);
+  background: color-mix(in srgb, var(--tone) 8%, var(--background)); color: color-mix(in srgb, var(--tone) 70%, var(--foreground));
+  font-size: 13px; line-height: 1.45; overflow-wrap: anywhere;
+}
+.alert[data-kind="info"] { border-color: var(--border); background: color-mix(in srgb, var(--muted) 60%, var(--background)); color: var(--muted-foreground); }
+.alert[data-kind="ok"] { --tone: var(--success); }
+.alert[data-kind="error"] { --tone: var(--destructive); }
+.alert[data-kind="warn"] { --tone: var(--warning); }
+.alert-icon { flex: none; width: 16px; height: 16px; margin-top: 1.5px; fill: none; stroke: var(--tone); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.alert[data-kind="info"] .alert-icon { stroke: var(--foreground); opacity: 0.7; }
+.alert .spinner { margin-top: 1.5px; }
 
 .about { display: grid; grid-template-columns: 140px 1fr; gap: 12px 16px; margin: 0; }
 .about dt { color: var(--muted-foreground); }

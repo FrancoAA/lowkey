@@ -126,3 +126,24 @@ the `run4/prompt.txt` prompt, the same six meetings as "Time order". The KV cach
 - Both quantized caches lose content where the input is longest (~15k tokens). The app uses
   q8_0 all the same, for the memory (about 4.4 GB in all, not 5.4 GB): a choice, not a free gain.
   q4_0 is out: a wrong owner and a loop.
+
+## Cloud models (OpenRouter, 2026-11-11)
+
+`cloud.py`: the app's instructions (notes by topic, a time on each point), no temperature (the
+provider's own), up to 32,000 tokens. 15 checks from expected.json, counted by the script: 4
+decisions, 5 tasks with the right owner in bold, the 2 open questions, 41 customers and the
+3.2% churn, no task for "Them", the Acme call for **Me**. Three runs of the six best; one run
+of the others. Seconds and dollars for one meeting.
+
+| Model | Thinks | Score (runs) | Seconds | Cost | Note |
+|---|---|---|---|---|---|
+| **moonshotai/kimi-k2-0905** | no | **15, 15, 15** | 18–19 | $0.004 | **the default for OpenRouter**; reasons and dropped options as sub-bullets |
+| anthropic/claude-sonnet-5.5 | yes | 15, 15, 15 | 17–19 | $0.035 | as good; some sub-bullets without a time |
+| google/gemini-3.8-flash | yes | 15, 15, 15 | 33–70 | $0.02–0.035 | slow |
+| anthropic/claude-haiku-5.5 | yes | 13, 15, 13 | 14–22 | $0.002 | writes **Yo** for **Me** (2 of 3 runs): the Acme call has no owner |
+| mistralai/mistral-medium-3.1 | no | 14, 11, 14 | 3–5 | $0.001–0.002 | the fastest; drops facts (the figures, January) |
+| google/gemini-3.1-flash-lite | no | 13, 12, 12 | 3–4 | $0.0015 | drops the figures |
+| openai/gpt-5-mini | yes | 12 (1 run) | 46 | $0.011 | copies transcript lines ("Por mí bien"), numbers as words |
+| openai/gpt-4.1-mini | no | 9 (1 run) | 5 | $0.002 | no owner in bold |
+| qwen/qwen3.8-flash | yes | 12 (1 run) | 486 | $0.016 | thought to the 32,000-token limit |
+| deepseek/deepseek-v4.1-flash-1017 | yes | (the app's live test) | 53–147 | $0.009–0.016 | at temperature 0 it thought in a loop and wrote nothing |

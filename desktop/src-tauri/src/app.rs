@@ -169,13 +169,18 @@ fn test_event(event: String, payload: Value) {
 }
 
 impl App {
-    /// CLI --model > config.toml > automatic choice for this machine.
+    /// CLI --model > a provider chosen in Settings → Speech (`cloud:<provider>/<model>`) >
+    /// config.toml > automatic choice for this machine.
     pub fn current_model(&self) -> String {
-        let cfg = self.config.lock().model.clone();
-        for id in [self.cli.model.clone().unwrap_or_default(), cfg] {
-            if models::spec(&id).is_some() {
-                return id;
-            }
+        if let Some(id) = self.cli.model.clone().filter(|m| models::spec(m).is_some()) {
+            return id;
+        }
+        let cfg = self.config.lock().clone();
+        if let Some(id) = crate::providers::speech_model_id(&cfg) {
+            return id;
+        }
+        if models::spec(&cfg.model).is_some() {
+            return cfg.model;
         }
         models::auto_model(&self.engines.hw).to_string()
     }
@@ -319,8 +324,13 @@ impl App {
             "recording": self.meeting.lock().is_some(),
             // OPENWHISPER_TEST_LOG: the page reports its player's events (`test_event`).
             "test": std::env::var_os("OPENWHISPER_TEST_LOG").is_some(),
+            // The providers (chat, speech, default models) and which have a key; never the keys.
+            "providers": crate::providers::status(&cfg.api_keys),
+            // Settings → Speech: "" = the model on this computer; `label`: the provider's model that transcribes now.
+            "speech": { "provider": cfg.speech_provider, "model": cfg.speech_model, "url": cfg.speech_url, "label": crate::providers::speech_label(&current) },
             "ai": {
-                "engine": cfg.ai_engine, "url": cfg.ai_url, "model": cfg.ai_model, "has_key": !cfg.ai_key.is_empty(),
+                "engine": cfg.ai_engine, "provider": crate::providers::chat(&cfg.ai_provider).map_or(crate::providers::CUSTOM, |p| p.id),
+                "url": cfg.ai_url, "model": cfg.ai_model, "has_key": cfg.api_keys.contains_key(crate::providers::CUSTOM),
                 "auto": cfg.ai_auto,
                 // The instructions for the notes: the user's ("" = none), and the built-in ones.
                 "prompt": cfg.ai_prompt, "default_prompt": llm::NOTES_PROMPT,
@@ -385,6 +395,7 @@ impl App {
                 .collect(),
             // A saved name this build does not know counts as automatic (as current_model does).
             model_choice: if models::spec(&cfg.model).is_some() { cfg.model.clone() } else { String::new() },
+            cloud: crate::providers::speech_model_id(&cfg).and_then(|id| crate::providers::speech_label(&id)),
             auto_model: models::spec(auto).map(|m| m.label).unwrap_or(auto).to_string(),
             mics: self.tray_mics.lock().as_ref().map(|l| {
                 l.iter().map(|m| MicItem { id: m.id.clone(), name: m.name.clone(), bluetooth: m.bluetooth, default: m.default }).collect()
@@ -1282,8 +1293,16 @@ struct OptionsIn {
     ai_builtin_model: Option<String>,
     ai_url: Option<String>,
     ai_model: Option<String>,
-    /// Some("") removes the key.
+    /// Your own notes server's key (older pages); Some("") removes it.
     ai_key: Option<String>,
+    /// "custom" or a provider that writes notes.
+    ai_provider: Option<String>,
+    /// "" = the model on this computer, else a provider that transcribes.
+    speech_provider: Option<String>,
+    speech_model: Option<String>,
+    speech_url: Option<String>,
+    /// One provider's key: { slot, key }; key "" removes it.
+    api_key: Option<ApiKeyIn>,
     ai_auto: Option<bool>,
     /// Some("") (or the built-in text) goes back to the built-in instructions.
     ai_prompt: Option<String>,
@@ -1312,6 +1331,12 @@ impl OptionsIn {
 }
 
 #[derive(Deserialize)]
+struct ApiKeyIn {
+    slot: String,
+    key: String,
+}
+
+#[derive(Deserialize)]
 struct CallPolicyIn {
     key: String,
     policy: String,
@@ -1322,18 +1347,73 @@ fn set_options(app: State<'_, AppRef>, options: OptionsIn) -> Result<Value, Stri
     apply_options(app.inner(), options)
 }
 
+/// Your own server's address: http(s), without the slash at the end.
+fn valid_server_url(u: &str, example: &str) -> Result<String, String> {
+    let u = u.trim().trim_end_matches('/').to_string();
+    if !(u.starts_with("http://") || u.starts_with("https://")) || reqwest::Url::parse(&u).is_err() {
+        return Err(format!("The server address starts with http:// or https://, e.g. {example}"));
+    }
+    Ok(u)
+}
+
+/// Settings: the provider's models, as suggestions for the model field. It checks the saved key
+/// too (an error says why it was refused). `speech`: for Settings → Speech.
+#[tauri::command]
+async fn provider_models(app: State<'_, AppRef>, provider: String, speech: bool) -> Result<Vec<String>, String> {
+    let cfg = app.config.lock().clone();
+    let p = if speech { crate::providers::speech(&provider) } else { crate::providers::chat(&provider) }.ok_or_else(|| format!("Unknown service {provider:?}"))?;
+    let access = if speech {
+        crate::providers::speech_access(&format!("{}{}/", crate::providers::CLOUD_PREFIX, p.id), &cfg.api_keys, &cfg.speech_url)
+    } else {
+        crate::providers::chat_access(&crate::config::Config { ai_provider: p.id.into(), ..cfg })
+    }
+    .map_err(|e| e.to_string())?;
+    tauri::async_runtime::spawn_blocking(move || crate::providers::list_models(&access, speech)).await.map_err(|e| e.to_string())?.map_err(|e| format!("{e:#}"))
+}
+
 /// Save options from the window or the tray menu, and act on them (a new model is prepared).
 fn apply_options(app: &AppRef, options: OptionsIn) -> Result<Value, String> {
     let model_changed;
     let preview_on = options.live_preview == Some(true) || options.preview_engine.is_some();
+    let before = app.current_model();
     {
         let mut cfg = app.config.lock();
-        let before = cfg.model.clone();
         if let Some(m) = options.model {
             if !m.is_empty() && models::spec(&m).is_none() {
                 return Err(format!("Unknown model {m:?}"));
             }
             cfg.model = m;
+            // A model on this computer chosen (the tray menu): the audio stays here again.
+            if options.speech_provider.is_none() {
+                cfg.speech_provider.clear();
+            }
+        }
+        if let Some(p) = options.speech_provider {
+            if !p.is_empty() && crate::providers::speech(&p).is_none() {
+                return Err(format!("Unknown speech service {p:?}"));
+            }
+            cfg.speech_provider = p;
+        }
+        if let Some(m) = options.speech_model {
+            cfg.speech_model = m.trim().to_string();
+        }
+        if let Some(u) = options.speech_url {
+            cfg.speech_url = valid_server_url(&u, "http://localhost:8000/v1")?;
+        }
+        if let Some(p) = options.ai_provider {
+            if crate::providers::chat(&p).is_none() {
+                return Err(format!("Unknown notes service {p:?}"));
+            }
+            cfg.ai_provider = p;
+        }
+        if let Some(k) = options.api_key {
+            if !crate::providers::valid_slot(&k.slot) {
+                return Err(format!("Unknown service {:?}", k.slot));
+            }
+            match k.key.trim() {
+                "" => cfg.api_keys.remove(&k.slot),
+                key => cfg.api_keys.insert(k.slot, key.to_string()),
+            };
         }
         if let Some(l) = options.language {
             if !valid_language(&l) {
@@ -1367,17 +1447,16 @@ fn apply_options(app: &AppRef, options: OptionsIn) -> Result<Value, String> {
             cfg.ai_builtin_model = m;
         }
         if let Some(u) = options.ai_url {
-            let u = u.trim().to_string();
-            if !(u.starts_with("http://") || u.starts_with("https://")) {
-                return Err("The server address starts with http:// or https://, e.g. http://localhost:11434/v1".into());
-            }
-            cfg.ai_url = u;
+            cfg.ai_url = valid_server_url(&u, "http://localhost:11434/v1")?;
         }
         if let Some(m) = options.ai_model {
             cfg.ai_model = m.trim().to_string();
         }
         if let Some(k) = options.ai_key {
-            cfg.ai_key = k.trim().to_string();
+            match k.trim() {
+                "" => cfg.api_keys.remove(crate::providers::CUSTOM),
+                key => cfg.api_keys.insert(crate::providers::CUSTOM.into(), key.to_string()),
+            };
         }
         if let Some(on) = options.ai_auto {
             cfg.ai_auto = on;
@@ -1448,9 +1527,10 @@ fn apply_options(app: &AppRef, options: OptionsIn) -> Result<Value, String> {
             cfg.vocabulary = crate::vocabulary::normalize(&v);
             app.engines.set_vocabulary(&cfg.vocabulary);
         }
-        model_changed = cfg.model != before;
+        app.engines.set_cloud(&cfg.api_keys, &cfg.speech_url);
         cfg.save().map_err(|e| e.to_string())?;
     }
+    model_changed = app.current_model() != before;
     // After the other options are valid and saved.
     if let Some(on) = options.start_at_login {
         set_start_at_login(app, on)?;
@@ -1608,7 +1688,7 @@ fn meeting_open(app: &AppRef, title: &str) -> Result<meeting::Live, String> {
             let _ = h.emit("meeting-level", json!({"me": me, "them": them}));
         }
     });
-    let doc = meeting::Meeting::new(title, &model);
+    let doc = meeting::Meeting::new(title, &crate::providers::speech_label(&model).unwrap_or_else(|| model.clone()));
     let id = doc.id.clone();
     let session = meeting::Session::new(meeting::dir(), doc, transcribe, emit).map_err(|e| format!("Could not save the meeting: {e:#}"))?;
     if app.config.lock().meeting_voices && crate::voices::SUPPORTED {
@@ -1840,7 +1920,7 @@ const VOICES_PENDING: &str = "Wait until the voices are told apart (about 2 minu
 fn after_meeting(app: &AppRef, m: &meeting::Meeting) {
     auto_export(app, &m.id);
     let cfg = app.config.lock().clone();
-    let ready = if cfg.ai_engine == "server" { !cfg.ai_url.is_empty() } else { llm::builtin_status(&cfg.ai_builtin_model).supported };
+    let ready = if cfg.ai_engine == "server" { crate::providers::chat_access(&cfg).is_ok() } else { llm::builtin_status(&cfg.ai_builtin_model).supported };
     if cfg.ai_auto && ready && !m.lines.is_empty() {
         if let Err(why) = start_ai_notes(app, m.id.clone()) {
             // e.g. another meeting's notes are being written: say so in this meeting.
@@ -2196,14 +2276,14 @@ fn auto_export_after_edits(app: &AppRef, id: &str) {
 
 // ------------------------------------------------------------------ AI notes
 /// Settings → Meetings → Notes: the engine to use now.
-fn ai_engine(app: &AppRef) -> llm::Engine {
+fn ai_engine(app: &AppRef) -> anyhow::Result<llm::Engine> {
     let cfg = app.config.lock().clone();
-    if cfg.ai_engine == "server" {
-        llm::Engine::Server { url: cfg.ai_url, model: cfg.ai_model, key: cfg.ai_key }
+    Ok(if cfg.ai_engine == "server" {
+        llm::Engine::Server { access: crate::providers::chat_access(&cfg)? }
     } else {
         // Vulkan / Metal when the app found a GPU; the CPU else (slower, but it works).
         llm::Engine::Builtin { gpu: app.engines.hw.gpu.is_some(), model: cfg.ai_builtin_model }
-    }
+    })
 }
 
 /// Write the AI notes of a saved meeting (in the background; "ai-notes" events follow it).
@@ -2280,15 +2360,17 @@ fn run_ai_notes(app: &AppRef, id: &str) {
             }
             None => llm::language_of(&m.lines.iter().map(|l| l.text.as_str()).collect::<Vec<_>>().join(" ")).to_string(),
         };
-        let engine = ai_engine(app);
+        let engine = ai_engine(app)?;
         let label = match &engine {
             llm::Engine::Builtin { model, .. } => llm::model(model).label.to_string(),
-            llm::Engine::Server { model, url, .. } => if model.is_empty() { url.clone() } else { model.clone() },
+            llm::Engine::Server { access: a } if a.provider.id == crate::providers::CUSTOM => if a.model.is_empty() { a.url.clone() } else { a.model.clone() },
+            llm::Engine::Server { access: a } => format!("{} ({})", a.model, a.provider.label),
         };
         let mut last = Instant::now() - Duration::from_secs(1);
         let mut progress = |what: &str, done: u64, total: u64| match what {
             "starting" => send("preparing", "Starting the model…", 0.0, ""),
             "writing" => send("writing", "Writing…", 0.0, ""),
+            "thinking" => send("preparing", "The model thinks before it writes…", 0.0, ""),
             "checking the download" => send("preparing", "Checking the download…", 1.0, ""),
             what if last.elapsed() >= Duration::from_millis(250) || done == total => {
                 last = Instant::now();
@@ -2383,11 +2465,12 @@ fn run_chat(app: &AppRef, id: &str, question: &str) {
         let m = meeting::load_in(&meeting::dir(), id)?;
         anyhow::ensure!(!m.lines.is_empty() || !m.notes.trim().is_empty() || !m.ai_notes.trim().is_empty(), "this meeting has no transcript and no notes");
         let history: Vec<(String, String)> = m.chat.iter().map(|c| (c.role.clone(), c.text.clone())).collect();
-        let engine = ai_engine(app);
+        let engine = ai_engine(app)?;
         let mut last = Instant::now() - Duration::from_secs(1);
         let mut progress = |what: &str, done: u64, total: u64| match what {
             "starting" => send("preparing", "Starting the model…", 0.0, ""),
             "writing" => send("writing", "", 0.0, ""),
+            "thinking" => send("preparing", "Thinking…", 0.0, ""),
             "checking the download" => send("preparing", "Checking the download…", 1.0, ""),
             what if last.elapsed() >= Duration::from_millis(250) || done == total => {
                 last = Instant::now();
@@ -2883,6 +2966,7 @@ pub fn run() {
             copy_text,
             save_export,
             set_options,
+            provider_models,
             set_hotkey,
             set_meeting_hotkey,
             set_paste_hotkey,
@@ -2960,6 +3044,7 @@ pub fn run() {
             hyprland::set_overlay_place(place);
             let engines = Engines::new(config.idle_unload_minutes);
             engines.set_vocabulary(&config.vocabulary);
+            engines.set_cloud(&config.api_keys, &config.speech_url);
             let h_jobs = handle.clone();
             // Every finished dictation goes to the history (the global key's jobs are
             // "dictation", the window's "Dictation"); files do not.

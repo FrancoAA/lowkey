@@ -55,9 +55,17 @@ export interface Status {
   screen?: { supported: boolean; chosen: boolean; check: { state: "checking" | "ready" | "missing"; encoder: string; problem: string } };
   /** Settings → Connections → Note apps: the folder ("" = off), by itself, the parts, the Obsidian vault it is in. */
   export?: { dir: string; auto: boolean; parts: string[]; vault: string | null };
+  /** The AI providers (desktop/src-tauri/src/providers.rs), and the key slots that have a key
+   * ("custom-speech": your own speech server). The keys never come to the page. */
+  providers?: { list: Provider[]; keys: string[] };
+  /** Settings → Speech: provider "" = the model on this computer; `label`: the provider's model
+   * that transcribes now ("gpt-4o-transcribe · OpenAI"), else null. */
+  speech?: { provider: string; model: string; url: string; label: string | null };
   /** AI notes settings (the API key itself never comes to the page). */
   ai?: {
+    /** "server": a provider (`provider`: "custom" is your own server). */
     engine: "builtin" | "server";
+    provider: string;
     /** The built-in model's id (qwen3.5-4b, qwen3.5-2b, gemma-4-e4b). */
     builtin_model: string;
     url: string;
@@ -89,6 +97,31 @@ export interface Status {
   };
   /** Live preview: state off | preparing | ready | unavailable; engine whistle | parakeet. */
   preview?: { state: string; error: string | null; engine?: string };
+}
+
+/** A provider that can write notes (`chat`) and/or transcribe (`speech`). */
+/** A model that Settings offers, with what to know about it in a few words. */
+export interface ProviderModel {
+  id: string;
+  note: string;
+}
+
+export interface Provider {
+  id: string;
+  label: string;
+  /** "" for your own server (its address is in the settings). */
+  url: string;
+  chat: string | null;
+  chat_model: string;
+  /** The notes models to offer, the default first. */
+  chat_models: ProviderModel[];
+  speech: string | null;
+  speech_model: string;
+  /** The speech models to offer, the default first. */
+  speech_models: ProviderModel[];
+  keys_url: string;
+  /** Its model list answers without a key (listing does not check the key). */
+  public_models: boolean;
 }
 
 export interface Segment {
