@@ -61,6 +61,11 @@ macOS and Windows, a prompt when a call starts, and questions over past meetings
   transcript's Me and Them) and Stop (it has the focus after Start); the notes and the chat
   start when it stops. Esc goes back to the list (not while a question is typed, or a dialog is
   open).
+- The panels can be resized: drag the line between the notes and the chat (with a screen video,
+  also the line between the video and the chat), or focus it with Tab and use the arrow keys
+  (Shift: bigger steps; Home and End: smallest and largest). A double click puts the normal size
+  back. The sizes are kept on this computer, and always leave the other panel at least 320 px
+  (`frontend/src/splitter.ts`). In one column there is nothing to resize.
 - A point of the notes (a bullet's own text, without its sub-bullets) is a button: a click or
   Enter shows under it up to three transcript paragraphs it most likely comes from, with the
   speaker, the time and the shared words marked; **Show in transcript** switches to the

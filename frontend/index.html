@@ -202,8 +202,11 @@
                   <div id="video-parts" class="video-parts" role="group" aria-label="The screen videos of this meeting" hidden></div>
                 </div>
               </section>
+              <!-- Drag (or arrow keys) to resize the panels; a double click puts them back. -->
+              <div id="split-rows" class="splitter splitter-rows" role="separator" aria-orientation="horizontal" aria-label="Height of the screen video" aria-controls="video-box" tabindex="0" title="Drag to resize. Double-click: back to the normal size."></div>
+              <div id="split-cols" class="splitter splitter-cols" role="separator" aria-orientation="vertical" aria-label="Width of the chat" tabindex="0" title="Drag to resize. Double-click: back to the normal size."></div>
               <!-- The notes, or the transcript in their place (the switch). -->
-              <section class="notes-pane" aria-label="Notes and transcript">
+              <section id="notes-pane" class="notes-pane" aria-label="Notes and transcript">
                 <div class="notes-head">
                   <div class="seg" role="tablist" aria-label="Show">
                     <button id="tab-notes" type="button" role="tab" class="seg-item" aria-selected="true" aria-controls="notes-panel">Notes</button>
@@ -233,7 +236,7 @@
                 </div>
               </section>
               <!-- Questions about this meeting, answered by the notes model. -->
-              <aside class="chat-pane" aria-labelledby="chat-title">
+              <aside id="chat-pane" class="chat-pane" aria-labelledby="chat-title">
                 <div class="chat-head">
                   <h3 id="chat-title" class="pane-title">Ask about this meeting</h3>
                   <button id="chat-clear" type="button" class="btn btn-ghost btn-sm" hidden>Clear</button>
