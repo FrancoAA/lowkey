@@ -13,6 +13,7 @@ import type { Backend } from "./backend";
 import { renderMarkdown } from "./markdown";
 import { excerpt, SourceIndex } from "./crossref";
 import { DualWaveform } from "./waveform";
+import { resizablePanels } from "./splitter";
 
 /** A small spinner (style.css "loading"): the app is at work, with no measure of how far. */
 function spinner(): HTMLElement {
@@ -755,6 +756,14 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
   }
   setCollapsed(videoCollapsed);
   videoToggle.addEventListener("click", () => setCollapsed(!videoCollapsed));
+
+  resizablePanels(body, {
+    cols: $<HTMLElement>("split-cols"),
+    rows: $<HTMLElement>("split-rows"),
+    video: player,
+    chat: $<HTMLElement>("chat-pane"),
+    notes: $<HTMLElement>("notes-pane"),
+  });
 
   /** The video at moment `t` of the meeting (the transcript's time). `play`: true plays it,
    * false shows that moment paused, null keeps the player as it is (playing or not). */

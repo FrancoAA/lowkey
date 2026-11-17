@@ -486,13 +486,23 @@ mark { background: color-mix(in srgb, var(--brand) 20%, transparent); color: inh
   border: 1px solid color-mix(in srgb, #d97706 45%, transparent); background: color-mix(in srgb, #d97706 8%, var(--background)); }
 
 /* The notes (or the transcript) on the left, the chat on the right, from 720 px; one above the
-   other below that. Each side scrolls on its own. */
+   other below that. Each side scrolls on its own. The line between them (20 px, the gap) can be
+   dragged: --chat-w is then the chat's width (splitter.ts). */
 .meeting-body {
-  flex: 1; min-height: 0; display: grid; gap: 20px;
-  grid-template-columns: minmax(0, 1fr) minmax(300px, 380px); grid-template-rows: minmax(0, 1fr);
+  flex: 1; min-height: 0; display: grid; gap: 0;
+  grid-template-columns: minmax(0, 1fr) 20px var(--chat-w, minmax(300px, 380px)); grid-template-rows: minmax(0, 1fr);
+  grid-template-areas: "notes cols chat";
 }
+.meeting-body > .notes-pane { grid-area: notes; }
+.meeting-body > .chat-pane { grid-area: chat; }
+.meeting-body > .splitter-cols { grid-area: cols; }
+.meeting-body > .splitter-rows { grid-area: rows; display: none; }
 @container (max-width: 719px) {
-  .meeting-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(420px, auto); overflow-y: auto; }
+  .meeting-body {
+    grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(420px, auto); overflow-y: auto;
+    grid-template-areas: "notes" "chat"; gap: 20px;
+  }
+  .meeting-body > .splitter-cols { display: none; }
   /* (inside .meeting-body: these win over the panes' own rules further down) */
   .meeting-body .ai-body, .meeting-body .meeting-transcript { flex: none; overflow: visible; }
   .meeting-body .notes-pane { min-height: auto; }
@@ -763,21 +773,27 @@ dialog.confirm p { margin: 8px 0 0; color: var(--muted-foreground); font-size: 1
 /* ───────────────────────────── Screen video ───────────────────────────── */
 /* With a video: the video and the chat on the left, the notes and the transcript on the right,
    each side scrolls on its own. The video keeps its shape; the chat gets the rest. */
+/* The two lines can be dragged: --notes-w is then the notes' width, --video-h the video's
+   height (splitter.ts). */
 .meeting-body[data-video] {
-  grid-template-columns: minmax(0, 1.25fr) minmax(320px, 1fr);
-  grid-template-rows: auto minmax(0, 1fr);
-  grid-template-areas: "video notes" "chat notes";
+  grid-template-columns: minmax(0, 1.25fr) 20px var(--notes-w, minmax(320px, 1fr));
+  grid-template-rows: auto 20px minmax(0, 1fr);
+  grid-template-areas: "video cols notes" "rows cols notes" "chat cols notes";
 }
 .meeting-body[data-video] > .meeting-video { grid-area: video; }
-.meeting-body[data-video] > .notes-pane { grid-area: notes; }
 .meeting-body[data-video] > .chat-pane { grid-area: chat; min-height: 200px; }
+.meeting-body[data-video] > .splitter-rows { display: block; }
+.meeting-body[data-video] .video-box video { max-height: var(--video-h, 58vh); }
+/* The video folded: nothing to make taller. */
+.meeting-body[data-video]:has(.video-box[hidden]) > .splitter-rows { visibility: hidden; pointer-events: none; }
 /* Not wide enough for two columns and a usable video: one column, the video on top (it stays in
    view while the rest scrolls), then the notes and the transcript, then the chat. */
 @container (max-width: 899px) {
   .meeting-body[data-video] {
     grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto minmax(420px, auto);
-    grid-template-areas: "video" "notes" "chat"; overflow-y: auto;
+    grid-template-areas: "video" "notes" "chat"; overflow-y: auto; gap: 20px;
   }
+  .meeting-body[data-video] > .splitter { display: none; }
   .meeting-body[data-video] .ai-body, .meeting-body[data-video] .meeting-transcript { flex: none; overflow: visible; }
   .meeting-body[data-video] .notes-pane { min-height: auto; }
   .meeting-body[data-video] > .meeting-video {
@@ -830,3 +846,25 @@ dialog.confirm p { margin: 8px 0 0; color: var(--muted-foreground); font-size: 1
 .prompt-input { height: auto; min-height: 12em; padding: 8px 12px; resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.8rem; line-height: 1.5; }
 .prompt-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .prompt-actions > .field-desc { flex: 1 1 12em; margin: 0; }
+
+/* ─────────────────────────── Resizable panels ─────────────────────────── */
+/* The line between two panels: the whole gap takes the pointer, a thin line shows on hover, on
+   focus and while it is dragged. */
+.splitter { position: relative; touch-action: none; outline: none; }
+.splitter-cols { cursor: col-resize; }
+.splitter-rows { cursor: row-resize; }
+.splitter::before {
+  content: ""; position: absolute; border-radius: 2px; background: transparent;
+  transition: background-color 0.12s;
+}
+.splitter-cols::before { top: 0; bottom: 0; left: calc(50% - 1px); width: 2px; }
+.splitter-rows::before { left: 0; right: 0; top: calc(50% - 1px); height: 2px; }
+.splitter:hover::before { background: var(--border); }
+.splitter:focus-visible::before { background: var(--ring); }
+.meeting-body[data-resizing="cols"] > .splitter-cols::before,
+.meeting-body[data-resizing="rows"] > .splitter-rows::before { background: var(--ring); }
+/* While dragging: the cursor stays, the text and the video do not take the pointer. */
+.meeting-body[data-resizing] { user-select: none; }
+.meeting-body[data-resizing="cols"] { cursor: col-resize; }
+.meeting-body[data-resizing="rows"] { cursor: row-resize; }
+.meeting-body[data-resizing] video { pointer-events: none; }
