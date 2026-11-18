@@ -644,6 +644,23 @@ mark { background: color-mix(in srgb, var(--tint) 22%, transparent); color: inhe
 .notes-panel, .transcript-panel, .mine-panel { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 10px; border-radius: 4px; }
 .notes-panel:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 35%, transparent); }
 .pane-title { font-size: 14px; font-weight: 600; color: var(--foreground); }
+/* Two columns (the notes' side is 1000 px or wider, meetings.ts): the summary or your notes on the
+   left, the transcript on the right, each with its own head on one line and its own scroll. */
+.transcript-head { display: none; }
+.notes-pane[data-dual] {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-rows: auto auto auto minmax(0, 1fr);
+  column-gap: 40px; row-gap: 0;
+}
+.notes-pane[data-dual] > * { grid-column: 1; }
+.notes-pane[data-dual] > .notes-head { grid-row: 1; margin-bottom: 16px; }
+.notes-pane[data-dual] > .progress, .notes-pane[data-dual] > .ai-error { grid-row: 2; margin-bottom: 12px; }
+.notes-pane[data-dual] > .ai-error { grid-row: 3; }
+.notes-pane[data-dual] > .notes-panel, .notes-pane[data-dual] > .mine-panel { grid-row: 4; }
+.notes-pane[data-dual] > .transcript-panel { grid-column: 2; grid-row: 1 / -1; gap: 16px; padding-left: 40px; border-left: 1px solid var(--border); margin-bottom: -14px; }
+.notes-pane[data-dual] .transcript-head {
+  display: flex; align-items: center; flex: none; height: 38px; margin: 0;
+  border-bottom: 1px solid var(--border); font-size: 14px; font-weight: 550; color: var(--foreground);
+}
 .pending { font-size: 12px; color: var(--muted-foreground); }
 .meeting-transcript {
   flex: 1; min-height: 0; overflow-y: auto; padding: 0 10px 14px 2px;
@@ -1067,3 +1084,70 @@ dialog.confirm p { margin: 8px 0 0; color: var(--muted-foreground); font-size: 1
   /* The part's name heads its column (the tab no longer sits above it). */
   .settings-page .section-head h2 { display: block; font-size: 20px; font-weight: 650; letter-spacing: -0.02em; margin-bottom: 6px; }
 }
+/* A wide window: the meetings are a column on the left (a fixed width, the whole height, as the
+   Settings parts), the open meeting beside it. The foot's line runs across both, to the sidebar's. */
+@media (min-width: 1100px) {
+  #section-meetings, #section-meetings:has(> .meeting-view:not([hidden])) {
+    position: relative; width: auto; max-width: none; margin: 0 calc(-1 * var(--page-pad)); padding: 0; gap: 0;
+    display: grid; grid-template-columns: 300px minmax(0, 1fr); height: 100vh; min-height: 480px;
+  }
+  #section-meetings::after {
+    content: ""; position: absolute; left: 0; right: 0; bottom: calc(var(--foot-h) - 1px); height: 1px;
+    background: var(--border); pointer-events: none;
+  }
+  .meeting-foot::before { display: none; }
+  .meetings-home {
+    grid-column: 1; grid-row: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; gap: 14px;
+    padding: 26px 10px 0; border-right: 1px solid var(--border);
+    scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--muted-foreground) 35%, transparent) transparent;
+  }
+  .meetings-home .page-head { padding: 0 2px 0 12px; }
+  .meetings-home .page-title { font-size: 22px; }
+  .meetings-home .btn-rec { height: 32px; padding: 0 12px 0 10px; border-radius: 8px; font-size: 13px; }
+  .meetings-home .search-field .input { height: 34px; border-radius: 8px; font-size: 13px; }
+  .meetings-list { gap: 16px; }
+  .meeting-day h3 { margin-bottom: 2px; font-size: 12px; }
+  .meeting-item-open { gap: 10px; padding: 9px 6px 9px 12px; }
+  .meeting-item-title { font-size: 14px; }
+  .meeting-item-excerpt { font-size: 12.5px; -webkit-line-clamp: 2; }
+  .meeting-item-side { padding-top: 0; }
+  .meeting-item-time { font-size: 12px; color: var(--muted-foreground); }
+  .meeting-item-len { font-size: 11.5px; }
+  .meeting-item { padding-right: 4px; }
+  .meeting-item:has(.meeting-item-open[aria-current]) { background: var(--nav-on); }
+  /* The time gives way to Delete on hover, in the same place. */
+  .meeting-item-delete { position: absolute; right: 6px; }
+  .meeting-item { position: relative; }
+  .meeting-item:hover .meeting-item-side, .meeting-item:has(.meeting-item-delete:focus-visible) .meeting-item-side { visibility: hidden; }
+  .agenda-item { grid-template-columns: max-content minmax(0, 1fr) auto; gap: 12px; padding: 7px 6px 7px 12px; min-height: 46px; }
+  .agenda-when { font-size: 12px; white-space: nowrap; }
+  .agenda-title { font-size: 13.5px; }
+  .agenda-who { font-size: 12px; }
+  .meetings-empty { padding: 32px 14px; }
+  .meetings-empty svg { display: none; }
+  /* The meeting key, at the column's foot (the line above it is the section's). */
+  .list-foot {
+    position: sticky; bottom: 0; flex: none; margin: auto -10px 0; height: var(--foot-h); padding: 0 22px;
+    display: flex; align-items: center; background: var(--background);
+    width: auto; overflow: hidden; clip-path: none; white-space: nowrap;
+    font-size: 12px; color: var(--muted-foreground);
+  }
+  .list-foot span { overflow: hidden; text-overflow: ellipsis; }
+  .meeting-view {
+    grid-column: 2; grid-row: 1; height: 100vh; max-width: none; margin: 0; padding: 12px var(--page-pad) 0;
+  }
+  .meeting-view .back { display: none; }
+  .meeting-top-actions { margin-left: auto; }
+  .meeting-none {
+    grid-column: 2; grid-row: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 4px; padding: 0 24px calc(var(--foot-h) + 24px); text-align: center;
+  }
+  .meeting-none[hidden] { display: none; }
+}
+/* The meeting key's line is read with Record; on a narrow window it is not on screen. */
+@media (max-width: 1099px) {
+  .list-foot { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+}
+.meeting-none svg { width: 30px; height: 30px; margin-bottom: 8px; fill: none; stroke: var(--muted-foreground); stroke-width: 1.8; stroke-linecap: round; opacity: 0.6; }
+.meeting-none-title { margin: 0; font-weight: 600; font-size: 15px; }
+.meeting-none-text { margin: 0; color: var(--muted-foreground); font-size: 13px; max-width: 40ch; }

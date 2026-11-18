@@ -133,6 +133,11 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
   const wave = new DualWaveform($<HTMLCanvasElement>("meeting-wave"));
   const empty = $<HTMLElement>("meetings-empty");
   const view = $<HTMLDivElement>("meeting-view");
+  const none = $<HTMLDivElement>("meeting-none");
+  const noneTitle = $<HTMLElement>("meeting-none-title");
+  const noneText = $<HTMLElement>("meeting-none-text");
+  /** A wide window: the list stays on the left, the open meeting (or `none`) beside it. */
+  const split = window.matchMedia("(min-width: 1100px)");
   const back = $<HTMLButtonElement>("meeting-back");
   const title = $<HTMLInputElement>("meeting-title");
   const meta = $<HTMLElement>("meeting-meta");
@@ -174,6 +179,7 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
   const chatClose = $<HTMLButtonElement>("chat-close");
   const footText = $<HTMLElement>("meeting-foot-text");
   const notesPanel = $<HTMLDivElement>("notes-panel");
+  const notesPane = $<HTMLElement>("notes-pane");
   const transcriptPanel = $<HTMLDivElement>("transcript-panel");
   /** The model and what to do with the summary: in the foot, next to "Saved on this computer". */
   const aiMeta = footText;
@@ -898,7 +904,7 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
     if (!row) return;
     row.classList.add("tline-now");
     const userScrolled = performance.now() - userScrollAt < 4000;
-    if ((moved || !player.paused) && tab === "transcript" && !editing && !userScrolled && !row.contains(document.activeElement)) {
+    if ((moved || !player.paused) && !transcriptPanel.hidden && !editing && !userScrolled && !row.contains(document.activeElement)) {
       row.scrollIntoView({ block: moved ? "center" : "nearest", behavior: "smooth" });
     }
   }
@@ -980,15 +986,25 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
     ["notes", tabNotes],
   ] as const;
 
+  /** The notes' side is wide enough for two columns: the transcript is always on the right, the
+   * summary or your notes on the left (no Transcript tab then). */
+  let dual = false;
+  /** The tab on screen: in two columns, the transcript is not one. */
+  const shownTab = () => (dual && tab === "transcript" ? "notes" : tab);
+  const tabsInView = () => TABS.filter(([, b]) => !b.hidden);
+
   function renderTab(): void {
+    const on = shownTab();
     for (const [t, b] of TABS) {
-      b.setAttribute("aria-selected", String(t === tab));
-      b.tabIndex = t === tab ? 0 : -1;
+      b.setAttribute("aria-selected", String(t === on));
+      b.tabIndex = t === on ? 0 : -1;
     }
-    notesPanel.hidden = tab !== "notes";
-    minePanel.hidden = tab !== "mine";
-    transcriptPanel.hidden = tab !== "transcript";
-    pending.hidden = tab !== "transcript";
+    tabTranscript.hidden = dual;
+    notesPane.toggleAttribute("data-dual", dual);
+    notesPanel.hidden = on !== "notes";
+    minePanel.hidden = on !== "mine";
+    transcriptPanel.hidden = !dual && tab !== "transcript";
+    pending.hidden = !dual && tab !== "transcript";
     if (shown && document.activeElement !== mineInput && mineInput.value !== shown.notes) mineInput.value = shown.notes ?? "";
     renderCopy();
   }
@@ -1007,6 +1023,7 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
   }
 
   function setTab(t: typeof tab, focus = false): void {
+    if (dual && t === "transcript") return; // in view already, beside the notes
     const changed = tab !== t;
     if (changed && tab === "notes") notesScroll = aiBody.scrollTop;
     tab = t;
@@ -1025,11 +1042,21 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
     b.addEventListener("keydown", (e) => {
       if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) return;
       e.preventDefault();
-      const i = TABS.findIndex(([x]) => x === tab);
-      const n = e.key === "Home" ? 0 : e.key === "End" ? TABS.length - 1 : (i + (e.key === "ArrowRight" ? 1 : TABS.length - 1)) % TABS.length;
-      setTab(TABS[n][0], true);
+      const tabs = tabsInView();
+      const i = tabs.findIndex(([x]) => x === shownTab());
+      const n = e.key === "Home" ? 0 : e.key === "End" ? tabs.length - 1 : (i + (e.key === "ArrowRight" ? 1 : tabs.length - 1)) % tabs.length;
+      setTab(tabs[n][0], true);
     });
   }
+
+  // Two columns from this width of the notes' side (it does not change with them: no loop).
+  new ResizeObserver(() => {
+    const d = notesPane.clientWidth >= 1000;
+    if (d === dual) return;
+    dual = d;
+    renderTab();
+    renderAi();
+  }).observe(notesPane);
 
   // ---------------------------------------------------------------- menus (Copy, More)
   function closeMenus(except?: HTMLElement): void {
@@ -1187,7 +1214,7 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
     const stale = !!shown.ai_notes && (shown.transcript_version ?? 0) > (shown.ai_version ?? 0);
     const regenerate = !!shown.ai_notes?.trim() && !stale;
     // A summary that is up to date: "Write the summary again…" is in the More menu.
-    aiWrite.hidden = running || tab !== "notes" || regenerate;
+    aiWrite.hidden = running || shownTab() !== "notes" || regenerate;
     aiWrite.textContent = stale ? "Write the summary again" : "Write the summary";
     aiWrite.title = stale ? "The transcript was fixed after this summary was written" : "";
     rewriteBtn.disabled = aiRunning() || chatRunning() || voicesWorking.has(shown.id) || (!shown.lines.length && !shown.notes?.trim());
@@ -1684,8 +1711,7 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
     shown = m;
     title.value = m.title;
     unsaved = {};
-    home.hidden = true;
-    view.hidden = false;
+    layout();
     // While it records: the live transcript; once saved: the notes.
     tab = live && live.meeting.id === m.id && live.state !== "done" ? "transcript" : "notes";
     renderView();
@@ -1711,11 +1737,23 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
     editing = null;
     shown = null;
     unloadVideo();
-    view.hidden = true;
-    home.hidden = false;
+    layout();
     void renderAgenda();
     await renderList();
   }
+
+  /** The list, the open meeting, or (a wide window) both side by side. */
+  function layout(): void {
+    const wide = split.matches;
+    home.hidden = !wide && !!shown;
+    view.hidden = !shown;
+    none.hidden = !wide || !!shown;
+    for (const b of list.querySelectorAll<HTMLElement>(".meeting-item-open")) {
+      if (b.dataset.id === shown?.id) b.setAttribute("aria-current", "true");
+      else b.removeAttribute("aria-current");
+    }
+  }
+  split.addEventListener("change", layout);
 
   // ---------------------------------------------------------------- the list
   const span = (cls: string, text: string) => {
@@ -1747,6 +1785,7 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
     const b = document.createElement("button");
     b.type = "button";
     b.className = "meeting-item-open";
+    b.dataset.id = s.id;
     const main = span("meeting-item-main", "");
     const top = span("meeting-item-top", "");
     const t = span("meeting-item-title", "");
@@ -1825,7 +1864,7 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
       .join("+");
     const hint = key ? `Start a meeting recording. Or press ${pretty} in any app.` : "Start a meeting recording.";
     startBtn.title = hint;
-    keyHint.textContent = key ? `Or press ${pretty} in any app.` : "";
+    keyHint.textContent = key ? `Press ${pretty} in any app to record.` : "";
     emptyText.textContent = search.value.trim()
       ? "No meeting has all of these words in its title, transcript or notes."
       : key
@@ -1869,6 +1908,9 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
     emptyTip.hidden = !!query;
     startBtn.disabled = !!liveId;
     renderHints();
+    noneTitle.textContent = all.length || query ? "Choose a meeting" : "No meetings yet";
+    noneText.textContent = all.length || query ? "Its summary, your notes and the transcript show here." : emptyText.textContent ?? "";
+    layout();
   }
 
   // ---------------------------------------------------------------- start / stop
@@ -1979,7 +2021,11 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
     if (e.target === chatInput && chatInput.value) return; // a question being typed stays
     e.preventDefault();
     (document.activeElement as HTMLElement | null)?.blur();
-    void showHome();
+    const id = shown?.id;
+    void showHome().then(() => {
+      // Beside the list: the focus goes back to the meeting that was open.
+      if (split.matches && id) list.querySelector<HTMLElement>(`.meeting-item-open[data-id="${CSS.escape(id)}"]`)?.focus();
+    });
   });
 
   // Each tab's Copy: only what that tab shows.
