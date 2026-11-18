@@ -34,9 +34,11 @@
   --tint: #2c7a57;
   --tint-soft: #e8f2ec;
   --sidebar: #f6f6f5;
-  --sidebar-border: #ebebea;
+  --sidebar-border: var(--border); /* the sidebar's lines meet the page's: one colour */
   --nav-on: #e9e9e7;
   --shadow-pop: 0 1px 2px rgb(0 0 0 / 0.06), 0 12px 32px -8px rgb(0 0 0 / 0.18);
+  /* The bottom rows of the sidebar and of a meeting: one height, so their lines meet. */
+  --foot-h: 52px;
   color-scheme: light;
   font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Inter", sans-serif;
   font-size: 14px;
@@ -77,7 +79,7 @@
   --tint: #6cc79d;
   --tint-soft: #16261e;
   --sidebar: #111113;
-  --sidebar-border: #1f1f23;
+  --sidebar-border: var(--border);
   --nav-on: #232327;
   --shadow-pop: 0 1px 2px rgb(0 0 0 / 0.4), 0 16px 40px -8px rgb(0 0 0 / 0.6);
 }
@@ -232,7 +234,7 @@ h1 { font-size: 20px; font-weight: 600; }
 .shell { display: grid; grid-template-columns: 236px minmax(0, 1fr); height: 100vh; }
 .sidebar {
   display: flex; flex-direction: column; gap: 2px; min-height: 0; overflow-y: auto;
-  padding: 14px 10px 10px; background: var(--sidebar); border-right: 1px solid var(--sidebar-border);
+  padding: 14px 10px 0; background: var(--sidebar); border-right: 1px solid var(--sidebar-border);
 }
 .side-brand { display: flex; align-items: center; gap: 9px; padding: 2px 8px 14px; }
 .side-brand img { border-radius: 7px; }
@@ -251,7 +253,10 @@ h1 { font-size: 20px; font-weight: 600; }
 .side-title { font-size: 11.5px; font-weight: 500; color: var(--muted-foreground); padding: 16px 10px 4px; }
 .side-foot { margin-top: auto; display: flex; flex-direction: column; gap: 2px; padding-top: 12px; }
 .side-foot-row {
-  display: flex; align-items: center; gap: 4px; margin-top: 6px; padding: 8px 2px 0 4px; border-top: 1px solid var(--sidebar-border);
+  /* The sidebar's whole width, and the same height as a meeting's foot (--foot-h): their two
+     lines meet as one. */
+  display: flex; align-items: center; gap: 4px; height: var(--foot-h); margin: 6px -10px 0; padding: 0 12px 0 14px;
+  border-top: 1px solid var(--sidebar-border);
 }
 .side-private { flex: 1; display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--muted-foreground); justify-content: center; }
 .side-private .icon { width: 12px; height: 12px; }
@@ -273,7 +278,7 @@ h1 { font-size: 20px; font-weight: 600; }
 .nav-item[aria-current="page"] { background: var(--nav-on); color: var(--foreground); font-weight: 550; }
 .nav-item[aria-current="page"] .icon { color: var(--foreground); }
 
-.content { min-width: 0; overflow-y: auto; padding: 0 clamp(20px, 3.5vw, 56px); }
+.content { min-width: 0; overflow-y: auto; overflow-x: hidden; padding: 0 clamp(20px, 3.5vw, 56px); }
 .section { max-width: 640px; display: flex; flex-direction: column; gap: 20px; }
 .section-page { width: 100%; max-width: 1120px; margin: 0 auto; padding: 36px 0 48px; gap: 18px; }
 .section-head h2 { font-size: 18px; font-weight: 600; }
@@ -431,7 +436,7 @@ h1 { font-size: 20px; font-weight: 600; }
   .side-search span { display: none; }
   .side-nav { flex-direction: row; flex-wrap: wrap; }
   .side-foot { margin: 0 0 0 auto; padding: 0; flex-direction: row; align-items: center; }
-  .side-foot-row { margin: 0; padding: 0; border: 0; }
+  .side-foot-row { height: auto; margin: 0; padding: 0; border: 0; }
   .nav-item { padding: 0 8px; }
   .content { padding: 0 16px; }
   .section-page, .settings-page { padding-top: 22px; }
@@ -551,9 +556,11 @@ mark { background: color-mix(in srgb, var(--tint) 22%, transparent); color: inhe
 .danger:hover { background: color-mix(in srgb, var(--destructive) 10%, transparent); }
 /* The foot: where it is saved, how long, and the button that opens the questions. */
 .meeting-foot {
-  flex: none; display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 52px;
-  border-top: 1px solid var(--border); padding: 8px 0 10px;
+  flex: none; display: flex; align-items: center; justify-content: space-between; gap: 12px; height: var(--foot-h);
+  position: relative; padding: 0;
 }
+/* Its line runs across the whole page (past the meeting's own width), to meet the sidebar's. */
+.meeting-foot::before { content: ""; position: absolute; top: 0; left: -100vw; right: -100vw; height: 1px; background: var(--border); }
 .foot-note { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--muted-foreground); min-width: 0; }
 .foot-note > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .foot-note .icon { width: 13px; height: 13px; flex: none; }
