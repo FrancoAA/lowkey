@@ -1,3 +1,4 @@
-.deps/
+# The fetched build inputs (a folder, or a link to one).
+.deps
 src-tauri/target/
 src-tauri/gen/
