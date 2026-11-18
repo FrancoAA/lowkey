@@ -73,14 +73,18 @@ the CPU. Windows must have the Visual C++ runtime (`MSVCP140.dll`). The installe
   <kbd>Esc</kbd> cancels. A live waveform shows that the app is listening.
 - **Result:** the text appears while it is transcribed. **Copy** puts it on the clipboard.
   **.txt**, **.srt** and **.vtt** save the transcript or subtitles.
-- **The window** has sections on the left: **Transcribe** (files, dictation in the window, the
-  result; it opens there), **Meetings** (below), **History**, and the settings, sorted by task —
+- **The window** has a sidebar: **Search** (<kbd>Ctrl</kbd>+<kbd>K</kbd>: your meetings),
+  **Meetings** (it opens there, see below), **Ask** (questions across all meetings), and the tools
+  **Transcribe** (files, dictation in the window, the result) and **Dictations** (the history).
+  **Settings** at the bottom opens one page whose parts are tabs —
   General (start at login, appearance), Speech (microphone, language, vocabulary, the speech
   model and free memory when idle, or a provider in the cloud), Dictation (the dictation key, the paste key, live preview),
   Meetings (the meeting key, call detection, screen video, who is speaking, the notes model and
   automatic notes; a provider in the cloud for the notes), Connections (note apps, AI agents), About (also a list of the keys).
   Each model shows its status next to its setting.
-  <kbd>Ctrl</kbd>+<kbd>,</kbd> jumps to the settings, <kbd>Esc</kbd> back to Transcribe.
+  <kbd>Ctrl</kbd>+<kbd>,</kbd> opens the settings, <kbd>Esc</kbd> goes back to the page you were on.
+  The theme switch, the privacy note and Exit are at the bottom of the sidebar. (The layout follows
+  [Yogurt](https://github.com/FrigadeHQ/yogurt), MIT: notes first, settings out of the way.)
 - Files given on the command line open in the app. **Closing the window keeps the app
   running** in the tray, so the dictation key stays instant. Quit with **Exit** at the bottom
   of the side menu, from the tray, or with `lowkey --dictate quit`. While a meeting records,
@@ -199,9 +203,15 @@ Record a call or a talk, as text next to your notes (Linux for now). No bot join
 - The text comes a few seconds after someone speaks: each source is cut at pauses (4–20 s
   pieces) and the speech model chosen in Settings → Speech writes them.
 - **Stop** transcribes the last seconds and saves. The list shows all meetings, newest first,
-  grouped by day; open one to read it (the notes, or the transcript in their place with the
-  **Notes | Transcript** switch; the chat on the right), change the title, **Copy** or
-  **Export .md** (the notes, then the transcript).
+  grouped by day. A meeting opens on its page: the title (click to change it), its date, length
+  and people, and three tabs: **Summary** (the AI notes), **My notes** and **Transcript**. **Copy**
+  (top right) copies the summary, your notes or the transcript, or exports Markdown (the notes,
+  then the transcript); **⋯** has **Write the summary again…** and **Delete**. The foot says
+  where it is saved and which model wrote the summary; **Ask about this meeting**
+  (<kbd>Ctrl</kbd>+<kbd>J</kbd>) opens the questions on the right.
+- **My notes:** type what matters to you before, during or after the meeting (it is saved as you
+  type). The summary follows it: what you flag gets a point, facts you typed go in, but your
+  lines and labels are never copied.
 - **Check a point of the notes:** click it (or <kbd>Enter</kbd> on it) to see, under it, the
   transcript's paragraphs it most likely comes from (speaker, time, the shared words marked);
   **Show in transcript** opens the transcript at that paragraph. A point that no paragraph
@@ -260,14 +270,17 @@ Record a call or a talk, as text next to your notes (Linux for now). No bot join
   when it is not on this computer), or a provider in the cloud: OpenAI, Anthropic, OpenRouter,
   Vercel AI Gateway, Groq, Gemini or Mistral ([AI providers](#ai-providers-optional)). They are
   written by themselves when a meeting stops (the
-  first time, after the model's download), or with **Write notes** when a meeting has none.
-  **Regenerate** writes them again (it asks first; the new notes replace the old ones only when
-  they are complete, so a failed or cancelled try keeps them). They are a draft, and
+  first time, after the model's download), or with **Write the summary** when a meeting has none.
+  **⋯ → Write the summary again…** writes them again, with an optional instruction for this time
+  only ("shorter", "in English", "only the decisions"; it changes the form, never the facts). The
+  new notes replace the old ones only when they are complete, so a failed or cancelled try keeps
+  them. A meeting over about four hours is written in parts (up to about twelve hours), and the
+  parts' notes are merged. They are a draft, and
   Copy/Export include them. **Instructions for the notes** (Settings → Meetings → Notes) shows
   what the model is told: change it to try other notes, and **Restore the original** brings
   back the app's instructions. `{language}` becomes the meeting's language (when the text does
   not have it, "Write in …" is added at the end), and the Vocabulary's names are added. Measurements: [bench/summary/results.md](bench/summary/results.md).
-- **Ask about this meeting** (the chat on the right; <kbd>Ctrl</kbd>+<kbd>K</kbd>): the same
+- **Ask about this meeting** (the panel on the right; <kbd>Ctrl</kbd>+<kbd>J</kbd> opens it): the same
   model answers questions from the transcript and the notes ("who calls Acme?", "write a
   follow-up email"). Three suggestions are ready: a follow-up email, a TL;DR, your tasks. The
   questions and answers are saved with the meeting (**Clear** deletes them); search and the
@@ -315,7 +328,7 @@ Bluetooth detection yet. (Idea from [Hex](https://github.com/anomalyco/hex), MIT
 
 ## History
 
-The **History** section keeps every finished dictation (the global key and the window), newest
+The **Dictations** page keeps every finished dictation (the global key and the window), newest
 first, grouped by day: Copy, Delete, and Clear all (a dialog asks first). **Search**
 (<kbd>Ctrl</kbd>+<kbd>F</kbd>) looks in the text of the dictations only (not the date or the
 app): every word you type must be there, in any order and any case, also inside a word

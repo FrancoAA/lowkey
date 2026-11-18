@@ -7,7 +7,7 @@
  * saves (desktop/src-tauri/src/meeting.rs, llm.rs); this page shows it and sends the title.
  */
 import type { AiNotesEvent, ChatMessage, Meeting, MeetingLine, MeetingLive, MeetingSummary, MeetingVideo, VocabTerm } from "./api";
-import { confirmDialog } from "./confirm";
+import { confirmDialog, promptDialog } from "./confirm";
 import { highlighted, searchWords } from "./highlight";
 import type { Backend } from "./backend";
 import { renderMarkdown } from "./markdown";
@@ -116,7 +116,7 @@ function fileName(title: string): string {
 }
 
 /** `refreshExport`: the meeting's note-app buttons follow a change in Settings → Connections → Note apps. */
-export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(): void } {
+export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(): void; showList(): void; openAt(id: string, at: number | null): Promise<void> } {
   const api = backend.meetings;
   const home = $<HTMLDivElement>("meetings-home");
   const startBtn = $<HTMLButtonElement>("meeting-start");
@@ -155,9 +155,22 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
   const pending = $<HTMLElement>("meeting-pending");
   const tabNotes = $<HTMLButtonElement>("tab-notes");
   const tabTranscript = $<HTMLButtonElement>("tab-transcript");
+  const tabMine = $<HTMLButtonElement>("tab-mine");
+  const minePanel = $<HTMLDivElement>("mine-panel");
+  const mineInput = $<HTMLTextAreaElement>("mine-input");
+  const copyMine = $<HTMLButtonElement>("copy-mine");
+  const shareBtn = $<HTMLButtonElement>("share-button");
+  const shareMenu = $<HTMLDivElement>("share-menu");
+  const moreBtn = $<HTMLButtonElement>("more-button");
+  const moreMenu = $<HTMLDivElement>("more-menu");
+  const rewriteBtn = $<HTMLButtonElement>("meeting-rewrite");
+  const chatToggle = $<HTMLButtonElement>("chat-toggle");
+  const chatClose = $<HTMLButtonElement>("chat-close");
+  const footText = $<HTMLElement>("meeting-foot-text");
   const notesPanel = $<HTMLDivElement>("notes-panel");
   const transcriptPanel = $<HTMLDivElement>("transcript-panel");
-  const aiMeta = $<HTMLElement>("ai-meta");
+  /** The model and what to do with the summary: in the foot, next to "Saved on this computer". */
+  const aiMeta = footText;
   const aiWrite = $<HTMLButtonElement>("ai-write");
   const copyNotes = $<HTMLButtonElement>("copy-notes");
   const copyTranscript = $<HTMLButtonElement>("copy-transcript");
@@ -180,7 +193,15 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
   let chatJob: AiNotesEvent | null = null;
   let chatError: { id: string; text: string } | null = null;
   /** What the left side shows. */
-  let tab: "notes" | "transcript" = "notes";
+  let tab: "notes" | "mine" | "transcript" = "notes";
+  /** The questions' panel is open (kept on this computer, for every meeting). */
+  let chatOpen = (() => {
+    try {
+      return localStorage.getItem("lowkey.chat-open") === "1";
+    } catch {
+      return false;
+    }
+  })();
   /** Meetings whose voices are being told apart (after Stop). */
   const voicesWorking = new Set<string>(ui.voicesWorking());
   /** Where the notes were scrolled to when the transcript took their place. */
@@ -209,7 +230,7 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
   let live: MeetingLive | null = null;
   let liveAt = 0; // performance.now() when `live` arrived (for the timer)
   let saveTimer = 0;
-  let unsaved: { title?: string } = {};
+  let unsaved: { title?: string; notes?: string } = {};
   /** The Stop button is waiting for the app (it opens the saved meeting itself). */
   let stopping = false;
 
@@ -223,18 +244,18 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
   // ---------------------------------------------------------------- saving what you type
   async function flush(): Promise<void> {
     clearTimeout(saveTimer);
-    if (!shown || unsaved.title === undefined) return;
+    if (!shown || (unsaved.title === undefined && unsaved.notes === undefined)) return;
     const patch = unsaved;
     unsaved = {};
     try {
       await api.update(shown.id, patch);
     } catch (err) {
       unsaved = { ...patch, ...unsaved }; // kept: the next change or Back tries again
-      showError(`The title was not saved: ${String(err)}`);
+      showError(`${patch.notes !== undefined ? "Your notes were" : "The title was"} not saved: ${String(err)}`);
     }
   }
 
-  function later(patch: { title?: string }): void {
+  function later(patch: { title?: string; notes?: string }): void {
     unsaved = { ...unsaved, ...patch };
     clearTimeout(saveTimer);
     saveTimer = window.setTimeout(() => void flush(), 600);
@@ -245,6 +266,12 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
     later({ title: title.value });
   });
   title.addEventListener("blur", () => void flush());
+  mineInput.addEventListener("input", () => {
+    if (shown) shown.notes = mineInput.value;
+    later({ notes: mineInput.value });
+    renderCopy();
+  });
+  mineInput.addEventListener("blur", () => void flush());
   title.addEventListener("keydown", (e) => {
     if (e.key === "Enter") {
       e.preventDefault();
@@ -558,23 +585,63 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
     transcript.prepend(bar);
   }
 
+  const ICONS: Record<string, string> = {
+    date: "M8 2v4M16 2v4M3 10h18M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z",
+    time: "M12 6v6l4 2M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20Z",
+    people: "M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8ZM22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75",
+    mic: "M12 15a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3Zm0 0v4m-4 0h8M6 11a6 6 0 0 0 12 0",
+  };
+  function chip(icon: keyof typeof ICONS | "", text: string, kind = "", tip = ""): HTMLElement {
+    const c = span("meta-chip", "");
+    if (kind) c.dataset.kind = kind;
+    if (tip) c.title = tip;
+    if (kind === "work") c.append(spinner());
+    else if (icon) {
+      const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      svg.setAttribute("viewBox", "0 0 24 24");
+      svg.setAttribute("aria-hidden", "true");
+      svg.classList.add("icon");
+      const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      path.setAttribute("d", ICONS[icon]);
+      svg.append(path);
+      c.append(svg);
+    }
+    c.append(text);
+    return c;
+  }
+
+  /** "Kara, Lincoln", "Kara, Speaker 2 + 1": who was on the other side. */
+  function people(m: Meeting): string {
+    const names = new Set<string>();
+    for (const l of m.lines) if (l.speaker === "them") names.add(speakerLabel(m, "them", l.person ?? 0));
+    const list = [...names].filter((n) => n !== "Them");
+    if (!list.length) return names.size ? "You and the others" : "";
+    return list.length > 2 ? `${list.slice(0, 2).join(", ")} + ${list.length - 2}` : list.join(", ");
+  }
+
   function renderMeta(): void {
     if (!shown) return;
+    const chips: HTMLElement[] = [];
     if (isLive() && live) {
       const elapsed = live.state === "recording" ? live.elapsed + (performance.now() - liveAt) / 1000 : live.elapsed;
       const mic = live.muted ? "your microphone (muted)" : "your microphone";
       const parts = [mic, ...(live.meeting.system_audio ? ["the computer's sound"] : []), ...(live.screen === "on" ? ["the screen"] : [])];
       const inputs = parts.length > 1 ? `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}` : `${mic} only`;
-      const picker = live.screen === "waiting" ? " · choose what to share in your desktop's dialog" : "";
       meta.dataset.live = live.state;
-      meta.textContent = live.state === "finishing" ? "Saving: transcribing the last seconds…" : `${when(live.meeting.started_at)} · ${inputs}${picker}`;
+      if (live.state === "finishing") chips.push(chip("", "Saving: transcribing the last seconds…", "work"));
+      else chips.push(chip("mic", "Recording", "live", `Recording ${inputs}`));
+      chips.push(chip("date", when(live.meeting.started_at)));
+      if (live.screen === "waiting") chips.push(chip("", "Choose what to share in your desktop's dialog", "warn"));
       liveClock.textContent = clock(elapsed);
     } else {
       delete meta.dataset.live;
-      const interrupted = shown.state === "recording" ? " · interrupted" : "";
-      const voices = voicesWorking.has(shown.id) ? " · telling the voices apart…" : "";
-      meta.textContent = `${when(shown.started_at)} · ${minutes(shown.duration)}${interrupted}${voices}`;
+      chips.push(chip("date", when(shown.started_at)), chip("time", minutes(shown.duration)));
+      const who = people(shown);
+      if (who) chips.push(chip("people", who, "", "Name a speaker in the transcript: click the name"));
+      if (shown.state === "recording") chips.push(chip("", "Interrupted", "warn", "The app stopped while this meeting recorded: the text up to then is kept"));
+      if (voicesWorking.has(shown.id)) chips.push(chip("", "Telling the voices apart…", "work"));
     }
+    meta.replaceChildren(...chips);
   }
 
   function renderView(): void {
@@ -587,7 +654,9 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
     square.setAttribute("aria-hidden", "true");
     if (live?.state === "finishing") stopBtn.replaceChildren(spinner(), "Saving…");
     else stopBtn.replaceChildren(square, "Stop");
-    exportBtn.hidden = deleteBtn.hidden = recording;
+    exportBtn.hidden = deleteBtn.hidden = rewriteBtn.hidden = recording;
+    shareBtn.hidden = moreBtn.hidden = false;
+    renderChatOpen();
     renderFolderButtons();
     livePanel.hidden = !recording;
     livePanel.dataset.state = live?.state ?? "";
@@ -882,57 +951,128 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
   });
 
   // ---------------------------------------------------------------- Notes | Transcript
+  const TABS = [
+    ["transcript", tabTranscript],
+    ["mine", tabMine],
+    ["notes", tabNotes],
+  ] as const;
+
   function renderTab(): void {
-    for (const [b, on] of [
-      [tabNotes, tab === "notes"],
-      [tabTranscript, tab === "transcript"],
-    ] as const) {
-      b.setAttribute("aria-selected", String(on));
-      b.tabIndex = on ? 0 : -1;
+    for (const [t, b] of TABS) {
+      b.setAttribute("aria-selected", String(t === tab));
+      b.tabIndex = t === tab ? 0 : -1;
     }
     notesPanel.hidden = tab !== "notes";
+    minePanel.hidden = tab !== "mine";
     transcriptPanel.hidden = tab !== "transcript";
-    // Write notes and the model's name belong to the notes; Cancel shows from both tabs.
-    aiMeta.hidden = tab !== "notes";
     pending.hidden = tab !== "transcript";
+    if (shown && document.activeElement !== mineInput && mineInput.value !== shown.notes) mineInput.value = shown.notes ?? "";
     renderCopy();
   }
 
-  /** Each tab's Copy: the notes once they are written (not while they are written), the
-   * transcript once it has words (also while it records). */
+  /** The Copy menu: the summary once it is written (not while it is written), your notes once
+   * there are some, the transcript once it has words (also while it records). */
   function renderCopy(): void {
     if (!shown) return;
     const writing = aiJob?.id === shown.id && aiRunning();
-    copyNotes.hidden = tab !== "notes" || isLive() || writing || !shown.ai_notes?.trim();
+    copyNotes.hidden = isLive() || writing || !shown.ai_notes?.trim();
+    copyMine.hidden = !(shown.notes ?? "").trim();
     const lines = (isLive() && live ? live.meeting : shown).lines; // while it records, the live lines
-    copyTranscript.hidden = tab !== "transcript" || lines.length === 0;
+    copyTranscript.hidden = lines.length === 0;
+    const anyCopy = !copyNotes.hidden || !copyMine.hidden || !copyTranscript.hidden;
+    shareMenu.querySelector(".menu-sep")!.toggleAttribute("hidden", !anyCopy || !!exportBtn.hidden);
   }
 
-  function setTab(t: "notes" | "transcript", focus = false): void {
+  function setTab(t: typeof tab, focus = false): void {
     const changed = tab !== t;
-    if (changed && t === "transcript") notesScroll = aiBody.scrollTop;
+    if (changed && tab === "notes") notesScroll = aiBody.scrollTop;
     tab = t;
     renderTab();
     renderAi();
     if (changed && t === "notes") aiBody.scrollTop = notesScroll; // back where the reader was
-    if (focus) (t === "notes" ? tabNotes : tabTranscript).focus();
+    if (focus) TABS.find(([x]) => x === t)![1].focus();
     // The transcript opens at its end while it records (the newest words), else at the start.
     if (changed && t === "transcript" && isLive()) transcript.scrollTop = transcript.scrollHeight;
     if (changed && videoOf) testLog("tab");
   }
 
-  tabNotes.addEventListener("click", () => setTab("notes"));
-  tabTranscript.addEventListener("click", () => setTab("transcript"));
-  // The arrow keys move between the two (the tabs pattern); Tab goes on to the panel.
-  for (const b of [tabNotes, tabTranscript]) {
+  for (const [t, b] of TABS) {
+    b.addEventListener("click", () => setTab(t));
+    // The arrow keys move between them (the tabs pattern); Tab goes on to the panel.
     b.addEventListener("keydown", (e) => {
-      if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) {
-        e.preventDefault();
-        const next = e.key === "Home" ? "notes" : e.key === "End" ? "transcript" : tab === "notes" ? "transcript" : "notes";
-        setTab(next, true);
-      }
+      if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) return;
+      e.preventDefault();
+      const i = TABS.findIndex(([x]) => x === tab);
+      const n = e.key === "Home" ? 0 : e.key === "End" ? TABS.length - 1 : (i + (e.key === "ArrowRight" ? 1 : TABS.length - 1)) % TABS.length;
+      setTab(TABS[n][0], true);
     });
   }
+
+  // ---------------------------------------------------------------- menus (Copy, More)
+  function closeMenus(except?: HTMLElement): void {
+    for (const [b, m] of [
+      [shareBtn, shareMenu],
+      [moreBtn, moreMenu],
+    ] as const) {
+      if (m === except) continue;
+      m.hidden = true;
+      b.setAttribute("aria-expanded", "false");
+    }
+  }
+  for (const [b, m] of [
+    [shareBtn, shareMenu],
+    [moreBtn, moreMenu],
+  ] as const) {
+    b.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const open = m.hidden;
+      closeMenus(m);
+      m.hidden = !open;
+      b.setAttribute("aria-expanded", String(open));
+      if (open) m.querySelector<HTMLElement>(".menu-item:not([hidden]):not(:disabled)")?.focus();
+    });
+    m.addEventListener("click", (e) => {
+      if ((e.target as HTMLElement).closest(".menu-item")) {
+        // Copy says "Copied" in its place for a moment: that menu stays open until then.
+        if (m !== shareMenu || !(e.target as HTMLElement).id.startsWith("copy-")) closeMenus();
+      }
+    });
+    m.addEventListener("keydown", (e) => {
+      const items = [...m.querySelectorAll<HTMLElement>(".menu-item:not([hidden]):not(:disabled)")];
+      const i = items.indexOf(document.activeElement as HTMLElement);
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        closeMenus();
+        b.focus();
+      } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        items[(i + (e.key === "ArrowDown" ? 1 : items.length - 1)) % items.length]?.focus();
+      } else if (e.key === "Tab") closeMenus();
+    });
+  }
+  document.addEventListener("click", (e) => {
+    if (!(e.target as HTMLElement).closest(".menu-wrap")) closeMenus();
+  });
+
+  // ---------------------------------------------------------------- the questions' panel
+  function renderChatOpen(): void {
+    body.toggleAttribute("data-chat", chatOpen);
+    chatToggle.setAttribute("aria-expanded", String(chatOpen));
+  }
+  function setChatOpen(on: boolean, focus = true): void {
+    chatOpen = on;
+    try {
+      localStorage.setItem("lowkey.chat-open", on ? "1" : "0");
+    } catch {
+      /* kept for this window only */
+    }
+    renderChatOpen();
+    if (on && focus && !chatInput.disabled) chatInput.focus();
+    else if (!on && focus) chatToggle.focus();
+  }
+  chatToggle.addEventListener("click", () => setChatOpen(!chatOpen));
+  chatClose.addEventListener("click", () => setChatOpen(false));
 
   // ---------------------------------------------------------------- Notes
   const running = (e: AiNotesEvent | null) => !!e && ["preparing", "downloading", "writing"].includes(e.state);
@@ -944,9 +1084,9 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
     if (isLive()) {
       // The same place as later: the notes come here when the recording stops.
       aiWrite.hidden = aiCancel.hidden = aiProgress.hidden = aiError.hidden = true;
-      aiMeta.textContent = "";
+      aiMeta.textContent = "Saved on this computer as it records";
       drawn = null;
-      aiBody.replaceChildren("Written here when the recording stops: one section for each topic, with its decisions and tasks. The transcript is in the other tab.");
+      aiBody.replaceChildren("The summary is written here when the recording stops: one section for each topic, with its decisions and tasks. Write what matters to you in My notes: the summary follows it.");
       aiBody.classList.add("ai-empty");
       renderCopy();
       return;
@@ -957,13 +1097,11 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
     // written; or Regenerate (the notes went wrong, or other instructions are to be tried).
     const stale = !!shown.ai_notes && (shown.transcript_version ?? 0) > (shown.ai_version ?? 0);
     const regenerate = !!shown.ai_notes?.trim() && !stale;
-    aiWrite.hidden = running || tab !== "notes";
-    aiWrite.textContent = stale ? "Write notes again" : regenerate ? "Regenerate" : "Write notes";
-    aiWrite.title = stale
-      ? "The transcript was fixed after these notes were written"
-      : regenerate
-        ? "Write these notes again from the transcript, with the instructions in Settings → Meetings → Notes"
-        : "";
+    // A summary that is up to date: "Write the summary again…" is in the More menu.
+    aiWrite.hidden = running || tab !== "notes" || regenerate;
+    aiWrite.textContent = stale ? "Write the summary again" : "Write the summary";
+    aiWrite.title = stale ? "The transcript was fixed after this summary was written" : "";
+    rewriteBtn.disabled = aiRunning() || chatRunning() || voicesWorking.has(shown.id) || (!shown.lines.length && !shown.notes?.trim());
     aiWrite.disabled = aiRunning() || chatRunning() || voicesWorking.has(shown.id); // at work for something else, or the speakers come first
     if (voicesWorking.has(shown.id)) aiWrite.title = "Wait until the voices are told apart: then the notes have the speakers";
     aiCancel.hidden = !running;
@@ -988,16 +1126,17 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
       aiBody.classList.remove("ai-empty");
     } else if (running) {
       drawn = null;
-      aiBody.replaceChildren(skeleton("The notes are being written."));
+      aiBody.replaceChildren(skeleton("The summary is being written."));
       aiBody.classList.remove("ai-empty");
     } else {
       drawn = null;
-      aiBody.replaceChildren("No notes yet. Write notes makes one section for each topic of the meeting, with its decisions and tasks, from the transcript.");
+      aiBody.replaceChildren("No summary yet. Write the summary makes one section for each topic of the meeting, with its decisions and tasks, from the transcript and your notes.");
       aiBody.classList.add("ai-empty");
     }
-    const check = linked ? "click a point to see it in the transcript" : "check it against the transcript";
-    if (running && mine!.state === "writing") aiMeta.replaceChildren(spinner(), "Writing the notes…");
-    else aiMeta.textContent = running ? "" : shown.ai_notes ? `${shown.ai_model || "AI"} · a draft: ${check}` : "";
+    const check = linked ? "click a point to see where it was said" : "check it against the transcript";
+    const length = minutes(shown.duration);
+    if (running && mine!.state === "writing") aiMeta.replaceChildren(spinner(), "Writing the summary…");
+    else aiMeta.textContent = shown.ai_notes && !running ? `Saved on this computer · ${length} · Summary by ${shown.ai_model || "AI"}: a draft, ${check}` : `Saved on this computer · ${length}`;
     renderCopy();
   }
 
@@ -1179,24 +1318,17 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
     ui.announce(`The transcript, at ${clock(p.start)}${c ? ", with the screen video at that moment" : ""}.`);
   }
 
-  aiWrite.addEventListener("click", async () => {
+  /** Write the summary (again); `instruction`: how, for this time only ("shorter"). */
+  async function writeSummary(instruction = ""): Promise<void> {
     if (!shown || aiRunning()) return;
     const id = shown.id;
-    const stale = (shown.transcript_version ?? 0) > (shown.ai_version ?? 0);
-    if (shown.ai_notes?.trim() && !stale) {
-      const ok = await confirmDialog({
-        title: "Write the notes again?",
-        body: "The model writes new notes from the transcript, with the instructions in Settings → Meetings → Notes. They replace these notes when they are complete. If the writing fails or you cancel it, these notes stay.",
-        action: "Regenerate",
-      });
-      if (!ok || shown?.id !== id || aiRunning()) return;
-    }
     aiWrite.disabled = true; // no second job from a double click
     aiJob = { id, state: "preparing", detail: "Getting ready…", progress: 0, text: "" };
+    setTab("notes");
     renderAi();
-    await flush(); // the model reads the latest title
+    await flush(); // the model reads the latest title and notes
     try {
-      await api.aiNotes(id);
+      await api.aiNotes(id, instruction);
     } catch (err) {
       // A job that runs already (this meeting or another) keeps its card; only a real error shows.
       if (aiJob?.id === id && aiJob.state === "preparing" && !aiJob.text) {
@@ -1204,6 +1336,22 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
       }
       renderAi();
     }
+  }
+
+  aiWrite.addEventListener("click", () => void writeSummary());
+  rewriteBtn.addEventListener("click", async () => {
+    if (!shown || aiRunning()) return;
+    const id = shown.id;
+    const how = await promptDialog({
+      title: "Write the summary again",
+      body: "The model writes a new summary from the transcript and your notes. It replaces this one when it is complete; if it fails or you cancel it, this one stays.",
+      label: "How (optional)",
+      placeholder: "Shorter, in English, only the decisions…",
+      max: 500,
+      action: "Write again",
+    });
+    if (how === null || shown?.id !== id) return;
+    await writeSummary(how);
   });
 
   aiCancel.addEventListener("click", () => void api.aiCancel());
@@ -1404,12 +1552,14 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
   chatInput.addEventListener("input", () => {
     chatSend.disabled = !chatSend.hasAttribute("data-stop") && (chatInput.disabled || !chatInput.value.trim());
   });
-  // Ctrl+K: ask (the box of the meeting on screen).
+  // Ctrl+J: open the questions about the meeting on screen (and the box), or close them.
   document.addEventListener("keydown", (e) => {
-    if (e.key.toLowerCase() !== "k" || !e.ctrlKey || e.altKey || e.metaKey || view.hidden || !view.offsetParent) return;
-    if (document.querySelector("dialog[open]") || chatInput.disabled) return;
+    if (e.key.toLowerCase() !== "j" || !e.ctrlKey || e.altKey || e.metaKey || view.hidden || !view.offsetParent) return;
+    if (document.querySelector("dialog[open]")) return;
     e.preventDefault();
-    chatInput.focus();
+    if (!chatOpen) setChatOpen(true);
+    else if (document.activeElement !== chatInput && !chatInput.disabled) chatInput.focus();
+    else setChatOpen(false);
   });
   for (const b of chatSuggestions.querySelectorAll<HTMLButtonElement>("button[data-ask]")) {
     b.addEventListener("click", () => void ask(b.dataset.ask ?? ""));
@@ -1744,18 +1894,22 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
 
   // Each tab's Copy: only what that tab shows.
   for (const [btn, part, label] of [
-    [copyNotes, "notes", "Copy notes"],
-    [copyTranscript, "transcript", "Copy transcript"],
+    [copyNotes, "notes", "Copy the summary"],
+    [copyMine, "mine", "Copy my notes"],
+    [copyTranscript, "transcript", "Copy the transcript"],
   ] as const) {
     let reset = 0;
     btn.addEventListener("click", async () => {
       if (!shown) return;
       try {
-        await backend.copy(await api.text(shown.id, part));
+        await backend.copy(part === "mine" ? shown.notes ?? "" : await api.text(shown.id, part));
         btn.textContent = "Copied";
-        ui.announce(part === "notes" ? "The notes are copied." : "The transcript is copied.");
+        ui.announce(part === "notes" ? "The summary is copied." : part === "mine" ? "Your notes are copied." : "The transcript is copied.");
         clearTimeout(reset);
-        reset = window.setTimeout(() => (btn.textContent = label), 1500);
+        reset = window.setTimeout(() => {
+          btn.textContent = label;
+          closeMenus();
+        }, 900);
       } catch (err) {
         showError(String(err));
       }
@@ -1780,7 +1934,7 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
     folderBtn.hidden = off;
     const waiting = !!shown && voicesWorking.has(shown.id);
     folderBtn.title = waiting ? "Wait until the voices are told apart (it is saved by itself then)" : info.dir ? `Save this meeting as Markdown in ${info.dir}` : "";
-    if (!folderBtn.textContent?.startsWith("Saved")) folderBtn.disabled = waiting;
+    folderBtn.disabled = waiting;
     exportBtn.disabled = waiting;
     exportBtn.title = waiting ? "Wait until the voices are told apart" : "";
     // Saved in this folder (a note in a folder chosen before is not this vault's).
@@ -1799,9 +1953,7 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
         shown.export_file = r.file;
         shown.export_dir = ui.exportInfo().dir;
       }
-      folderBtn.textContent = "Saved";
       ui.announce(`Saved as ${r.file}`);
-      setTimeout(() => (folderBtn.textContent = "Save to folder"), 1500);
     } catch (err) {
       showError(String(err));
     } finally {
@@ -1876,5 +2028,14 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
     void renderList();
   });
 
-  return { refreshExport: renderFolderButtons };
+  /** Open a meeting; `at`: a moment of its transcript to show (seconds), or null: its summary. */
+  async function openAt(id: string, at: number | null): Promise<void> {
+    await flush();
+    await openById(id);
+    if (shown?.id !== id || at === null) return;
+    const i = sourceIndex(shown).paras.findIndex((p, k, all) => at < (all[k + 1]?.start ?? Infinity) && p.end >= at - 0.5);
+    if (i >= 0) showInTranscript(i);
+  }
+
+  return { refreshExport: renderFolderButtons, showList: () => void showHome(), openAt };
 }

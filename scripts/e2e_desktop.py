@@ -1129,9 +1129,9 @@ esac
                   "the same note, written again with the AI notes")
             time.sleep(1.0)
             shot("25-desktop-meeting-ai-notes.png")
-            # Ask about this meeting: Ctrl+K, a question, Enter; the answer is saved with it.
+            # Ask about this meeting: Ctrl+J (opens the panel and its box), a question, Enter; the answer is saved with it.
             focus(main_win["address"])
-            ctrl_key("k")
+            ctrl_key("j")
             for ch in "what did they say about the country":
                 press_key("space" if ch == " " else ch)
             n_c = len(events("ai-chat"))

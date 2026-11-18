@@ -11,62 +11,65 @@
   <body>
     <div id="announcer" class="sr-only" aria-live="polite"></div>
 
-    <div id="app" class="settings">
-      <aside class="settings-nav">
+    <div id="app" class="shell">
+      <aside class="sidebar" aria-label="Lowkey">
         <div class="side-brand">
-          <img src="/icon.png" alt="" width="32" height="32" />
-          <div>
-            <h1>Lowkey</h1>
-            <p class="tagline">Runs on this computer. Nothing leaves it.</p>
-          </div>
+          <img src="/icon.png" alt="" width="26" height="26" />
+          <span class="side-name">Lowkey</span>
         </div>
-        <nav id="settings-tabs" role="tablist" aria-orientation="vertical" aria-label="Sections">
-          <button type="button" role="tab" class="nav-item" data-section="transcribe" aria-controls="section-transcribe">
-            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3Zm0 0v4m-4 0h8M6 11a6 6 0 0 0 12 0" /></svg>
-            Transcribe
-          </button>
-          <button type="button" role="tab" class="nav-item" data-section="meetings" aria-controls="section-meetings">
-            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" /></svg>
-            Meetings
+        <button id="side-search" type="button" class="side-search" aria-keyshortcuts="Control+K" title="Search your meetings (Ctrl+K)">
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
+          <span>Search</span>
+          <kbd class="side-kbd">Ctrl K</kbd>
+        </button>
+        <nav id="main-nav" class="side-nav" aria-label="Pages">
+          <button type="button" class="nav-item" data-section="meetings" aria-controls="section-meetings">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" /><path d="M14 2v5h6M8 13h8M8 17h5" /></svg>
+            <span class="nav-text">Meetings</span>
             <span class="nav-live" aria-label="recording" hidden></span>
           </button>
-          <button type="button" role="tab" class="nav-item" data-section="history" aria-controls="section-history">
+          <button type="button" class="nav-item" data-section="ask" aria-controls="section-ask">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z" /><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3M12 17h.01" /></svg>
+            <span class="nav-text">Ask</span>
+          </button>
+          <div class="side-title" role="presentation">Tools</div>
+          <button type="button" class="nav-item" data-section="transcribe" aria-controls="section-transcribe">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3Zm0 0v4m-4 0h8M6 11a6 6 0 0 0 12 0" /></svg>
+            <span class="nav-text">Transcribe</span>
+          </button>
+          <button type="button" class="nav-item" data-section="history" aria-controls="section-history">
             <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8" /><path d="M3 3v5h5M12 7v5l3 3" /></svg>
-            History
-          </button>
-          <div class="settings-title" role="presentation">Settings</div>
-          <button type="button" role="tab" class="nav-item" data-section="general" aria-controls="section-general">
-            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7h-9M14 17H5" /><circle cx="17" cy="17" r="3" /><circle cx="7" cy="7" r="3" /></svg>
-            General
-          </button>
-          <button type="button" role="tab" class="nav-item" data-section="speech" aria-controls="section-speech">
-            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 10v3M6 6v11M10 3v18M14 8v7M18 5v13M22 10v3" /></svg>
-            Speech
-          </button>
-          <button type="button" role="tab" class="nav-item" data-section="dictation" aria-controls="section-dictation">
-            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect width="20" height="16" x="2" y="4" rx="2" /><path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M8 12h.01M12 12h.01M16 12h.01M7 16h10" /></svg>
-            Dictation
-          </button>
-          <button type="button" role="tab" class="nav-item" data-section="meeting-settings" aria-controls="section-meeting-settings" aria-label="Meeting settings">
-            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect width="18" height="18" x="3" y="4" rx="2" /><path d="M16 2v4M8 2v4M3 10h18M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01" /></svg>
-            Meetings
-          </button>
-          <button type="button" role="tab" class="nav-item" data-section="connections" aria-controls="section-connections">
-            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" /><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" /></svg>
-            Connections
-          </button>
-          <button type="button" role="tab" class="nav-item" data-section="about" aria-controls="section-about">
-            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10" /><path d="M12 16v-4M12 8h.01" /></svg>
-            About
+            <span class="nav-text">Dictations</span>
           </button>
         </nav>
+        <div class="side-foot">
+          <button id="nav-settings" type="button" class="nav-item" data-section="general" aria-keyshortcuts="Control+Comma" title="Settings (Ctrl+,)">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" /><circle cx="12" cy="12" r="3" /></svg>
+            <span class="nav-text">Settings</span>
+          </button>
+          <div class="side-foot-row">
+            <!-- Shows the theme that a click gives: the moon in light mode, the sun in dark mode. -->
+            <button id="theme-toggle" type="button" class="icon-btn" title="Switch to dark mode" aria-label="Switch to dark mode">
+              <svg class="icon theme-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401" /></svg>
+              <svg class="icon theme-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" /></svg>
+              <span id="theme-toggle-text" class="sr-only">Dark mode</span>
+            </button>
+            <span class="side-private" title="Audio, text and notes stay on this computer unless you choose a provider in the cloud">
+              <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></svg>
+              On this computer
+            </span>
+            <button id="app-quit" type="button" class="icon-btn" title="Exit: the dictation key and the tray icon stop too" aria-label="Exit">
+              <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><path d="m16 17 5-5-5-5M21 12H9" /></svg>
+            </button>
+          </div>
+        </div>
       </aside>
 
-      <div class="settings-content">
+      <main class="content">
         <!-- Transcribe: files, dictation in this window, the result -->
-        <section id="section-transcribe" class="section section-wide" role="tabpanel" data-section="transcribe">
+        <section id="section-transcribe" class="section section-page" data-section="transcribe" aria-label="Transcribe" hidden>
           <header class="section-head">
-            <h2>Transcribe</h2>
+            <h1 class="page-title">Transcribe</h1>
             <p>Drop a file for its text and subtitles, or try the dictation here. In other apps, use the dictation key.</p>
           </header>
           <section class="card">
@@ -102,7 +105,7 @@
           <section id="result" class="card result" hidden>
             <div class="result-head">
               <div>
-                <h3 id="result-title">Transcript</h3>
+                <h2 id="result-title">Transcript</h2>
                 <p id="result-meta" class="meta"></p>
               </div>
               <div class="actions">
@@ -121,16 +124,16 @@
         </section>
 
         <!-- Meetings: the list, or one meeting (live or saved) -->
-        <section id="section-meetings" class="section section-wide" role="tabpanel" data-section="meetings" hidden>
+        <section id="section-meetings" class="section section-page" data-section="meetings" aria-label="Meetings" hidden>
           <div id="meetings-home" class="meetings-home">
-            <header class="meetings-hero">
-              <h2>Meetings</h2>
-              <p>Your microphone and the computer's sound become text. Audio and text stay on this computer.</p>
-            </header>
-            <div class="meetings-bar">
-              <input id="meetings-search" class="input" type="search" placeholder="Search titles, transcripts and notes" aria-label="Search meetings: titles, transcripts and notes" spellcheck="false" />
+            <header class="page-head">
+              <h1 class="page-title">Meetings</h1>
               <button id="meeting-start" type="button" class="btn btn-default btn-rec" aria-describedby="meetings-key"><span class="rec-dot" aria-hidden="true"></span>Record</button>
               <span id="meetings-key" class="sr-only"></span>
+            </header>
+            <div class="search-field">
+              <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
+              <input id="meetings-search" class="input" type="search" placeholder="Search titles, transcripts and notes" aria-label="Search meetings: titles, transcripts and notes" spellcheck="false" />
             </div>
             <div id="meetings-error" class="error" role="alert" hidden></div>
             <div id="meetings-list" class="meetings-list" role="list" aria-label="Recorded meetings"></div>
@@ -146,23 +149,44 @@
           </div>
 
           <div id="meeting-view" class="meeting-view" hidden>
-            <div>
-              <button id="meeting-back" type="button" class="btn btn-ghost btn-sm back">
+            <div class="meeting-top">
+              <button id="meeting-back" type="button" class="btn btn-ghost btn-sm back" title="All meetings (Esc)">
                 <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6" /></svg>
-                All meetings
+                Meetings
               </button>
+              <div class="meeting-top-actions">
+                <button id="meeting-stop" type="button" class="btn btn-default btn-sm btn-stop"><span class="stop-square" aria-hidden="true"></span>Stop</button>
+                <div class="menu-wrap">
+                  <button id="share-button" type="button" class="btn btn-outline btn-sm" aria-haspopup="menu" aria-expanded="false" aria-controls="share-menu">
+                    <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="13" height="13" rx="2" /><path d="M4 16V5a1 1 0 0 1 1-1h11" /></svg>
+                    Copy
+                    <svg class="icon chev" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
+                  </button>
+                  <div id="share-menu" class="menu" role="menu" aria-label="Copy and export" hidden>
+                    <button id="copy-notes" type="button" role="menuitem" class="menu-item">Copy the summary</button>
+                    <button id="copy-mine" type="button" role="menuitem" class="menu-item">Copy my notes</button>
+                    <button id="copy-transcript" type="button" role="menuitem" class="menu-item">Copy the transcript</button>
+                    <div class="menu-sep" role="separator"></div>
+                    <button id="meeting-export" type="button" role="menuitem" class="menu-item">Export as Markdown…</button>
+                    <button id="meeting-folder" type="button" role="menuitem" class="menu-item" hidden>Save to the notes folder</button>
+                    <button id="meeting-obsidian" type="button" role="menuitem" class="menu-item" hidden>Open in Obsidian</button>
+                  </div>
+                </div>
+                <div class="menu-wrap">
+                  <button id="more-button" type="button" class="btn btn-ghost btn-sm btn-icon" aria-haspopup="menu" aria-expanded="false" aria-controls="more-menu" aria-label="More">
+                    <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.2" /><circle cx="12" cy="12" r="1.2" /><circle cx="19" cy="12" r="1.2" /></svg>
+                  </button>
+                  <div id="more-menu" class="menu menu-right" role="menu" aria-label="More" hidden>
+                    <button id="meeting-rewrite" type="button" role="menuitem" class="menu-item">Write the summary again…</button>
+                    <div class="menu-sep" role="separator"></div>
+                    <button id="meeting-delete" type="button" role="menuitem" class="menu-item danger">Delete meeting</button>
+                  </div>
+                </div>
+              </div>
             </div>
             <div class="meeting-head">
-              <div class="meeting-head-text">
-                <input id="meeting-title" class="title-input" type="text" maxlength="200" aria-label="Meeting title" spellcheck="false" />
-                <p id="meeting-meta" class="meta"></p>
-              </div>
-              <div class="actions">
-                <button id="meeting-export" type="button" class="btn btn-outline btn-sm">Export .md</button>
-                <button id="meeting-folder" type="button" class="btn btn-outline btn-sm" hidden>Save to folder</button>
-                <button id="meeting-obsidian" type="button" class="btn btn-outline btn-sm" hidden>Open in Obsidian</button>
-                <button id="meeting-delete" type="button" class="btn btn-ghost btn-sm danger">Delete</button>
-              </div>
+              <input id="meeting-title" class="title-input" type="text" maxlength="200" aria-label="Meeting title" spellcheck="false" />
+              <div id="meeting-meta" class="meeting-chips"></div>
             </div>
             <div id="meeting-live" class="meeting-live" hidden>
               <div class="live-clock">
@@ -180,13 +204,12 @@
                   <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2" /><path d="M8 20h8M12 16v4" /></svg>
                   <span id="meeting-screen-text">Record screen</span>
                 </button>
-                <button id="meeting-stop" type="button" class="btn btn-default btn-sm btn-stop"><span class="stop-square" aria-hidden="true"></span>Stop</button>
               </div>
             </div>
             <ul id="meeting-notices" class="notices" role="status" hidden></ul>
             <!-- Without a screen video: the notes (or the transcript) on the left, the chat on the
-                 right. With one: the video and the chat on the left, the notes and the transcript
-                 on the right (one column on a narrow window). -->
+                 right when it is open. With one: the video and the chat on the left, the notes and
+                 the transcript on the right (one column on a narrow window). -->
             <div id="meeting-body" class="meeting-body">
               <!-- The screen video (recorded with the meeting): in view while you read. -->
               <section id="meeting-video" class="meeting-video" aria-label="Screen video" hidden>
@@ -205,24 +228,27 @@
               <!-- Drag (or arrow keys) to resize the panels; a double click puts them back. -->
               <div id="split-rows" class="splitter splitter-rows" role="separator" aria-orientation="horizontal" aria-label="Height of the screen video" aria-controls="video-box" tabindex="0" title="Drag to resize. Double-click: back to the normal size."></div>
               <div id="split-cols" class="splitter splitter-cols" role="separator" aria-orientation="vertical" aria-label="Width of the chat" tabindex="0" title="Drag to resize. Double-click: back to the normal size."></div>
-              <!-- The notes, or the transcript in their place (the switch). -->
-              <section id="notes-pane" class="notes-pane" aria-label="Notes and transcript">
+              <!-- Summary, My notes, Transcript. -->
+              <section id="notes-pane" class="notes-pane" aria-label="Summary, notes and transcript">
                 <div class="notes-head">
-                  <div class="seg" role="tablist" aria-label="Show">
-                    <button id="tab-notes" type="button" role="tab" class="seg-item" aria-selected="true" aria-controls="notes-panel">Notes</button>
-                    <button id="tab-transcript" type="button" role="tab" class="seg-item" aria-selected="false" aria-controls="transcript-panel" tabindex="-1">Transcript</button>
+                  <div class="tabs" role="tablist" aria-label="Show">
+                    <button id="tab-transcript" type="button" role="tab" class="tab" aria-selected="false" aria-controls="transcript-panel" tabindex="-1">
+                      <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 10v3M6 6v11M10 3v18M14 8v7M18 5v13M22 10v3" /></svg>Transcript
+                    </button>
+                    <button id="tab-mine" type="button" role="tab" class="tab" aria-selected="false" aria-controls="mine-panel" tabindex="-1">
+                      <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10" /></svg>My notes
+                    </button>
+                    <button id="tab-notes" type="button" role="tab" class="tab" aria-selected="true" aria-controls="notes-panel">
+                      <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3-1.9 5.8L4 10l4.9 3.6L7 20l5-3.7 5 3.7-1.9-6.4L20 10l-6.1-1.2Z" /></svg>Summary
+                    </button>
                   </div>
-                  <span id="ai-meta" class="ai-meta"></span>
                   <span id="meeting-pending" class="pending"></span>
                   <div class="actions">
-                    <!-- Copy: what the tab shows, alone (the notes, or the transcript). -->
-                    <button id="copy-notes" type="button" class="btn btn-outline btn-sm" hidden>Copy notes</button>
-                    <button id="copy-transcript" type="button" class="btn btn-outline btn-sm" hidden>Copy transcript</button>
-                    <button id="ai-write" type="button" class="btn btn-outline btn-sm">Write notes</button>
+                    <button id="ai-write" type="button" class="btn btn-outline btn-sm">Write the summary</button>
                     <button id="ai-cancel" type="button" class="btn btn-ghost btn-sm" hidden>Cancel</button>
                   </div>
                 </div>
-                <!-- The notes job's progress and error: seen from both tabs (Cancel is in the head). -->
+                <!-- The notes job's progress and error: seen from every tab (Cancel is in the head). -->
                 <div id="ai-progress" class="progress" hidden>
                   <div class="progress-track"><div id="ai-progress-fill" class="progress-fill"></div></div>
                   <div class="progress-label"><span class="spinner" aria-hidden="true"></span><span id="ai-progress-text" class="progress-text"></span></div>
@@ -231,6 +257,9 @@
                 <div id="notes-panel" class="notes-panel" role="tabpanel" aria-labelledby="tab-notes" tabindex="0">
                   <div id="ai-body" class="ai-body" aria-live="off"></div>
                 </div>
+                <div id="mine-panel" class="mine-panel" role="tabpanel" aria-labelledby="tab-mine" hidden>
+                  <textarea id="mine-input" class="mine-input" spellcheck="true" aria-label="My notes" placeholder="Write what matters to you: questions, points, names. The summary follows them. Saved as you type."></textarea>
+                </div>
                 <div id="transcript-panel" class="transcript-panel" role="tabpanel" aria-labelledby="tab-transcript" hidden>
                   <div id="meeting-transcript" class="meeting-transcript" tabindex="0" aria-label="Transcript"></div>
                 </div>
@@ -238,8 +267,11 @@
               <!-- Questions about this meeting, answered by the notes model. -->
               <aside id="chat-pane" class="chat-pane" aria-labelledby="chat-title">
                 <div class="chat-head">
-                  <h3 id="chat-title" class="pane-title">Ask about this meeting</h3>
+                  <h2 id="chat-title" class="pane-title">Ask about this meeting</h2>
                   <button id="chat-clear" type="button" class="btn btn-ghost btn-sm" hidden>Clear</button>
+                  <button id="chat-close" type="button" class="btn btn-ghost btn-sm btn-icon" aria-label="Close the questions" title="Close (Ctrl+J)">
+                    <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+                  </button>
                 </div>
                 <div id="chat-log" class="chat-log" role="log" aria-live="off" aria-label="Questions and answers"></div>
                 <div id="chat-suggestions" class="chat-suggestions" role="group" aria-label="Suggested questions">
@@ -248,21 +280,55 @@
                   <button type="button" class="chip-btn" data-ask="List my tasks from this meeting (the tasks for Me), with their dates, in the language of the meeting.">List my tasks</button>
                 </div>
                 <form id="chat-form" class="chat-form">
-                  <textarea id="chat-input" class="chat-input" rows="1" maxlength="4000" placeholder="Ask about the meeting…" aria-label="Ask about the meeting" aria-keyshortcuts="Control+K" title="Ask about the meeting (Ctrl+K). Enter asks, Shift+Enter starts a new line." spellcheck="true"></textarea>
+                  <textarea id="chat-input" class="chat-input" rows="1" maxlength="4000" placeholder="Ask about the meeting…" aria-label="Ask about the meeting" title="Enter asks, Shift+Enter starts a new line." spellcheck="true"></textarea>
                   <button id="chat-send" type="submit" class="btn btn-default btn-icon chat-send" aria-label="Ask" title="Ask (Enter)">
                     <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7" /></svg>
                   </button>
                 </form>
               </aside>
             </div>
+            <footer class="meeting-foot">
+              <span class="foot-note">
+                <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></svg>
+                <span id="meeting-foot-text">Saved on this computer</span>
+              </span>
+              <button id="chat-toggle" type="button" class="btn btn-outline btn-sm ask-toggle" aria-expanded="false" aria-controls="chat-pane" aria-keyshortcuts="Control+J" title="Ask about this meeting (Ctrl+J)">
+                <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z" /></svg>
+                Ask about this meeting
+                <kbd class="side-kbd">Ctrl J</kbd>
+              </button>
+            </footer>
+          </div>
+        </section>
+
+        <!-- Ask: questions across all meetings, with the sources the answer comes from. -->
+        <section id="section-ask" class="section section-page" data-section="ask" aria-label="Ask" hidden>
+          <div class="ask-page">
+            <header class="page-head">
+              <h1 class="page-title">Ask</h1>
+              <button id="ask-new" type="button" class="btn btn-ghost btn-sm" hidden>New conversation</button>
+            </header>
+            <p class="page-lead">Questions across all your meetings. Each answer names the meetings and the moments it comes from.</p>
+            <div id="ask-log" class="ask-log" role="log" aria-live="polite" aria-label="Questions and answers"></div>
+            <div id="ask-starters" class="ask-starters" role="group" aria-label="Suggested questions">
+              <button type="button" class="chip-btn" data-ask="What are my open tasks from this week's meetings?">My tasks this week</button>
+              <button type="button" class="chip-btn" data-ask="What did we decide in the last two weeks?">Decisions, last two weeks</button>
+              <button type="button" class="chip-btn" data-ask="Catch me up on yesterday's meetings.">Catch me up on yesterday</button>
+            </div>
+            <form id="ask-form" class="chat-form ask-form">
+              <textarea id="ask-input" class="chat-input" rows="1" maxlength="4000" placeholder="Ask about your meetings…" aria-label="Ask about your meetings" spellcheck="true"></textarea>
+              <button id="ask-send" type="submit" class="btn btn-default btn-icon chat-send" aria-label="Ask" title="Ask (Enter)">
+                <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7" /></svg>
+              </button>
+            </form>
           </div>
         </section>
 
         <!-- History: finished dictations -->
-        <section id="section-history" class="section section-wide" role="tabpanel" data-section="history" hidden>
+        <section id="section-history" class="section section-page" data-section="history" aria-label="Dictations" hidden>
           <header class="section-head section-head-row">
             <div>
-              <h2>History</h2>
+              <h1 class="page-title">Dictations</h1>
               <p>Your dictations, newest first. They stay on this computer. <span id="history-paste-hint"></span></p>
             </div>
           </header>
@@ -287,6 +353,19 @@
           </div>
         </section>
 
+        <!-- Settings: one page, its parts as tabs (Ctrl+, opens it, Esc goes back). -->
+        <div id="settings-page" class="settings-page" hidden>
+          <header class="settings-head">
+            <h1 class="page-title">Settings</h1>
+            <div id="settings-tabs" class="settings-tabs" role="tablist" aria-label="Settings">
+              <button type="button" role="tab" class="tab" data-section="general" aria-controls="section-general">General</button>
+              <button type="button" role="tab" class="tab" data-section="speech" aria-controls="section-speech">Speech</button>
+              <button type="button" role="tab" class="tab" data-section="dictation" aria-controls="section-dictation">Dictation</button>
+              <button type="button" role="tab" class="tab" data-section="meeting-settings" aria-controls="section-meeting-settings">Meetings</button>
+              <button type="button" role="tab" class="tab" data-section="connections" aria-controls="section-connections">Connections</button>
+              <button type="button" role="tab" class="tab" data-section="about" aria-controls="section-about">About</button>
+            </div>
+          </header>
         <!-- General: how the app starts and looks -->
         <section id="section-general" class="section" role="tabpanel" data-section="general" hidden>
           <header class="section-head">
@@ -682,22 +761,8 @@
             <dd><kbd>Space</kbd> dictate (in Transcribe) · <kbd>Esc</kbd> cancel · <kbd>Ctrl</kbd> <kbd>,</kbd> settings</dd>
           </dl>
         </section>
-      </div>
-      <!-- The theme switch and Exit: at the bottom of the side menu (CSS), but after the page in
-           the Tab order: Tab from the section list goes to the section, never to them. -->
-      <div class="nav-foot">
-        <!-- Shows the theme that a click gives: the moon in light mode, the sun in dark mode. -->
-        <button id="theme-toggle" type="button" class="nav-item" title="Switch to dark mode">
-          <svg class="icon theme-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401" /></svg>
-          <svg class="icon theme-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" /></svg>
-          <span id="theme-toggle-text">Dark mode</span>
-        </button>
-        <hr class="nav-divider" />
-        <button id="app-quit" type="button" class="nav-item" title="Exit: the dictation key and the tray icon stop too">
-          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><path d="m16 17 5-5-5-5M21 12H9" /></svg>
-          Exit
-        </button>
-      </div>
+        </div>
+      </main>
     </div>
     <script type="module" src="/src/main.ts"></script>
   </body>

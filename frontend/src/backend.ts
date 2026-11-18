@@ -105,6 +105,34 @@ export interface Backend {
   onFileDrop(onHover: (over: boolean) => void, onDrop: (files: FileRef[]) => void): void;
   onOpenFiles(cb: (files: FileRef[]) => void): void;
   meetings: MeetingsBackend;
+  /** Ask across all meetings (the Ask page). */
+  library: LibraryBackend;
+}
+
+/** A source an answer across meetings cites as [n]: a part of a meeting's transcript (`at`: its
+ * start in seconds) or the meeting's notes (`at` null). */
+export interface LibrarySource {
+  n: number;
+  meeting_id: string;
+  title: string;
+  started_at: number;
+  at: number | null;
+  text: string;
+}
+
+/** An answer across meetings as it is written: preparing | writing | done | error | cancelled. */
+export interface LibraryAnswerEvent {
+  state: string;
+  text: string;
+  sources: LibrarySource[];
+  detail: string;
+}
+
+export interface LibraryBackend {
+  /** Ask a question across all meetings; `history`: the earlier turns of this conversation. The
+   * answer comes through onAnswer. Stop it with meetings.aiCancel. */
+  ask(question: string, history: { role: "user" | "assistant"; text: string }[]): Promise<void>;
+  onAnswer(cb: (e: LibraryAnswerEvent) => void): void;
 }
 
 export interface MeetingsBackend {
@@ -124,7 +152,7 @@ export interface MeetingsBackend {
   onLive(cb: (l: MeetingLive) => void): void;
   onLevels(cb: (lv: { me: number; them: number }) => void): void;
   /** Start writing the AI notes of a saved meeting; progress comes through onAiNotes. */
-  aiNotes(id: string): Promise<void>;
+  aiNotes(id: string, instruction?: string): Promise<void>;
   /** Stop the AI's job: the notes being written, or an answer. */
   aiCancel(): Promise<void>;
   onAiNotes(cb: (e: AiNotesEvent) => void): void;
@@ -266,7 +294,7 @@ async function desktopBackend(): Promise<Backend> {
       onLevels(cb) {
         void listen<{ me: number; them: number }>("meeting-level", (e) => cb(e.payload));
       },
-      aiNotes: (id) => invoke("meeting_ai_notes", { id }),
+      aiNotes: (id, instruction) => invoke("meeting_ai_notes", { id, instruction: instruction || null }),
       aiCancel: () => invoke("ai_notes_cancel"),
       onAiNotes(cb) {
         void listen<AiNotesEvent>("ai-notes", (e) => cb(e.payload));
@@ -296,9 +324,17 @@ async function desktopBackend(): Promise<Backend> {
         void listen<{ id: string; state: string; file: string; detail: string }>("meeting-export", (e) => cb(e.payload));
       },
     },
+    library: {
+      ask: (question, history) => invoke("library_ask", { question, history }),
+      onAnswer(cb) {
+        void listen<LibraryAnswerEvent>("library-answer", (e) => cb(e.payload));
+      },
+    },
   };
 }
 
 export async function getBackend(): Promise<Backend> {
+  // In a plain browser (npm run dev, screenshots, page tests): the demo stand-in.
+  if (!("__TAURI_INTERNALS__" in window)) return (await import("./demo")).demoBackend();
   return desktopBackend();
 }
