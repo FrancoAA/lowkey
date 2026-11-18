@@ -179,8 +179,6 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
   const chatClose = $<HTMLButtonElement>("chat-close");
   const footText = $<HTMLElement>("meeting-foot-text");
   const notesPanel = $<HTMLDivElement>("notes-panel");
-  const notesPane = $<HTMLElement>("notes-pane");
-  const transcriptSide = $<HTMLElement>("transcript-side");
   const transcriptPanel = $<HTMLDivElement>("transcript-panel");
   /** The model and what to do with the summary: in the foot, next to "Saved on this computer". */
   const aiMeta = footText;
@@ -987,24 +985,15 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
     ["notes", tabNotes],
   ] as const;
 
-  /** A wide meeting: the transcript is a side panel on the right, always in view, from the top
-   * to the foot (no Transcript tab then); the summary or your notes on the left. */
-  let dual = false;
-  /** The tab on screen: in two columns, the transcript is not one. */
-  const shownTab = () => (dual && tab === "transcript" ? "notes" : tab);
-  const tabsInView = () => TABS.filter(([, b]) => !b.hidden);
-
   function renderTab(): void {
-    const on = shownTab();
     for (const [t, b] of TABS) {
-      b.setAttribute("aria-selected", String(t === on));
-      b.tabIndex = t === on ? 0 : -1;
+      b.setAttribute("aria-selected", String(t === tab));
+      b.tabIndex = t === tab ? 0 : -1;
     }
-    tabTranscript.hidden = dual;
-    notesPanel.hidden = on !== "notes";
-    minePanel.hidden = on !== "mine";
-    transcriptPanel.hidden = !dual && tab !== "transcript";
-    pending.hidden = !dual && tab !== "transcript";
+    notesPanel.hidden = tab !== "notes";
+    minePanel.hidden = tab !== "mine";
+    transcriptPanel.hidden = tab !== "transcript";
+    pending.hidden = tab !== "transcript";
     if (shown && document.activeElement !== mineInput && mineInput.value !== shown.notes) mineInput.value = shown.notes ?? "";
     renderCopy();
   }
@@ -1023,7 +1012,6 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
   }
 
   function setTab(t: typeof tab, focus = false): void {
-    if (dual && t === "transcript") return; // in view already, beside the notes
     const changed = tab !== t;
     if (changed && tab === "notes") notesScroll = aiBody.scrollTop;
     tab = t;
@@ -1042,27 +1030,11 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
     b.addEventListener("keydown", (e) => {
       if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) return;
       e.preventDefault();
-      const tabs = tabsInView();
-      const i = tabs.findIndex(([x]) => x === shownTab());
-      const n = e.key === "Home" ? 0 : e.key === "End" ? tabs.length - 1 : (i + (e.key === "ArrowRight" ? 1 : tabs.length - 1)) % tabs.length;
-      setTab(tabs[n][0], true);
+      const i = TABS.findIndex(([x]) => x === tab);
+      const n = e.key === "Home" ? 0 : e.key === "End" ? TABS.length - 1 : (i + (e.key === "ArrowRight" ? 1 : TABS.length - 1)) % TABS.length;
+      setTab(TABS[n][0], true);
     });
   }
-
-  // The side panel from this width of the meeting (more with the questions open, which share the
-  // left side). The meeting's width does not change with the panel: no loop.
-  function checkDual(): void {
-    const cs = getComputedStyle(view);
-    const w = view.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
-    const d = !view.hidden && w >= (chatOpen ? 1500 : 1100);
-    view.toggleAttribute("data-dual", d);
-    if (d === dual) return;
-    dual = d;
-    (dual ? transcriptSide : notesPane).append(transcriptPanel);
-    renderTab();
-    renderAi();
-  }
-  new ResizeObserver(checkDual).observe(view);
 
   // ---------------------------------------------------------------- menus (Copy, More)
   function closeMenus(except?: HTMLElement): void {
@@ -1181,7 +1153,6 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
   function renderChatOpen(): void {
     body.toggleAttribute("data-chat", chatOpen);
     chatToggle.setAttribute("aria-expanded", String(chatOpen));
-    checkDual();
   }
   function setChatOpen(on: boolean, focus = true): void {
     chatOpen = on;
@@ -1221,7 +1192,7 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
     const stale = !!shown.ai_notes && (shown.transcript_version ?? 0) > (shown.ai_version ?? 0);
     const regenerate = !!shown.ai_notes?.trim() && !stale;
     // A summary that is up to date: "Write the summary again…" is in the More menu.
-    aiWrite.hidden = running || shownTab() !== "notes" || regenerate;
+    aiWrite.hidden = running || tab !== "notes" || regenerate;
     aiWrite.textContent = stale ? "Write the summary again" : "Write the summary";
     aiWrite.title = stale ? "The transcript was fixed after this summary was written" : "";
     rewriteBtn.disabled = aiRunning() || chatRunning() || voicesWorking.has(shown.id) || (!shown.lines.length && !shown.notes?.trim());

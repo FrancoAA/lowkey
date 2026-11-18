@@ -54,10 +54,7 @@ macOS and Windows, a prompt when a call starts, and questions over past meetings
   meetings, it says how to start, and names the meeting key.
 - A window 1100 px or wider shows the list and the open meeting side by side: the list is a
   300 px column on the left (the meeting key at its foot), the meeting on the right ("Choose a
-  meeting" when none is open; Esc closes it and puts the focus back on its row). When the
-  meeting is 1100 px or wider (1500 px with the questions open), the transcript is a side panel
-  on its right, level with the tabs, down to the foot, always in view, and the tabs are **My
-  notes** and **Summary**; a click on a point of the summary shows its place there.
+  meeting" when none is open; Esc closes it and puts the focus back on its row).
 - One meeting is a page that reads like a note: **Meetings** (back, or Esc), the **Copy** menu
   (the summary, your notes, the transcript; Export as Markdown; Save to the notes folder; Open
   in Obsidian) and the **⋯** menu (Write the summary again… with an optional instruction;

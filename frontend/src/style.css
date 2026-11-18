@@ -644,35 +644,6 @@ mark { background: color-mix(in srgb, var(--tint) 22%, transparent); color: inhe
 .notes-panel, .transcript-panel, .mine-panel { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 10px; border-radius: 4px; }
 .notes-panel:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 35%, transparent); }
 .pane-title { font-size: 14px; font-weight: 600; color: var(--foreground); }
-/* A wide meeting (meetings.ts): the transcript is a side panel on the right, level with the tabs
-   and the summary, down to the foot's line; the title and its chips over both. The two head lines
-   meet at the panel's line and run on to the meeting's edges. */
-.transcript-head { display: none; }
-.transcript-side { display: none; }
-.meeting-view[data-dual] {
-  display: grid; grid-template-columns: minmax(0, 1fr) clamp(380px, 36%, 640px);
-  grid-template-rows: auto auto auto auto minmax(0, 1fr) auto; gap: 0;
-}
-.meeting-view[data-dual] > * { grid-column: 1 / -1; }
-.meeting-view[data-dual] > .meeting-top { grid-row: 1; margin-bottom: 14px; }
-.meeting-view[data-dual] > .meeting-head { grid-row: 2; margin-bottom: 14px; }
-.meeting-view[data-dual] > .meeting-live { grid-row: 3; margin-bottom: 14px; }
-.meeting-view[data-dual] > .notices { grid-row: 4; margin-bottom: 14px; }
-.meeting-view[data-dual] > .meeting-body { grid-row: 5; grid-column: 1; margin-bottom: 14px; padding-right: 40px; }
-.meeting-view[data-dual] > .meeting-foot { grid-row: 6; }
-.meeting-view[data-dual] .notes-head {
-  margin: 0 -40px 0 calc(-1 * var(--page-pad, 0px)); padding: 0 40px 0 var(--page-pad, 0px);
-}
-.meeting-view[data-dual] > .transcript-side {
-  grid-row: 5; grid-column: 2; display: flex; flex-direction: column; min-height: 0;
-  margin-right: calc(-1 * var(--page-pad, 0px)); border-left: 1px solid var(--border);
-}
-.transcript-side .transcript-panel { flex: 1; min-height: 0; gap: 16px; border-radius: 0; }
-.transcript-side .transcript-head {
-  display: flex; align-items: center; flex: none; height: 38px; margin: 0; padding: 0 var(--page-pad, 0px) 0 40px;
-  border-bottom: 1px solid var(--border); font-size: 14px; font-weight: 550;
-}
-.transcript-side .meeting-transcript { padding: 0 var(--page-pad, 0px) 14px 40px; }
 .pending { font-size: 12px; color: var(--muted-foreground); }
 .meeting-transcript {
   flex: 1; min-height: 0; overflow-y: auto; padding: 0 10px 14px 2px;
