@@ -11,7 +11,7 @@ OpenAI, Anthropic, Groq or Deepgram can transcribe or write the notes in its pla
 It is one native program (Rust + Tauri v2) with whisper.cpp inside: on the GPU through Vulkan
 (Linux, Windows) or Metal (macOS), else on the CPU.
 
-![Desktop app](docs/screenshots/10-desktop-transcript.png)
+![A meeting in Lowkey: its transcript, with the summary and your notes in the other tabs](docs/screenshots/27-desktop-meeting-wide.png)
 
 **It was called open-whisper before.** The first start of Lowkey moves your settings
 (`~/.config/open-whisper` → `~/.config/lowkey`), your data (models, meetings, history:
@@ -188,6 +188,8 @@ Turn the preview off in Settings (`live_preview = false`). Details and measureme
 
 Record a call or a talk, as text next to your notes (Linux for now). No bot joins the call.
 
+![The meetings, grouped by day](docs/screenshots/26-desktop-meetings-list.png)
+
 - **The meeting key** (<kbd>Super</kbd>+<kbd>Ctrl</kbd>+<kbd>M</kbd> on Linux,
   <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>M</kbd> on macOS and Windows; change it in Settings → Meetings)
   starts a recording from any app, and stops it. On Hyprland (or with your own desktop bind)
@@ -307,6 +309,9 @@ Record a call or a talk, as text next to your notes (Linux for now). No bot join
   conversation stays until **New conversation** (it is not saved). English and Spanish date
   words. (Idea and rules from [Yogurt](https://github.com/FrigadeHQ/yogurt), MIT; it also
   searches by meaning with an embedding model, which Lowkey does not do yet.)
+
+  ![Ask across meetings: an answer with its source](docs/screenshots/43-desktop-ask.png)
+
 - **Calendar** (Settings → Meetings → Calendar): paste your calendar's private iCal address
   (Google: "Secret address in iCal format"; Outlook: a published calendar's ICS link). The app
   checks it, then reads it every 5 minutes (a failed read keeps the last events). The Meetings
@@ -575,7 +580,7 @@ make e2e-desktop   # the app in a nested Hyprland, on a temporary headless outpu
                    # portals): files, errors, dictation, the global key, live preview, Settings,
                    # a meeting; the meeting key and its capsule (drag, mute, stop, record
                    # screen, Open the notes), AI notes (with a cached Qwen3.5 4B in bench/.work/llm);
-                   # screenshots 09-40. Programs it started are stopped at the end.
+                   # screenshots 09-43. Programs it started are stopped at the end.
                    # python3 scripts/e2e_desktop.py --strip-only: only the capsule (quick)
                    # python3 scripts/e2e_desktop.py --first-run: empty model folder
                    # OW_E2E_HYPRBARS=<hyprbars.so>: also checks that title-bar plugins skip the overlay
