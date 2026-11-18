@@ -541,7 +541,7 @@ overlay (`overlay.html`, `src/overlay.ts`).
 
 ```sh
 make desktop-dev   # the app with hot reload (Vite + tauri dev)
-make test          # UI typecheck + build, Rust unit tests
+make test          # UI typecheck + build, page tests (Vitest), Rust unit tests
 make e2e-desktop   # the app in a nested Hyprland, on a temporary headless output of your
                    # session; its own runtime folder and a D-Bus that starts no services (no
                    # portals): files, errors, dictation, the global key, live preview, Settings,
@@ -553,6 +553,12 @@ make e2e-desktop   # the app in a nested Hyprland, on a temporary headless outpu
                    # OW_E2E_HYPRBARS=<hyprbars.so>: also checks that title-bar plugins skip the overlay
 make bench         # research only: the model benchmark (docs/benchmark.md), Python via uv
 ```
+
+The page runs in a plain browser too: `cd frontend && npm run dev` opens it on a demo stand-in
+(`src/demo.ts`: sample meetings, nothing saved). The page tests (`npm test`) use the same
+stand-in in a simulated browser (happy-dom): the pure parts (notes → transcript, Markdown,
+search marks, citations) and the whole page (Meetings, a meeting's tabs and menus, My notes,
+Ctrl+K, Settings, Ask).
 
 The real preview engine test: `cd desktop/src-tauri && cargo test --lib real_whistle -- --ignored`.
 The real screen portal test (it opens your desktop's screen picker):

@@ -31,7 +31,7 @@ desktop-windows: ## Windows x64 lowkey.exe, built here (cargo-xwin; CPU only; no
 test:           ## UI typecheck + build, Rust unit tests, key script syntax
 	sh -n scripts/ow-dictate
 	./desktop/scripts/sherpa-onnx.sh
-	cd frontend && ([ -d node_modules ] || npm ci) && npm run build
+	cd frontend && ([ -d node_modules ] || npm ci) && npm run build && npm test
 	cd desktop/src-tauri && $(CARGO) test --lib
 
 test-desktop: test
