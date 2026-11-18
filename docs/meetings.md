@@ -52,15 +52,22 @@ macOS and Windows, a prompt when a call starts, and questions over past meetings
 - The list is grouped by day (Today, Yesterday, then dates), newest first, with the time, the
   length, the first words, and marks for "Recording" and "Interrupted". With no
   meetings, it says how to start, and names the meeting key.
-- One meeting: the notes on the left, the chat on the right (300–380 px), the full height of
-  the window, each scrolling on its own (lines stay under ~75 characters); under 720 px one above
-  the other. A switch above the notes, **Notes | Transcript** (the tabs pattern: the arrow
-  keys move between them), shows the transcript in the notes' place. (The tab was "AI notes"
-  before; the file, the export and the AI agents still say "AI notes", next to "your notes".) While it records, the
-  transcript is shown, and a panel shows the clock, the two-colour wave (the same colours as the
-  transcript's Me and Them) and Stop (it has the focus after Start); the notes and the chat
-  start when it stops. Esc goes back to the list (not while a question is typed, or a dialog is
-  open).
+- One meeting is a page that reads like a note: **Meetings** (back, or Esc), the **Copy** menu
+  (the summary, your notes, the transcript; Export as Markdown; Save to the notes folder; Open
+  in Obsidian) and the **⋯** menu (Write the summary again… with an optional instruction;
+  Delete) at the top; then the title (click to change it), chips for the date, the length and
+  the people (the names given in the transcript; "Recording", "Interrupted" and "Telling the
+  voices apart…" show there too), and three tabs (the tabs pattern: the arrow keys move between
+  them): **Transcript**, **My notes** and **Summary** (the AI notes; the file, the export and
+  the AI agents still say "AI notes"). It opens on the summary, or on the transcript while it
+  records. **My notes** is a plain text box saved as you type (`meeting_update` with `notes`);
+  the summary is written with it (see AI notes). The foot says "Saved on this computer", the
+  length and which model wrote the summary; its **Ask about this meeting** button (Ctrl+J)
+  opens the questions on the right (300–380 px; open or closed is kept on this computer for
+  every meeting). Each pane scrolls on its own; under 720 px one above the other. While it
+  records, a panel shows the clock, the two-colour wave (the same colours as the transcript's Me
+  and Them) and Record screen; Stop is at the top. The summary and the questions start when it
+  stops. (The page follows Yogurt's, MIT.)
 - The panels can be resized: drag the line between the notes and the chat (with a screen video,
   also the line between the video and the chat), or focus it with Tab and use the arrow keys
   (Shift: bigger steps; Home and End: smallest and largest). A double click puts the normal size
