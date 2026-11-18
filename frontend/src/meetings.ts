@@ -164,6 +164,12 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
   const moreBtn = $<HTMLButtonElement>("more-button");
   const moreMenu = $<HTMLDivElement>("more-menu");
   const rewriteBtn = $<HTMLButtonElement>("meeting-rewrite");
+  const retranscribeBtn = $<HTMLButtonElement>("meeting-retranscribe");
+  const audio = $<HTMLAudioElement>("meeting-audio");
+  /** The meeting whose kept audio is in the player (null: none). */
+  let audioOf: string | null = null;
+  /** The meeting being transcribed again, and how far (0..1). */
+  let again: { id: string; progress: number } | null = null;
   const chatToggle = $<HTMLButtonElement>("chat-toggle");
   const chatClose = $<HTMLButtonElement>("chat-close");
   const footText = $<HTMLElement>("meeting-foot-text");
@@ -336,6 +342,19 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
         b.setAttribute("aria-label", `Play the screen video from ${clock(c.t)}`);
         b.addEventListener("click", () => playAt(c.t));
         b.dataset.start = String(c.t);
+        at = b;
+      } else if (!isLive() && audioOf === m.id) {
+        // The kept audio: the time plays it from there.
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "when when-play";
+        b.title = "Play the audio from here";
+        b.setAttribute("aria-label", `Play the audio from ${clock(l.start)}`);
+        const t = Math.max(0, l.start - 0.3);
+        b.addEventListener("click", () => {
+          audio.currentTime = t;
+          void audio.play().catch(() => {});
+        });
         at = b;
       } else {
         at = document.createElement("span");
@@ -642,6 +661,7 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
       if (who) chips.push(chip("people", who, "", "Name a speaker in the transcript: click the name"));
       if (shown.state === "recording") chips.push(chip("", "Interrupted", "warn", "The app stopped while this meeting recorded: the text up to then is kept"));
       if (voicesWorking.has(shown.id)) chips.push(chip("", "Telling the voices apart…", "work"));
+      if (again?.id === shown.id) chips.push(chip("", `Transcribing again… ${Math.round(again.progress * 100)}%`, "work"));
     }
     meta.replaceChildren(...chips);
   }
@@ -657,6 +677,7 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
     if (live?.state === "finishing") stopBtn.replaceChildren(spinner(), "Saving…");
     else stopBtn.replaceChildren(square, "Stop");
     exportBtn.hidden = deleteBtn.hidden = rewriteBtn.hidden = recording;
+    renderAudio();
     shareBtn.hidden = moreBtn.hidden = false;
     renderChatOpen();
     renderFolderButtons();
@@ -1055,6 +1076,72 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
   }
   document.addEventListener("click", (e) => {
     if (!(e.target as HTMLElement).closest(".menu-wrap")) closeMenus();
+  });
+
+  // ---------------------------------------------------------------- the kept audio
+  function renderAudio(): void {
+    if (!shown) return;
+    const has = !isLive() && !!shown.audio;
+    retranscribeBtn.hidden = !has;
+    const busy = again?.id === shown.id;
+    retranscribeBtn.textContent = busy ? "Stop transcribing again" : "Transcribe again";
+    retranscribeBtn.disabled = !busy && (!!again || voicesWorking.has(shown.id));
+    if (!has) {
+      if (audioOf) {
+        audio.pause();
+        audio.removeAttribute("src");
+        audio.load();
+      }
+      audioOf = null;
+      audio.hidden = true;
+      return;
+    }
+    if (audioOf === shown.id) return;
+    const id = shown.id;
+    audioOf = null;
+    void api.audioUrl(id).then((url) => {
+      if (shown?.id !== id || !url) return;
+      audio.src = url;
+      audio.hidden = false;
+      audioOf = id;
+      renderTranscript(shown, false); // the times play it now
+    });
+  }
+
+  retranscribeBtn.addEventListener("click", async () => {
+    if (!shown) return;
+    const id = shown.id;
+    if (again?.id === id) {
+      void api.retranscribe(id, true);
+      return;
+    }
+    const ok = await confirmDialog({
+      title: "Transcribe this meeting again?",
+      body: "The speech model chosen in Settings → Speech writes the transcript anew from the kept audio, and the voices are told apart again (the names you gave are cleared). The summary stays: write it again after.",
+      action: "Transcribe again",
+    });
+    if (!ok || shown?.id !== id) return;
+    again = { id, progress: 0 };
+    renderView();
+    try {
+      await api.retranscribe(id);
+    } catch (err) {
+      again = null;
+      showError(String(err));
+      renderView();
+    }
+  });
+
+  api.onRetranscribe((e) => {
+    if (e.state === "working") again = { id: e.id, progress: e.progress };
+    else again = null;
+    if (e.state === "done" && e.meeting && shown?.id === e.id) {
+      shown = e.meeting;
+      ui.announce("The transcript is written again. Write the summary again to follow it.");
+      setTab("transcript");
+    }
+    if (e.state === "error") showError(e.detail);
+    if (shown?.id === e.id) renderView();
   });
 
   // ---------------------------------------------------------------- the questions' panel

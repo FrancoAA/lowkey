@@ -25,7 +25,9 @@ desktop-bundle: ## AppImage, .deb and .rpm in desktop/src-tauri/target/release/b
 desktop-windows: ## Windows x64 lowkey.exe, built here (cargo-xwin; CPU only; no installer) -> desktop/src-tauri/target/x86_64-pc-windows-msvc/release/lowkey.exe
 	cd frontend && ([ -d node_modules ] || npm ci) && npm run build
 	PATH="$(dir $(CARGO)):$$PATH" ./desktop/scripts/xwin-tools.sh
-	cd desktop/src-tauri && PATH="$(CURDIR)/desktop/.deps/xwin-tools/bin:$(dir $(CARGO)):$$PATH" \
+	@# TARGET_CFLAGS: libopus gives -msse4.1 to its SSE4.1 files only for non-MSVC compilers, and
+	@# clang-cl counts as MSVC (src/recording.rs). Cross builds only: native builds do not see it.
+	cd desktop/src-tauri && PATH="$(CURDIR)/desktop/.deps/xwin-tools/bin:$(dir $(CARGO)):$$PATH" TARGET_CFLAGS=-msse4.1 \
 	  $(CARGO) xwin build --release --target x86_64-pc-windows-msvc --features custom-protocol
 
 test:           ## UI typecheck + build, Rust unit tests, key script syntax

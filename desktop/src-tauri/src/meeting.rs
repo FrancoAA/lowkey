@@ -106,6 +106,10 @@ pub struct Meeting {
     /// The people invited to the calendar event it was recorded for (src/calendar.rs).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub attendees: Vec<crate::calendar::Person>,
+    /// Settings → Meetings → Keep the audio: its file next to the meeting ("<id>.opus": Me on
+    /// the left, Them on the right; src/recording.rs). "" = not kept.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub audio: String,
 }
 
 /// A meeting's screen video (src/screen.rs), a file next to the meeting's JSON.
@@ -254,6 +258,7 @@ pub fn delete_in(dir: &Path, id: &str) -> anyhow::Result<()> {
     let _one = ONE_EDIT.lock();
     std::fs::remove_file(file_in(dir, id)?).map_err(|e| anyhow::anyhow!("meeting {id}: {e}"))?;
     let _ = std::fs::remove_file(call_samples_path(dir, id));
+    let _ = std::fs::remove_file(audio_path(dir, id));
     crate::screen::delete_files(dir, id); // its screen video
     Ok(())
 }
@@ -738,6 +743,78 @@ pub fn apply_call_names(m: &mut Meeting, samples: &[crate::callnames::Sample]) -
     changed
 }
 
+/// The name of a meeting's audio file: "<id>.opus".
+pub fn audio_file(id: &str) -> String {
+    format!("{id}.opus")
+}
+
+pub fn audio_path(dir: &Path, id: &str) -> PathBuf {
+    dir.join(audio_file(id))
+}
+
+/// "m-<digits>.opus": a meeting's audio file name (nothing else: no path).
+pub fn is_audio_file(name: &str) -> bool {
+    name.strip_suffix(".opus").is_some_and(valid_id)
+}
+
+/// Transcribe a meeting again from its kept audio, with the speech model now chosen: both
+/// sources cut at pauses as when it recorded, the echo found again, and the voices told apart
+/// again when `voices` (then the names given are cleared: the people are new). The notes stay
+/// as written (the transcript's version goes up: "Write the summary again" is offered).
+/// `progress`: 0..1 of the audio done.
+pub fn retranscribe(dir: &Path, id: &str, transcribe: &TranscribeFn, voices: bool, progress: &dyn Fn(f64), cancel: &AtomicBool) -> anyhow::Result<Meeting> {
+    let m = load_in(dir, id)?;
+    anyhow::ensure!(!m.audio.is_empty() && audio_path(dir, id).is_file(), "this meeting's audio is not kept");
+    let (me, them) = crate::recording::read(&audio_path(dir, id))?;
+    let total = me.len().max(them.len()).max(1);
+    let mut det = crate::echo::Detector::new();
+    for (track, pcm) in [(crate::echo::Track::Me, &me), (crate::echo::Track::Them, &them)] {
+        for (i, block) in pcm.chunks(RATE as usize).enumerate() {
+            det.push(track, i * RATE as usize, block);
+        }
+    }
+    let mut lines: Vec<Line> = Vec::new();
+    let mut done = 0usize;
+    for (who, pcm) in [(Speaker::Me, &me), (Speaker::Them, &them)] {
+        let mut ch = Chunker::default();
+        let mut chunks = Vec::new();
+        for (i, block) in pcm.chunks(RATE as usize / 10).enumerate() {
+            chunks.extend(ch.push(block, i * RATE as usize / 10));
+        }
+        chunks.extend(ch.flush());
+        for c in chunks {
+            anyhow::ensure!(!cancel.load(Ordering::SeqCst), "cancelled");
+            let (start, len) = (c.start, c.pcm.len());
+            let segments = transcribe(c.pcm)?;
+            let (offset, secs) = (start as f64 / RATE as f64, len as f64 / RATE as f64);
+            for seg in segments {
+                let text = seg.text.trim();
+                if text.is_empty() || is_label(text) {
+                    continue;
+                }
+                let a = offset + seg.start.clamp(0.0, secs);
+                lines.push(Line { speaker: who, start: a, end: (offset + seg.end.clamp(0.0, secs)).max(a), text: text.to_string(), person: 0 });
+            }
+            done += len;
+            progress((done as f64 / (2 * total) as f64).min(0.99));
+        }
+    }
+    lines.sort_by(|a, b| a.start.total_cmp(&b.start));
+    let turns = if voices && them.iter().any(|x| x.abs() > 1e-4) { crate::voices::turns(&them).ok() } else { None };
+    edit_in(dir, id, |m| {
+        m.lines = lines;
+        m.echoes.clear();
+        take_echoes(m, &mut det, 0.0);
+        match &turns {
+            Some(t) => set_people(m, t),
+            None => {
+                m.people.clear();
+                m.transcript_version += 1;
+            }
+        }
+    })
+}
+
 /// The call app's readings of a meeting whose voices are told apart later: kept next to it
 /// until then (`<id>.callnames.json`, in the private meetings folder).
 pub fn call_samples_path(dir: &Path, id: &str) -> PathBuf {
@@ -889,6 +966,8 @@ struct Inner {
     screen: Mutex<Screen>,
     /// Does the microphone hear the speakers? (src/echo.rs)
     echo: Mutex<crate::echo::Detector>,
+    /// Keep the audio: both sources into one file, at the transcript's positions.
+    recorder: Mutex<Option<crate::recording::Writer>>,
 }
 
 /// More pieces than this waiting: the model is slower than the speech.
@@ -907,6 +986,16 @@ impl Inner {
         };
         let track = if who == Speaker::Me { crate::echo::Track::Me } else { crate::echo::Track::Them };
         self.echo.lock().push(track, pos, block);
+        let mut rec = self.recorder.lock();
+        if let Some(r) = rec.as_mut() {
+            let ch = if who == Speaker::Me { crate::recording::Channel::Me } else { crate::recording::Channel::Them };
+            if let Err(e) = r.write_at(ch, block, pos) {
+                // What is written plays up to here; the rest of the meeting is not kept.
+                *rec = None;
+                drop(rec);
+                self.notice(format!("The audio is not kept from here on: {e:#}."));
+            }
+        }
         if who == Speaker::Them {
             // At the transcript's own position: the voices' times are the lines' times.
             let mut tape = self.tape.lock();
@@ -1062,6 +1151,7 @@ impl Session {
             tape: Mutex::new(None),
             screen: Mutex::new(Screen::Off),
             echo: Mutex::new(crate::echo::Detector::new()),
+            recorder: Mutex::new(None),
         });
         let w = inner.clone();
         let worker = std::thread::Builder::new().name("meeting".into()).spawn(move || {
@@ -1099,6 +1189,15 @@ impl Session {
     /// `open_sources`, or right after). `hint`: the call's key (calls.rs), None: any call app.
     pub fn watch_call(&self, hint: Option<&str>) {
         *self.call_watch.lock() = Some(crate::callnames::Watcher::start(self.inner.clock, hint));
+    }
+
+    /// Keep the meeting's audio in the meetings folder (call before `open_sources`).
+    pub fn keep_audio(&self) -> anyhow::Result<()> {
+        let mut doc = self.inner.doc.lock();
+        let w = crate::recording::Writer::create(&audio_path(&self.inner.dir, &doc.id))?;
+        doc.audio = audio_file(&doc.id);
+        *self.inner.recorder.lock() = Some(w);
+        Ok(())
     }
 
     /// After `finish`: what the call app showed (empty when it was not read).
@@ -1359,6 +1458,12 @@ impl Session {
         }
         if let Some(mut s) = self.system.lock().take() {
             s.stop();
+        }
+        // Both sources have stopped: the last frames, and the file's end.
+        if let Some(r) = self.inner.recorder.lock().take() {
+            if let Err(e) = r.finish() {
+                self.inner.notice(format!("The end of the audio was not saved: {e:#}."));
+            }
         }
         self.stop_video(); // (waits for a Stop screen on its way)
         *self.inner.screen.lock() = Screen::Off; // a picker's answer after this is discarded (`attach_video`)
@@ -1686,6 +1791,34 @@ mod tests {
         assert_eq!(out.len(), 1);
         assert_eq!((out[0].start, out[0].pcm.len()), (0, 2 * R));
         assert_eq!(c.flush().map(|p| p.start), Some(10 * R));
+    }
+
+    #[test]
+    fn the_kept_audio_plays_back_and_transcribes_again() {
+        let dir = temp("audio");
+        let emit: EmitFn = Arc::new(|_| {});
+        let first: TranscribeFn = Arc::new(|_| Ok(vec![Segment { start: 0.2, end: 1.0, text: "first try".into() }]));
+        let doc = Meeting::new("Kept", "small");
+        let id = doc.id.clone();
+        let s = Session::new(dir.clone(), doc, first, emit).unwrap();
+        s.keep_audio().unwrap();
+        s.inner.feed(Speaker::Them, &[tone(3.0), quiet(1.5)].concat(), 0);
+        s.inner.feed(Speaker::Me, &[quiet(5.0), tone(3.0), quiet(1.5)].concat(), 0);
+        let m = s.finish();
+        assert_eq!(m.audio, audio_file(&id));
+        assert!(is_audio_file(&m.audio) && !is_audio_file("../x.opus") && !is_audio_file("m-1-1.webm"));
+        let (me, them) = crate::recording::read(&audio_path(&dir, &id)).unwrap();
+        assert!(me.len() >= 9 * R && them.len() >= 4 * R, "both tracks kept: {} {}", me.len(), them.len());
+        // Again, with another "model": the lines are new, on both sides, in time order.
+        let again: TranscribeFn = Arc::new(|_| Ok(vec![Segment { start: 0.2, end: 1.0, text: "second try".into() }]));
+        let m = retranscribe(&dir, &id, &again, false, &|_| {}, &AtomicBool::new(false)).unwrap();
+        assert!(m.lines.iter().all(|l| l.text == "second try"));
+        assert!(m.lines.iter().any(|l| l.speaker == Speaker::Me) && m.lines.iter().any(|l| l.speaker == Speaker::Them));
+        assert!(m.lines.windows(2).all(|w| w[0].start <= w[1].start));
+        assert_eq!(m.transcript_version, 1);
+        delete_in(&dir, &id).unwrap();
+        assert!(!audio_path(&dir, &id).exists(), "deleted with the meeting");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -34,6 +34,7 @@ export interface Options {
   ai_prompt?: string;
   mcp_recording?: boolean;
   meeting_voices?: boolean;
+  keep_audio?: boolean;
   /** "" turns the note-app folder off. */
   export_dir?: string;
   export_auto?: boolean;
@@ -183,6 +184,12 @@ export interface MeetingsBackend {
   addVocabulary(term: VocabTerm): Promise<void>;
   /** The address the page plays screen video `file` of the meeting from (null: not on disk). */
   videoUrl(id: string, file: string): Promise<string | null>;
+  /** The address the page plays a meeting's kept audio from (null: not kept). */
+  audioUrl(id: string): Promise<string | null>;
+  /** Transcribe a saved meeting again from its kept audio (`cancel`: stop the one running). */
+  retranscribe(id: string, cancel?: boolean): Promise<void>;
+  /** Its progress: working (progress 0..1) | done (with the meeting) | error | cancelled. */
+  onRetranscribe(cb: (e: { id: string; state: string; progress: number; detail: string; meeting?: Meeting }) => void): void;
   /** Record screen (true) or Stop screen (false) in the meeting being recorded. */
   screen(on: boolean): Promise<void>;
   /** Save to the note-app folder; its file and, in an Obsidian vault, its obsidian:// link. */
@@ -327,6 +334,11 @@ async function desktopBackend(): Promise<Backend> {
         await invoke("vocabulary_add", { term });
       },
       videoUrl: (id, file) => invoke<string | null>("meeting_video_url", { id, file }),
+      audioUrl: (id) => invoke<string | null>("meeting_audio_url", { id }),
+      retranscribe: (id, cancel) => invoke("meeting_retranscribe", { id, cancel: cancel ?? null }),
+      onRetranscribe(cb) {
+        void listen<{ id: string; state: string; progress: number; detail: string; meeting?: Meeting }>("meeting-retranscribe", (e) => cb(e.payload));
+      },
       screen: (on) => invoke("meeting_screen", { on }),
       saveToFolder: (id) => invoke<{ file: string; obsidian: string | null }>("meeting_save_to_folder", { id }),
       openInObsidian: (id) => invoke("meeting_open_in_obsidian", { id }),

@@ -183,6 +183,7 @@
                   </button>
                   <div id="more-menu" class="menu menu-right" role="menu" aria-label="More" hidden>
                     <button id="meeting-rewrite" type="button" role="menuitem" class="menu-item">Write the summary again…</button>
+                    <button id="meeting-retranscribe" type="button" role="menuitem" class="menu-item" hidden>Transcribe again</button>
                     <div class="menu-sep" role="separator"></div>
                     <button id="meeting-delete" type="button" role="menuitem" class="menu-item danger">Delete meeting</button>
                   </div>
@@ -192,6 +193,7 @@
             <div class="meeting-head">
               <input id="meeting-title" class="title-input" type="text" maxlength="200" aria-label="Meeting title" spellcheck="false" />
               <div id="meeting-meta" class="meeting-chips"></div>
+              <audio id="meeting-audio" class="meeting-audio" controls preload="metadata" aria-label="The meeting's audio" hidden></audio>
             </div>
             <div id="meeting-live" class="meeting-live" hidden>
               <div class="live-clock">
@@ -637,6 +639,13 @@
                 <p class="field-desc">After a meeting stops, each of the others gets a label (Speaker 1, Speaker 2…) that you can name. The first time, two models download (46 MB). While a meeting records, the others' sound is kept in a temporary file on this computer, and deleted when the voices are told apart.</p>
               </div>
               <input id="voices-on" type="checkbox" role="switch" class="switch" />
+            </div>
+            <div class="field">
+              <div class="field-text">
+                <label for="keep-audio">Keep the audio</label>
+                <p class="field-desc">Save each meeting's sound next to it (about 16 MB an hour): play it in the meeting, a time in the transcript plays from there, and ⋯ → Transcribe again writes the transcript anew with the speech model you choose later. Deleted with the meeting.</p>
+              </div>
+              <input id="keep-audio" type="checkbox" role="switch" class="switch" />
             </div>
           </div>
 

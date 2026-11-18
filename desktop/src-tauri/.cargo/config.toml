@@ -5,3 +5,10 @@ VULKAN_SDK = { value = "../.deps/vulkan-sdk", relative = true }
 CMAKE_PREFIX_PATH = { value = "../.deps/vulkan-sdk", relative = true }
 # Parakeet engine: desktop/scripts/sherpa-onnx.sh puts the checked sherpa-onnx archive here.
 SHERPA_ONNX_ARCHIVE_DIR = { value = "../.deps/sherpa-onnx", relative = true }
+# libopus (audiopus_sys, src/recording.rs): always from the bundled source, linked statically.
+# Without LIBOPUS_NO_PKG, a Linux build links the system's libopus.so, which an AppImage cannot
+# count on.
+LIBOPUS_STATIC = "1"
+LIBOPUS_NO_PKG = "1"
+# The bundled libopus asks for CMake 3.1; CMake 4 refuses less than 3.5 without this.
+CMAKE_POLICY_VERSION_MINIMUM = "3.5"

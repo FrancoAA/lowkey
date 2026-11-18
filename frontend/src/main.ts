@@ -73,6 +73,10 @@ const exportAuto = $<HTMLInputElement>("export-auto");
 const exportParts = [...document.querySelectorAll<HTMLInputElement>(".export-parts input")];
 const agentsRecording = $<HTMLInputElement>("agents-recording");
 const voicesOn = $<HTMLInputElement>("voices-on");
+const keepAudio = $<HTMLInputElement>("keep-audio");
+keepAudio.addEventListener("change", () => {
+  void backend?.saveOptions({ keep_audio: keepAudio.checked }).catch((err) => showError(String(err)));
+});
 const screenCard = $<HTMLDivElement>("screen-card");
 const screenCheck = $<HTMLButtonElement>("screen-check");
 const screenStatus = $<HTMLElement>("screen-status");
@@ -1302,6 +1306,7 @@ function renderVoices(): void {
   const v = status?.voices;
   if (!v) return;
   if (!voicesSaving) voicesOn.checked = v.on;
+  keepAudio.checked = !!status?.keep_audio;
   voicesOn.disabled = !v.supported && !v.on; // on from another computer's config: it can be turned off
   const set = (state: string, text: string, progress: number | null = null) => {
     voicesStatus.dataset.state = state;

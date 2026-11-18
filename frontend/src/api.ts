@@ -43,6 +43,8 @@ export interface Status {
   calls?: { detect: boolean; auto_stop: boolean; names: boolean; available: boolean; apps: { key: string; label: string; policy: "ask" | "always" | "never" }[] };
   /** A meeting is being recorded. */
   recording?: boolean;
+  /** Settings → Meetings → Keep the audio. */
+  keep_audio?: boolean;
   /** Settings → Meetings → Calendar: a private iCal address is linked (the address itself never
    * comes to the page), the calendar's name, and the last problem reading it. */
   calendar?: { linked: boolean; name: string; error: string };
@@ -198,6 +200,8 @@ export interface Meeting {
   videos?: MeetingVideo[];
   /** The calendar event it was recorded for: the people invited. */
   attendees?: Person[];
+  /** Its kept audio file ("" or missing: not kept). */
+  audio?: string;
 }
 
 export interface Person {

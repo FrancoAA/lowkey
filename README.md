@@ -338,9 +338,17 @@ Record a call or a talk, as text next to your notes (Linux for now). No bot join
   "Thanks for watching!" where the sound was not clearly speech. This works for dictation and
   files too. (From Yogurt, MIT.)
 - Tell the others that you record. Meetings are saved as JSON in
-  `~/.local/share/lowkey/meetings` (a private folder). The audio is not kept (with Who is
-  speaking on, the computer's sound only until the voices are told apart after Stop). The
+  `~/.local/share/lowkey/meetings` (a private folder). The audio is not kept by default (with
+  Who is speaking on, the computer's sound only until the voices are told apart after Stop). The
   screen videos, when you record the screen, are kept next to the meeting and deleted with it.
+- **Keep the audio** (Settings → Meetings, off by default): each meeting's sound is saved next to
+  it as one Opus file (`m-<id>.opus`: your microphone on the left, the computer's sound on the
+  right; about 16 MB an hour, a page each second so a crash loses little). The meeting page then
+  has a player, and a time in the transcript plays from there. **⋯ → Transcribe again** writes the
+  transcript anew from that file with the speech model chosen now (the echo is found again, and
+  the voices told apart again, which clears the names you gave); the summary stays until you write
+  it again. The file is deleted with the meeting. (Idea from
+  [Yogurt](https://github.com/FrigadeHQ/yogurt), MIT; libopus is built in.)
 - macOS and Windows record the microphone only, for now.
 
 Details: [docs/meetings.md](docs/meetings.md).

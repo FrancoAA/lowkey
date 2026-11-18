@@ -40,6 +40,9 @@ pub struct App {
     export_edits: Mutex<std::collections::HashMap<String, u64>>,
     /// Meetings whose voices are being told apart (after Stop).
     voices_working: Mutex<std::collections::BTreeSet<String>>,
+    /// The meeting being transcribed again from its kept audio (one at a time).
+    retranscribing: Mutex<Option<String>>,
+    retranscribe_cancel: Arc<AtomicBool>,
     started: Instant,
     /// The overlay page has loaded and rendered (shown only then: no blank first frame).
     overlay_ready: AtomicBool,
@@ -360,6 +363,7 @@ impl App {
                 "download": crate::voices::download_state(),
                 "working": *self.voices_working.lock(),
             },
+            "keep_audio": cfg.keep_audio,
             // Settings → Meetings → Screen video; `chosen`: a screen is remembered.
             "screen": {
                 "supported": crate::screen::SUPPORTED, "chosen": !cfg.screen_token.is_empty(),
@@ -1380,6 +1384,7 @@ struct OptionsIn {
     ai_prompt: Option<String>,
     mcp_recording: Option<bool>,
     meeting_voices: Option<bool>,
+    keep_audio: Option<bool>,
     /// Some("") turns the note-app folder off.
     export_dir: Option<String>,
     export_auto: Option<bool>,
@@ -1545,6 +1550,9 @@ fn apply_options(app: &AppRef, options: OptionsIn) -> Result<Value, String> {
         }
         if let Some(on) = options.mcp_recording {
             cfg.mcp_recording = on;
+        }
+        if let Some(on) = options.keep_audio {
+            cfg.keep_audio = on;
         }
         if let Some(on) = options.meeting_voices {
             if on && !crate::voices::SUPPORTED {
@@ -1796,6 +1804,11 @@ fn meeting_open(app: &AppRef, title: &str) -> Result<meeting::Live, String> {
             session.notice(format!("The others' voices will not be told apart in this meeting: {e:#}."));
         }
     }
+    if app.config.lock().keep_audio {
+        if let Err(e) = session.keep_audio() {
+            session.notice(format!("The audio of this meeting is not kept: {e:#}."));
+        }
+    }
     if cfg!(target_os = "linux") && app.config.lock().call_names {
         // The call on the microphone now, when there is one: only its app is read.
         let hint = app.calls_now.lock().first().map(|c| c.key.clone());
@@ -1886,6 +1899,84 @@ fn meeting_video_url(id: String, file: String) -> Result<Option<String>, String>
     let Some(path) = meeting::video_path_in(&meeting::dir(), &id, &file) else { return Ok(None) };
     let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     crate::video_server::url(&name).map(Some).map_err(|e| format!("The video cannot be played: {e:#}"))
+}
+
+/// The address the page plays a meeting's kept audio from (None: not kept, or not on disk).
+#[tauri::command]
+fn meeting_audio_url(id: String) -> Result<Option<String>, String> {
+    if !meeting::valid_id(&id) {
+        return Err(format!("unknown meeting {id:?}"));
+    }
+    let dir = meeting::dir();
+    let kept = meeting::load_in(&dir, &id).is_ok_and(|m| !m.audio.is_empty());
+    if !kept || !meeting::audio_path(&dir, &id).is_file() {
+        return Ok(None);
+    }
+    crate::video_server::url(&meeting::audio_file(&id)).map(Some).map_err(|e| format!("The audio cannot be played: {e:#}"))
+}
+
+/// Transcribe a saved meeting again from its kept audio, with the speech model now chosen (in
+/// the background; "meeting-retranscribe" events: working (progress) | done (meeting) | error |
+/// cancelled). `cancel`: stop the one running.
+#[tauri::command]
+fn meeting_retranscribe(app: State<'_, AppRef>, id: String, cancel: Option<bool>) -> Result<(), String> {
+    let app = app.inner().clone();
+    if cancel == Some(true) {
+        app.retranscribe_cancel.store(true, Ordering::SeqCst);
+        return Ok(());
+    }
+    if !meeting::valid_id(&id) {
+        return Err(format!("unknown meeting {id:?}"));
+    }
+    if live_session(&app, &id).is_some() {
+        return Err("Stop the recording first.".into());
+    }
+    if voices_pending(&app, &id) {
+        return Err(VOICES_PENDING.into());
+    }
+    {
+        let mut busy = app.retranscribing.lock();
+        if busy.is_some() {
+            return Err("Another meeting is being transcribed again. Wait for it.".into());
+        }
+        *busy = Some(id.clone());
+    }
+    app.retranscribe_cancel.store(false, Ordering::SeqCst);
+    let model = app.current_model();
+    let language = app.current_language();
+    let engines = app.engines.clone();
+    let voices = app.config.lock().meeting_voices && crate::voices::SUPPORTED && crate::voices::present();
+    std::thread::spawn(move || {
+        let h = app.handle.clone();
+        let send = |state: &str, progress: f64, detail: &str, m: Option<&meeting::Meeting>| {
+            emit_logged(&h, "meeting-retranscribe", json!({"id": id, "state": state, "progress": progress, "detail": detail, "meeting": m}));
+        };
+        send("working", 0.0, "", None);
+        let transcribe: meeting::TranscribeFn = Arc::new(move |pcm| {
+            engines.transcribe(&model, Input { path: None, pcm: Some(pcm), language: language.clone() }, Arc::new(|_| {})).map(|o| o.segments)
+        });
+        let last = Mutex::new(Instant::now());
+        let progress = |p: f64| {
+            let mut l = last.lock();
+            if l.elapsed() >= Duration::from_millis(500) {
+                *l = Instant::now();
+                drop(l);
+                send("working", p, "", None);
+            }
+        };
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| meeting::retranscribe(&meeting::dir(), &id, &transcribe, voices, &progress, &app.retranscribe_cancel)))
+            .unwrap_or_else(|_| Err(anyhow::anyhow!("it stopped with an internal error")));
+        *app.retranscribing.lock() = None;
+        match r {
+            Ok(m) => {
+                send("done", 1.0, "", Some(&m));
+                auto_export_after_edits(&app, &id);
+            }
+            Err(_) if app.retranscribe_cancel.load(Ordering::SeqCst) => send("cancelled", 0.0, "", None),
+            Err(e) => send("error", 0.0, &format!("The meeting was not transcribed again: {e:#}"), None),
+        }
+    });
+    Ok(())
 }
 
 /// Stop, transcribe the last seconds, save. Returns the saved meeting.
@@ -3282,6 +3373,8 @@ pub fn run() {
             meeting_update,
             meeting_delete,
             meeting_video_url,
+            meeting_audio_url,
+            meeting_retranscribe,
             test_event,
             screen_forget,
             screen_check,
@@ -3362,6 +3455,8 @@ pub fn run() {
                 overlay_hovered: AtomicBool::new(false),
                 export_edits: Mutex::new(Default::default()),
                 voices_working: Mutex::new(Default::default()),
+                retranscribing: Mutex::new(None),
+                retranscribe_cancel: Arc::new(AtomicBool::new(false)),
                 started: Instant::now(),
                 overlay_ready: AtomicBool::new(false),
                 overlay_pending: AtomicBool::new(false),

@@ -541,6 +541,8 @@ mark { background: color-mix(in srgb, var(--tint) 22%, transparent); color: inhe
 .meta-chip[data-kind="live"] { border-color: color-mix(in srgb, var(--rec) 40%, var(--border)); color: var(--rec); }
 .meta-chip[data-kind="warn"] { border-color: color-mix(in srgb, var(--warning) 45%, var(--border)); color: var(--warning); }
 .meta-chip[data-kind="work"] .spinner { width: 11px; height: 11px; }
+/* The kept audio: one slim bar under the chips. */
+.meeting-audio { width: 100%; max-width: 560px; height: 36px; border-radius: 8px; }
 .danger { color: var(--destructive); }
 .danger:hover { background: color-mix(in srgb, var(--destructive) 10%, transparent); }
 /* The foot: where it is saved, how long, and the button that opens the questions. */

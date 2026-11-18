@@ -50,6 +50,11 @@ whatlang = "0.16"
 chrono = "0.4"
 chrono-tz = "0.10"
 rrule = "0.14"
+# Meeting audio, kept on request: one stereo Ogg Opus file (src/recording.rs). libopus is built
+# from the source that audiopus_sys bundles and linked statically (see .cargo/config.toml).
+opus = "=0.3.1"
+audiopus_sys = { version = "=0.2.2", features = ["static"] }
+ogg = "=0.9.2"
 
 log = "0.4"
 
