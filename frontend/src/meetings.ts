@@ -1052,6 +1052,9 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
   // Two columns from this width of the notes' side (it does not change with them: no loop).
   new ResizeObserver(() => {
     const d = notesPane.clientWidth >= 1000;
+    // The title and its chips stay over the left column (the line between the columns runs up).
+    view.style.setProperty("--dual-w", `${notesPane.clientWidth / 2}px`);
+    view.toggleAttribute("data-dual", d);
     if (d === dual) return;
     dual = d;
     renderTab();

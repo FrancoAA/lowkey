@@ -661,8 +661,14 @@ mark { background: color-mix(in srgb, var(--tint) 22%, transparent); color: inhe
 .notes-pane[data-dual] > .ai-error { grid-row: 3; }
 .notes-pane[data-dual] > .notes-panel, .notes-pane[data-dual] > .mine-panel { grid-row: 4; }
 .notes-pane[data-dual] > .transcript-panel {
-  grid-column: 2; grid-row: 1 / -1; gap: 16px; margin: 0 0 -14px; padding: 0;
-  border-left: 1px solid var(--border); border-radius: 0;
+  position: relative; grid-column: 2; grid-row: 1 / -1; gap: 16px; margin: 0 0 -14px; padding: 0; border-radius: 0;
+}
+/* The line between the columns: from the top of the window to the foot's line. */
+.notes-pane[data-dual] > .transcript-panel::before {
+  content: ""; position: absolute; left: 0; top: -100vh; bottom: 0; width: 1px; background: var(--border); pointer-events: none;
+}
+.meeting-view[data-dual] > .meeting-head, .meeting-view[data-dual] > .meeting-live, .meeting-view[data-dual] > .notices {
+  max-width: calc(var(--dual-w, 100%) - 40px);
 }
 .notes-pane[data-dual] .transcript-head {
   display: flex; align-items: center; flex: none; height: 38px; margin: 0 calc(-1 * var(--page-pad, 0px)) 0 0;
