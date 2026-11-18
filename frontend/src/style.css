@@ -301,11 +301,11 @@ h1 { font-size: 20px; font-weight: 600; }
 .tab:hover { color: var(--foreground); }
 .tab::after {
   content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; border-radius: 2px;
-  background: var(--tint); transform: scaleX(0); transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+  background: var(--foreground); transform: scaleX(0); transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1);
 }
 .tab[aria-selected="true"] { color: var(--foreground); }
 .tab[aria-selected="true"]::after { transform: scaleX(1); }
-.tab[aria-selected="true"] .icon { color: var(--tint); }
+.tab[aria-selected="true"] .icon { color: var(--foreground); }
 .tab:focus-visible { outline: none; color: var(--foreground); box-shadow: inset 0 -2px 0 var(--ring); }
 
 /* Menus (Copy, More): a list of actions that opens under its button. */
