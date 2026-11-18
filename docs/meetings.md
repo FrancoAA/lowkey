@@ -66,8 +66,10 @@ macOS and Windows, a prompt when a call starts, and questions over past meetings
   records. **My notes** is a plain text box saved as you type (`meeting_update` with `notes`);
   the summary is written with it (see AI notes). The foot says "Saved on this computer", the
   length and which model wrote the summary; its **Ask about this meeting** button (Ctrl+J)
-  opens the questions on the right (300–380 px; open or closed is kept on this computer for
-  every meeting). Each pane scrolls on its own; under 720 px one above the other. While it
+  opens the questions on the right (300–380 px). A wide meeting (1100 px or more inside it, as
+  on a full-HD screen) opens them by itself. Open or closed is kept on this computer for every
+  meeting, one choice for a wide meeting and one for a narrow one: closed on a wide meeting,
+  they stay closed there. Each pane scrolls on its own; under 720 px one above the other. While it
   records, a panel shows the clock, the two-colour wave (the same colours as the transcript's Me
   and Them) and Record screen; Stop is at the top. The summary and the questions start when it
   stops. (The page follows Yogurt's, MIT.)

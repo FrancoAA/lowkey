@@ -177,6 +177,7 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
   let again: { id: string; progress: number } | null = null;
   const chatToggle = $<HTMLButtonElement>("chat-toggle");
   const chatClose = $<HTMLButtonElement>("chat-close");
+  const chatPane = $<HTMLElement>("chat-pane");
   const footText = $<HTMLElement>("meeting-foot-text");
   const notesPanel = $<HTMLDivElement>("notes-panel");
   const transcriptPanel = $<HTMLDivElement>("transcript-panel");
@@ -205,14 +206,23 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
   let chatError: { id: string; text: string } | null = null;
   /** What the left side shows. */
   let tab: "notes" | "mine" | "transcript" = "notes";
-  /** The questions' panel is open (kept on this computer, for every meeting). */
-  let chatOpen = (() => {
+  /** A wide meeting (this much room inside it): the summary keeps about 700 px beside the
+   * questions, so they open by themselves. */
+  const CHAT_WIDE = 1100;
+  let chatWide = false;
+  /** Open or closed, kept on this computer for every meeting: one choice for a wide meeting
+   * (open until it is closed there), one for a narrow one (closed until it is opened there). */
+  const chatKey = () => (chatWide ? "lowkey.chat-open-wide" : "lowkey.chat-open");
+  function chatStored(): boolean {
     try {
-      return localStorage.getItem("lowkey.chat-open") === "1";
+      const v = localStorage.getItem(chatKey());
+      return v === null ? chatWide : v === "1";
     } catch {
-      return false;
+      return chatWide;
     }
-  })();
+  }
+  /** The questions' panel is open. */
+  let chatOpen = chatStored();
   /** Meetings whose voices are being told apart (after Stop). */
   const voicesWorking = new Set<string>(ui.voicesWorking());
   /** Where the notes were scrolled to when the transcript took their place. */
@@ -1157,7 +1167,7 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
   function setChatOpen(on: boolean, focus = true): void {
     chatOpen = on;
     try {
-      localStorage.setItem("lowkey.chat-open", on ? "1" : "0");
+      localStorage.setItem(chatKey(), on ? "1" : "0");
     } catch {
       /* kept for this window only */
     }
@@ -1166,6 +1176,19 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
     else if (!on && focus) chatToggle.focus();
   }
   chatToggle.addEventListener("click", () => setChatOpen(!chatOpen));
+  // The meeting becomes wide or narrow (the window, the list): that width's choice. The panel is
+  // inside the meeting, so it does not change the meeting's width: no loop.
+  new ResizeObserver(() => {
+    if (view.hidden) return; // no width to go by: the last one stays
+    const cs = getComputedStyle(view);
+    const wide = view.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight) >= CHAT_WIDE;
+    if (wide === chatWide) return;
+    chatWide = wide;
+    const had = chatPane.contains(document.activeElement);
+    chatOpen = chatStored();
+    renderChatOpen();
+    if (had && !chatOpen) chatToggle.focus(); // the focus does not go with the panel
+  }).observe(view);
   chatClose.addEventListener("click", () => setChatOpen(false));
 
   // ---------------------------------------------------------------- Notes
