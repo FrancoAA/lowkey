@@ -346,7 +346,7 @@ pub fn retrieve(meetings: &[Meeting], question: &str, now: i64, offset_min: i32)
     let people = all_people(meetings);
     let f = parse_filters(question, now, offset_min, &people);
     let k = kind(question, &f);
-    let in_range = |m: &Meeting| f.from.is_none_or(|a| m.started_at as i64 >= a) && f.to.is_none_or(|b| (m.started_at as i64) < b);
+    let in_range = |m: &Meeting| f.from.map_or(true, |a| m.started_at as i64 >= a) && f.to.map_or(true, |b| (m.started_at as i64) < b);
     let with_people = |m: &Meeting| {
         f.people.is_empty()
             || f.people.iter().any(|p| {
@@ -356,7 +356,7 @@ pub fn retrieve(meetings: &[Meeting], question: &str, now: i64, offset_min: i32)
             })
     };
     let mut pool: Vec<&Meeting> = meetings.iter().filter(|m| m.state == "done" || !m.lines.is_empty()).filter(|m| in_range(m) && with_people(m)).collect();
-    pool.sort_by(|a, b| b.started_at.cmp(&a.started_at));
+    pool.sort_by_key(|m| std::cmp::Reverse(m.started_at));
     let query = terms(&f.rest);
     let mut out: Vec<Source> = Vec::new();
     let mut size = 0usize;
