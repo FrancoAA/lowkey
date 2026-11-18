@@ -1946,7 +1946,7 @@ fn after_meeting(app: &AppRef, m: &meeting::Meeting) {
     let cfg = app.config.lock().clone();
     let ready = if cfg.ai_engine == "server" { crate::providers::chat_access(&cfg).is_ok() } else { llm::builtin_status(&cfg.ai_builtin_model).supported };
     if cfg.ai_auto && ready && !m.lines.is_empty() {
-        if let Err(why) = start_ai_notes(app, m.id.clone()) {
+        if let Err(why) = start_ai_notes(app, m.id.clone(), String::new()) {
             // e.g. another meeting's notes are being written: say so in this meeting.
             emit_logged(&app.handle, "ai-notes", json!({"id": m.id, "state": "error", "detail": format!("Not written: {why} Then use Write notes."), "progress": 0.0, "text": ""}));
         }
@@ -2312,7 +2312,11 @@ fn ai_engine(app: &AppRef) -> anyhow::Result<llm::Engine> {
 
 /// Write the AI notes of a saved meeting (in the background; "ai-notes" events follow it).
 #[tauri::command]
-fn meeting_ai_notes(app: State<'_, AppRef>, id: String) -> Result<(), String> {
+fn meeting_ai_notes(app: State<'_, AppRef>, id: String, instruction: Option<String>) -> Result<(), String> {
+    let instruction = instruction.unwrap_or_default();
+    if instruction.chars().count() > llm::MAX_INSTRUCTION {
+        return Err(format!("The instruction is too long (over {} characters).", llm::MAX_INSTRUCTION));
+    }
     let app = app.inner().clone();
     if !meeting::valid_id(&id) {
         return Err(format!("unknown meeting {id:?}"));
@@ -2323,7 +2327,7 @@ fn meeting_ai_notes(app: State<'_, AppRef>, id: String) -> Result<(), String> {
     if voices_pending(&app, &id) {
         return Err(VOICES_PENDING.into());
     }
-    start_ai_notes(&app, id)
+    start_ai_notes(&app, id, instruction)
 }
 
 #[tauri::command]
@@ -2342,7 +2346,7 @@ fn ai_busy_reason(app: &AppRef, id: &str) -> String {
     }
 }
 
-fn start_ai_notes(app: &AppRef, id: String) -> Result<(), String> {
+fn start_ai_notes(app: &AppRef, id: String, instruction: String) -> Result<(), String> {
     let busy = llm::Busy::take(&app.ai_busy).ok_or_else(|| ai_busy_reason(app, &id))?;
     app.ai_cancel.store(false, Ordering::SeqCst);
     *app.ai_job.lock() = Some(id.clone());
@@ -2352,7 +2356,7 @@ fn start_ai_notes(app: &AppRef, id: String) -> Result<(), String> {
         .name("ai-notes".into())
         .spawn(move || {
             let _busy = busy;
-            run_ai_notes(&app, &id);
+            run_ai_notes(&app, &id, &instruction);
             *app.ai_job.lock() = None;
             app.emit_status();
         })
@@ -2363,7 +2367,8 @@ fn start_ai_notes(app: &AppRef, id: String) -> Result<(), String> {
     Ok(())
 }
 
-fn run_ai_notes(app: &AppRef, id: &str) {
+/// `instruction`: Regenerate's "how" for this time only ("" = none).
+fn run_ai_notes(app: &AppRef, id: &str, instruction: &str) {
     let h = app.handle.clone();
     let send = |state: &str, detail: &str, progress: f64, text: &str| {
         emit_logged(&h, "ai-notes", json!({"id": id, "state": state, "detail": detail, "progress": progress, "text": text}));
@@ -2406,7 +2411,8 @@ fn run_ai_notes(app: &AppRef, id: &str) {
         let mut on_text = |t: &str| send("writing", "Writing…", 0.0, t);
         let names = crate::vocabulary::Vocabulary::new(&app.config.lock().vocabulary).names();
         let prompt = app.config.lock().ai_prompt.clone();
-        let text = llm::write_notes(&engine, &input, &lang, &names, &prompt, &mut progress, &mut on_text, &app.ai_cancel)?;
+        let spec = llm::NotesSpec { lang, names, prompt, instruction: instruction.to_string(), mine: m.notes.clone() };
+        let text = llm::write_notes(&engine, &input, &spec, &mut progress, &mut on_text, &app.ai_cancel)?;
         // Nothing written (an empty answer): the notes there stay.
         anyhow::ensure!(!text.trim().is_empty(), "the model wrote no notes; the notes did not change");
         Ok((text, label))
