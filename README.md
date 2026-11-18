@@ -11,7 +11,7 @@ OpenAI, Anthropic, Groq or Deepgram can transcribe or write the notes in its pla
 It is one native program (Rust + Tauri v2) with whisper.cpp inside: on the GPU through Vulkan
 (Linux, Windows) or Metal (macOS), else on the CPU.
 
-![Desktop app](docs/screenshots/10-desktop-transcript.png)
+![A meeting in Lowkey: its transcript, with the summary and your notes in the other tabs](docs/screenshots/27-desktop-meeting-wide.png)
 
 **It was called open-whisper before.** The first start of Lowkey moves your settings
 (`~/.config/open-whisper` → `~/.config/lowkey`), your data (models, meetings, history:
@@ -73,14 +73,18 @@ the CPU. Windows must have the Visual C++ runtime (`MSVCP140.dll`). The installe
   <kbd>Esc</kbd> cancels. A live waveform shows that the app is listening.
 - **Result:** the text appears while it is transcribed. **Copy** puts it on the clipboard.
   **.txt**, **.srt** and **.vtt** save the transcript or subtitles.
-- **The window** has sections on the left: **Transcribe** (files, dictation in the window, the
-  result; it opens there), **Meetings** (below), **History**, and the settings, sorted by task —
+- **The window** has a sidebar: **Search** (<kbd>Ctrl</kbd>+<kbd>K</kbd>: your meetings),
+  **Meetings** (it opens there, see below), **Ask** (questions across all meetings), and the tools
+  **Transcribe** (files, dictation in the window, the result) and **Dictations** (the history).
+  **Settings** at the bottom opens one page whose parts are tabs —
   General (start at login, appearance), Speech (microphone, language, vocabulary, the speech
   model and free memory when idle, or a provider in the cloud), Dictation (the dictation key, the paste key, live preview),
   Meetings (the meeting key, call detection, screen video, who is speaking, the notes model and
   automatic notes; a provider in the cloud for the notes), Connections (note apps, AI agents), About (also a list of the keys).
   Each model shows its status next to its setting.
-  <kbd>Ctrl</kbd>+<kbd>,</kbd> jumps to the settings, <kbd>Esc</kbd> back to Transcribe.
+  <kbd>Ctrl</kbd>+<kbd>,</kbd> opens the settings, <kbd>Esc</kbd> goes back to the page you were on.
+  The theme switch, the privacy note and Exit are at the bottom of the sidebar. (The layout follows
+  [Yogurt](https://github.com/FrigadeHQ/yogurt), MIT: notes first, settings out of the way.)
 - Files given on the command line open in the app. **Closing the window keeps the app
   running** in the tray, so the dictation key stays instant. Quit with **Exit** at the bottom
   of the side menu, from the tray, or with `lowkey --dictate quit`. While a meeting records,
@@ -184,6 +188,8 @@ Turn the preview off in Settings (`live_preview = false`). Details and measureme
 
 Record a call or a talk, as text next to your notes (Linux for now). No bot joins the call.
 
+![The meetings, grouped by day](docs/screenshots/26-desktop-meetings-list.png)
+
 - **The meeting key** (<kbd>Super</kbd>+<kbd>Ctrl</kbd>+<kbd>M</kbd> on Linux,
   <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>M</kbd> on macOS and Windows; change it in Settings → Meetings)
   starts a recording from any app, and stops it. On Hyprland (or with your own desktop bind)
@@ -199,9 +205,15 @@ Record a call or a talk, as text next to your notes (Linux for now). No bot join
 - The text comes a few seconds after someone speaks: each source is cut at pauses (4–20 s
   pieces) and the speech model chosen in Settings → Speech writes them.
 - **Stop** transcribes the last seconds and saves. The list shows all meetings, newest first,
-  grouped by day; open one to read it (the notes, or the transcript in their place with the
-  **Notes | Transcript** switch; the chat on the right), change the title, **Copy** or
-  **Export .md** (the notes, then the transcript).
+  grouped by day. A meeting opens on its page: the title (click to change it), its date, length
+  and people, and three tabs: **Summary** (the AI notes), **My notes** and **Transcript**. **Copy**
+  (top right) copies the summary, your notes or the transcript, or exports Markdown (the notes,
+  then the transcript); **⋯** has **Write the summary again…** and **Delete**. The foot says
+  where it is saved and which model wrote the summary; **Ask about this meeting**
+  (<kbd>Ctrl</kbd>+<kbd>J</kbd>) opens the questions on the right.
+- **My notes:** type what matters to you before, during or after the meeting (it is saved as you
+  type). The summary follows it: what you flag gets a point, facts you typed go in, but your
+  lines and labels are never copied.
 - **Check a point of the notes:** click it (or <kbd>Enter</kbd> on it) to see, under it, the
   transcript's paragraphs it most likely comes from (speaker, time, the shared words marked);
   **Show in transcript** opens the transcript at that paragraph. A point that no paragraph
@@ -229,6 +241,16 @@ Record a call or a talk, as text next to your notes (Linux for now). No bot join
   time went to the right person (54% with one label for all). Voices that are alike, people
   who talk at the same time, and a person who says little are the usual errors.
   Details: [docs/voices.md](docs/voices.md).
+- **Names from the call app** (Linux; Settings → Meetings → Names from the call app, on by
+  default): while a meeting records, the app reads the window of Zoom, Teams or Google Meet in a
+  browser through the desktop's accessibility service (AT-SPI), read-only, about twice a second:
+  who is in the call and who it marks as talking. After Stop, a "Them" line gets the name the app
+  showed for most of it, or the only other person in the call; never a guess. With Who is
+  speaking on, each voice gets the name that covers most of its speech (at least 5 s), and a name
+  you typed is never replaced. Names stay on this computer; the log gets counts only. Meet in
+  Chrome or Firefox shows its page to the accessibility service only when the browser's
+  accessibility is on (`--force-renderer-accessibility`). (Port of
+  [Yogurt](https://github.com/FrigadeHQ/yogurt)'s call names, MIT.)
 - **Screen video** (Linux): during a meeting, **Record screen** (in the meeting's live panel,
   or the screen button on the strip) saves the screen, or one window, as a video with the
   meeting; **Stop screen** stops it, and the meeting goes on. Record it as often as you want:
@@ -260,19 +282,46 @@ Record a call or a talk, as text next to your notes (Linux for now). No bot join
   when it is not on this computer), or a provider in the cloud: OpenAI, Anthropic, OpenRouter,
   Vercel AI Gateway, Groq, Gemini or Mistral ([AI providers](#ai-providers-optional)). They are
   written by themselves when a meeting stops (the
-  first time, after the model's download), or with **Write notes** when a meeting has none.
-  **Regenerate** writes them again (it asks first; the new notes replace the old ones only when
-  they are complete, so a failed or cancelled try keeps them). They are a draft, and
+  first time, after the model's download), or with **Write the summary** when a meeting has none.
+  **⋯ → Write the summary again…** writes them again, with an optional instruction for this time
+  only ("shorter", "in English", "only the decisions"; it changes the form, never the facts). The
+  new notes replace the old ones only when they are complete, so a failed or cancelled try keeps
+  them. A meeting over about four hours is written in parts (up to about twelve hours), and the
+  parts' notes are merged. They are a draft, and
   Copy/Export include them. **Instructions for the notes** (Settings → Meetings → Notes) shows
   what the model is told: change it to try other notes, and **Restore the original** brings
   back the app's instructions. `{language}` becomes the meeting's language (when the text does
   not have it, "Write in …" is added at the end), and the Vocabulary's names are added. Measurements: [bench/summary/results.md](bench/summary/results.md).
-- **Ask about this meeting** (the chat on the right; <kbd>Ctrl</kbd>+<kbd>K</kbd>): the same
+- **Ask about this meeting** (the panel on the right; <kbd>Ctrl</kbd>+<kbd>J</kbd> opens it): the same
   model answers questions from the transcript and the notes ("who calls Acme?", "write a
   follow-up email"). Three suggestions are ready: a follow-up email, a TL;DR, your tasks. The
   questions and answers are saved with the meeting (**Clear** deletes them); search and the
   export do not include them. <kbd>Enter</kbd> asks, <kbd>Shift</kbd>+<kbd>Enter</kbd> starts a
   new line, and the button stops an answer.
+- **Ask across meetings** (the **Ask** page in the sidebar): questions over all your meetings
+  ("what did Kara say about pricing?", "my tasks this week", "catch me up on yesterday"). The
+  app first finds the parts that fit, with no model: the dates and people the question names
+  ("yesterday", "last week", "in March", "the last 10 days", a speaker's name), then the
+  transcript pieces (about 300 words) that share the most of its rare words. A question that
+  gathers ("my tasks", "what did we decide", "catch me up") gets each matching meeting's notes
+  instead. The notes model answers from those parts only, with a number after each fact; a
+  click on a number, or on a source under the answer, opens that meeting at that moment. The
+  conversation stays until **New conversation** (it is not saved). English and Spanish date
+  words. (Idea and rules from [Yogurt](https://github.com/FrigadeHQ/yogurt), MIT; it also
+  searches by meaning with an embedding model, which Lowkey does not do yet.)
+
+  ![Ask across meetings: an answer with its source](docs/screenshots/43-desktop-ask.png)
+
+- **Calendar** (Settings → Meetings → Calendar): paste your calendar's private iCal address
+  (Google: "Secret address in iCal format"; Outlook: a published calendar's ICS link). The app
+  checks it, then reads it every 5 minutes (a failed read keeps the last events). The Meetings
+  page shows **Coming up**: what is on now, the rest of today and tomorrow, with **Record** on an
+  event that starts within 10 minutes. A meeting started at an event's time (with the key, the
+  button, or a call offer) gets the event's title, unless you gave it one, and the people
+  invited: the chips show them, and the notes get an "Invited:" line (with one other person,
+  "Them" is that person). Repeating events, moved or cancelled ones and time zones work. The
+  address stays in config.toml (0600) and never goes to the page or the log. (Idea from
+  [Yogurt](https://github.com/FrigadeHQ/yogurt), MIT.)
 - **Calls are detected** (Linux; Settings → Meetings → Offer to record calls, on by default): when Zoom,
   Teams, Slack, Discord, Signal… or a browser on Google Meet, Teams, Jitsi… uses the
   microphone for 2 s (an unknown browser page: 20 s), the strip says "Zoom call detected ·
@@ -282,12 +331,29 @@ Record a call or a talk, as text next to your notes (Linux for now). No bot join
   3 s off it, the strip says the call ended. Who uses the microphone comes from PipeWire
   (`pactl`), a browser's page from its Hyprland window title. (Idea from
   [Hex](https://github.com/anomalyco/hex), MIT.)
-- Use headphones. Without them the microphone also hears the others; the app removes a "Me"
-  line when most of its words are in a "Them" line at the same time.
+- Use headphones. Without them the microphone also hears the others from the speakers. The app
+  finds this in the sound itself: the microphone follows the computer's sound a little late, at
+  the same delay each time. Only then does it take a "Me" line out of the transcript, when its
+  words are in a "Them" line said at the same time and the microphone was no louder than the
+  leak. Your own short replies ("yes", "right") stay. The lines taken out are kept in the
+  meeting's file (`echoes`), not deleted. (Idea and rules from
+  [Yogurt](https://github.com/FrigadeHQ/yogurt), MIT.)
+- Lines that Whisper makes up are dropped: the Vocabulary's prompt read back ("Glossary:
+  Lisandro…"), the prompt's names put in front of speech as a label, and stock lines such as
+  "Thanks for watching!" where the sound was not clearly speech. This works for dictation and
+  files too. (From Yogurt, MIT.)
 - Tell the others that you record. Meetings are saved as JSON in
-  `~/.local/share/lowkey/meetings` (a private folder). The audio is not kept (with Who is
-  speaking on, the computer's sound only until the voices are told apart after Stop). The
+  `~/.local/share/lowkey/meetings` (a private folder). The audio is not kept by default (with
+  Who is speaking on, the computer's sound only until the voices are told apart after Stop). The
   screen videos, when you record the screen, are kept next to the meeting and deleted with it.
+- **Keep the audio** (Settings → Meetings, off by default): each meeting's sound is saved next to
+  it as one Opus file (`m-<id>.opus`: your microphone on the left, the computer's sound on the
+  right; about 16 MB an hour, a page each second so a crash loses little). The meeting page then
+  has a player, and a time in the transcript plays from there. **⋯ → Transcribe again** writes the
+  transcript anew from that file with the speech model chosen now (the echo is found again, and
+  the voices told apart again, which clears the names you gave); the summary stays until you write
+  it again. The file is deleted with the meeting. (Idea from
+  [Yogurt](https://github.com/FrigadeHQ/yogurt), MIT; libopus is built in.)
 - macOS and Windows record the microphone only, for now.
 
 Details: [docs/meetings.md](docs/meetings.md).
@@ -306,7 +372,7 @@ Bluetooth detection yet. (Idea from [Hex](https://github.com/anomalyco/hex), MIT
 
 ## History
 
-The **History** section keeps every finished dictation (the global key and the window), newest
+The **Dictations** page keeps every finished dictation (the global key and the window), newest
 first, grouped by day: Copy, Delete, and Clear all (a dialog asks first). **Search**
 (<kbd>Ctrl</kbd>+<kbd>F</kbd>) looks in the text of the dictations only (not the date or the
 app): every word you type must be there, in any order and any case, also inside a word
@@ -508,18 +574,24 @@ overlay (`overlay.html`, `src/overlay.ts`).
 
 ```sh
 make desktop-dev   # the app with hot reload (Vite + tauri dev)
-make test          # UI typecheck + build, Rust unit tests
+make test          # UI typecheck + build, page tests (Vitest), Rust unit tests
 make e2e-desktop   # the app in a nested Hyprland, on a temporary headless output of your
                    # session; its own runtime folder and a D-Bus that starts no services (no
                    # portals): files, errors, dictation, the global key, live preview, Settings,
                    # a meeting; the meeting key and its capsule (drag, mute, stop, record
                    # screen, Open the notes), AI notes (with a cached Qwen3.5 4B in bench/.work/llm);
-                   # screenshots 09-40. Programs it started are stopped at the end.
+                   # screenshots 09-43. Programs it started are stopped at the end.
                    # python3 scripts/e2e_desktop.py --strip-only: only the capsule (quick)
                    # python3 scripts/e2e_desktop.py --first-run: empty model folder
                    # OW_E2E_HYPRBARS=<hyprbars.so>: also checks that title-bar plugins skip the overlay
 make bench         # research only: the model benchmark (docs/benchmark.md), Python via uv
 ```
+
+The page runs in a plain browser too: `cd frontend && npm run dev` opens it on a demo stand-in
+(`src/demo.ts`: sample meetings, nothing saved). The page tests (`npm test`) use the same
+stand-in in a simulated browser (happy-dom): the pure parts (notes → transcript, Markdown,
+search marks, citations) and the whole page (Meetings, a meeting's tabs and menus, My notes,
+Ctrl+K, Settings, Ask).
 
 The real preview engine test: `cd desktop/src-tauri && cargo test --lib real_whistle -- --ignored`.
 The real screen portal test (it opens your desktop's screen picker):

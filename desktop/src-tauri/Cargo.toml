@@ -46,6 +46,15 @@ url = "2"
 # Vocabulary: whole-word, case-insensitive replacement of "sounds like" spellings.
 regex = "1"
 whatlang = "0.16"
+# Calendar links: recurring events (RRULE) and time zones of a pasted iCal address (src/calendar.rs).
+chrono = "0.4"
+chrono-tz = "0.10"
+rrule = "0.14"
+# Meeting audio, kept on request: one stereo Ogg Opus file (src/recording.rs). libopus is built
+# from the source that audiopus_sys bundles and linked statically (see .cargo/config.toml).
+opus = "=0.3.1"
+audiopus_sys = { version = "=0.2.2", features = ["static"] }
+ogg = "=0.9.2"
 
 log = "0.4"
 
@@ -70,6 +79,9 @@ webkit2gtk = "2.0"
 # Screen video with meetings: the ScreenCast portal (async-io, as the zbus of single-instance:
 # no second D-Bus runtime) (its file descriptor and signals: libc, below).
 ashpd = { version = "0.12", default-features = false, features = ["async-std"] }
+# Names from the call app: its window read through the accessibility bus (AT-SPI), read-only
+# (src/callnames.rs). async-io, as ashpd and single-instance use: no second D-Bus runtime.
+zbus = { version = "5.19", default-features = false, features = ["async-io", "blocking-api"] }
 
 # The screen video's encoder process (Linux), and the end of the app: _exit, after everything
 # is saved (see `exit_now` in src/app.rs).

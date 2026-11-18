@@ -1,7 +1,7 @@
 /**
  * Everything the page needs from the app (Tauri commands and events) goes through here.
  */
-import type { AiNotesEvent, HistoryEntry, JobEvent, Meeting, MeetingLive, MeetingSummary, Status, VocabTerm } from "./api";
+import type { AiNotesEvent, CalEvent, HistoryEntry, JobEvent, Meeting, MeetingLive, MeetingSummary, Status, VocabTerm } from "./api";
 
 export interface FileRef {
   name: string;
@@ -34,6 +34,7 @@ export interface Options {
   ai_prompt?: string;
   mcp_recording?: boolean;
   meeting_voices?: boolean;
+  keep_audio?: boolean;
   /** "" turns the note-app folder off. */
   export_dir?: string;
   export_auto?: boolean;
@@ -45,6 +46,8 @@ export interface Options {
   microphone?: string;
   avoid_bluetooth_mic?: boolean;
   call_detection?: boolean;
+  auto_stop?: boolean;
+  call_names?: boolean;
   call_policy?: { key: string; policy: string };
 }
 
@@ -104,10 +107,47 @@ export interface Backend {
   onFileDrop(onHover: (over: boolean) => void, onDrop: (files: FileRef[]) => void): void;
   onOpenFiles(cb: (files: FileRef[]) => void): void;
   meetings: MeetingsBackend;
+  /** Ask across all meetings (the Ask page). */
+  library: LibraryBackend;
+  /** Settings → Meetings → Calendar, and the agenda on the Meetings page. */
+  calendar: {
+    /** The linked calendar's events from now to the end of tomorrow ([] when none is linked). */
+    events(): Promise<CalEvent[]>;
+    /** Link a private iCal address (checked first); returns the calendar's name. */
+    link(url: string): Promise<string>;
+    unlink(): Promise<void>;
+  };
+}
+
+/** A source an answer across meetings cites as [n]: a part of a meeting's transcript (`at`: its
+ * start in seconds) or the meeting's notes (`at` null). */
+export interface LibrarySource {
+  n: number;
+  meeting_id: string;
+  title: string;
+  started_at: number;
+  at: number | null;
+  text: string;
+}
+
+/** An answer across meetings as it is written: preparing | writing | done | error | cancelled. */
+export interface LibraryAnswerEvent {
+  state: string;
+  text: string;
+  sources: LibrarySource[];
+  detail: string;
+}
+
+export interface LibraryBackend {
+  /** Ask a question across all meetings; `history`: the earlier turns of this conversation. The
+   * answer comes through onAnswer. Stop it with meetings.aiCancel. */
+  ask(question: string, history: { role: "user" | "assistant"; text: string }[]): Promise<void>;
+  onAnswer(cb: (e: LibraryAnswerEvent) => void): void;
 }
 
 export interface MeetingsBackend {
-  start(title: string): Promise<MeetingLive>;
+  /** `eventId`: the calendar event it records (its title and the people invited). */
+  start(title: string, eventId?: string): Promise<MeetingLive>;
   /** Stops, transcribes the last seconds and saves; returns the saved meeting. */
   stop(): Promise<Meeting>;
   live(): Promise<MeetingLive | null>;
@@ -123,7 +163,7 @@ export interface MeetingsBackend {
   onLive(cb: (l: MeetingLive) => void): void;
   onLevels(cb: (lv: { me: number; them: number }) => void): void;
   /** Start writing the AI notes of a saved meeting; progress comes through onAiNotes. */
-  aiNotes(id: string): Promise<void>;
+  aiNotes(id: string, instruction?: string): Promise<void>;
   /** Stop the AI's job: the notes being written, or an answer. */
   aiCancel(): Promise<void>;
   onAiNotes(cb: (e: AiNotesEvent) => void): void;
@@ -144,6 +184,12 @@ export interface MeetingsBackend {
   addVocabulary(term: VocabTerm): Promise<void>;
   /** The address the page plays screen video `file` of the meeting from (null: not on disk). */
   videoUrl(id: string, file: string): Promise<string | null>;
+  /** The address the page plays a meeting's kept audio from (null: not kept). */
+  audioUrl(id: string): Promise<string | null>;
+  /** Transcribe a saved meeting again from its kept audio (`cancel`: stop the one running). */
+  retranscribe(id: string, cancel?: boolean): Promise<void>;
+  /** Its progress: working (progress 0..1) | done (with the meeting) | error | cancelled. */
+  onRetranscribe(cb: (e: { id: string; state: string; progress: number; detail: string; meeting?: Meeting }) => void): void;
   /** Record screen (true) or Stop screen (false) in the meeting being recorded. */
   screen(on: boolean): Promise<void>;
   /** Save to the note-app folder; its file and, in an Obsidian vault, its obsidian:// link. */
@@ -250,7 +296,7 @@ async function desktopBackend(): Promise<Backend> {
       void invoke<string[]>("take_open_files").then((paths) => paths.length && cb(toRefs(paths)));
     },
     meetings: {
-      start: (title) => invoke<MeetingLive>("meeting_start", { title }),
+      start: (title, eventId) => invoke<MeetingLive>("meeting_start", { title, eventUid: eventId ?? null }),
       stop: () => invoke<Meeting>("meeting_stop"),
       live: () => invoke<MeetingLive | null>("meeting_live"),
       list: (query) => invoke<MeetingSummary[]>("meetings_list", { query: query || null }),
@@ -265,7 +311,7 @@ async function desktopBackend(): Promise<Backend> {
       onLevels(cb) {
         void listen<{ me: number; them: number }>("meeting-level", (e) => cb(e.payload));
       },
-      aiNotes: (id) => invoke("meeting_ai_notes", { id }),
+      aiNotes: (id, instruction) => invoke("meeting_ai_notes", { id, instruction: instruction || null }),
       aiCancel: () => invoke("ai_notes_cancel"),
       onAiNotes(cb) {
         void listen<AiNotesEvent>("ai-notes", (e) => cb(e.payload));
@@ -288,6 +334,11 @@ async function desktopBackend(): Promise<Backend> {
         await invoke("vocabulary_add", { term });
       },
       videoUrl: (id, file) => invoke<string | null>("meeting_video_url", { id, file }),
+      audioUrl: (id) => invoke<string | null>("meeting_audio_url", { id }),
+      retranscribe: (id, cancel) => invoke("meeting_retranscribe", { id, cancel: cancel ?? null }),
+      onRetranscribe(cb) {
+        void listen<{ id: string; state: string; progress: number; detail: string; meeting?: Meeting }>("meeting-retranscribe", (e) => cb(e.payload));
+      },
       screen: (on) => invoke("meeting_screen", { on }),
       saveToFolder: (id) => invoke<{ file: string; obsidian: string | null }>("meeting_save_to_folder", { id }),
       openInObsidian: (id) => invoke("meeting_open_in_obsidian", { id }),
@@ -295,9 +346,22 @@ async function desktopBackend(): Promise<Backend> {
         void listen<{ id: string; state: string; file: string; detail: string }>("meeting-export", (e) => cb(e.payload));
       },
     },
+    calendar: {
+      events: () => invoke<CalEvent[]>("calendar_events"),
+      link: (url) => invoke<string>("calendar_link", { url }),
+      unlink: () => invoke("calendar_unlink"),
+    },
+    library: {
+      ask: (question, history) => invoke("library_ask", { question, history, utcOffsetMinutes: -new Date().getTimezoneOffset() }),
+      onAnswer(cb) {
+        void listen<LibraryAnswerEvent>("library-answer", (e) => cb(e.payload));
+      },
+    },
   };
 }
 
 export async function getBackend(): Promise<Backend> {
+  // In a plain browser (npm run dev, screenshots, page tests): the demo stand-in.
+  if (!("__TAURI_INTERNALS__" in window)) return (await import("./demo")).demoBackend();
   return desktopBackend();
 }

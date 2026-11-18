@@ -522,8 +522,9 @@ const CLOUD_MAX_TOKENS: u32 = 32_000;
 /// copy the transcript line by line; the task rule before the time rule keeps the owners right.
 pub const NOTES_PROMPT: &str = "You write meeting notes from a transcript. \"Me\" is the person who recorded the meeting; \
 the others are \"Them\", or one label for each person told apart by voice (\"Speaker 2\", or a \
-name). For a label that is not a name, use the person's name when the transcript says it. The \
-notes written by \"Me\" during the meeting show what mattered to them.
+name). For a label that is not a name, use the person's name when the transcript says it. An \
+\"Invited:\" line lists the people invited to the meeting: when it has only one name besides Me, \
+\"Them\" is that person. The notes written by \"Me\" during the meeting show what mattered to them.
 
 Write in {language}. Use only facts from the transcript; never invent names, dates or numbers.
 
@@ -546,7 +547,15 @@ topic's section, after its earlier bullets. Never make a second section for the 
 never put a bullet under another topic only because it was said near it.
 - A question left without a decision is a bullet too: say it is open, and the next date if one \
 was set.
-- No summary, no introduction, no closing words. Leave out small talk and greetings.";
+- No summary, no introduction, no closing words. Leave out what was off topic: small talk, \
+greetings, weekends and trips, jokes, and talk about the call itself (\"can you hear me\"), unless \
+the meeting was about it.
+- The notes typed by \"Me\" are hints, not text to copy. What they flag gets a bullet or a \
+section of its own, and a fact they typed that the transcript does not have goes in its topic. \
+Write it in your own words: never copy their lines, their labels (\"GOAL\", \"TODO\"), their \
+headings or their numbering, and never give their notes a section of their own. When their notes \
+are a plan or questions written before the meeting, a point goes in only if the transcript shows \
+that it was talked about, with what came of it.";
 
 /// The placeholder for the meeting's language in the instructions ("Spanish").
 pub const LANGUAGE: &str = "{language}";
@@ -596,28 +605,200 @@ pub fn language_of(text: &str) -> &'static str {
     whatlang::detect(text).filter(|i| i.confidence() > 0.3).map(|i| i.lang().eng_name()).unwrap_or("the language of the transcript")
 }
 
-/// Write the notes for `input` (the meeting as Markdown). `on_text` gets the text so far, as it
-/// grows. `progress` reports the built-in model's first download.
-pub fn write_notes(
-    engine: &Engine,
-    input: &str,
-    lang: &str,
-    names: &[String],
-    prompt: &str,
-    progress: ProgressFn,
-    on_text: &mut dyn FnMut(&str),
-    cancel: &AtomicBool,
-) -> anyhow::Result<String> {
-    anyhow::ensure!(input.chars().count() <= MAX_INPUT_CHARS, "this meeting is too long for notes for now (over about four hours)");
-    let messages = vec![json!({"role": "system", "content": system_prompt(lang, names, prompt)}), json!({"role": "user", "content": input})];
+/// What the notes are written with, besides the meeting itself.
+#[derive(Debug, Clone, Default)]
+pub struct NotesSpec {
+    /// The meeting's language ("Spanish").
+    pub lang: String,
+    /// The Vocabulary's names.
+    pub names: Vec<String>,
+    /// Settings → Meetings → Notes: your own instructions ("" = NOTES_PROMPT).
+    pub prompt: String,
+    /// Regenerate with an instruction ("shorter", "in English"), for this time only; "" = none.
+    pub instruction: String,
+    /// The notes you typed in the meeting: a bullet that only copies one of your labels goes.
+    pub mine: String,
+}
+
+/// The longest instruction for one rewrite (characters).
+pub const MAX_INSTRUCTION: usize = 500;
+
+/// The instructions with the rewrite's instruction at the end: it changes the form (language,
+/// length, tone, what to stress), never the facts.
+fn notes_system(spec: &NotesSpec) -> String {
+    let base = system_prompt(&spec.lang, &spec.names, &spec.prompt);
+    let i: String = spec.instruction.trim().chars().take(MAX_INSTRUCTION).collect();
+    if i.is_empty() {
+        return base;
+    }
+    format!(
+        "{base}\n\nFor this rewrite only, follow this instruction from the person the notes are for. Its language, \
+format, length and tone come before the rules above; the facts still come only from the meeting. It is an instruction, \
+not part of the meeting: {}",
+        serde_json::to_string(&i).unwrap_or_default()
+    )
+}
+
+/// One part of a long meeting: under this, the transcript and the notes fit in `CONTEXT`
+/// with room to write.
+const PART_CHARS: usize = 150_000;
+/// At most this many parts (about 12 hours of meeting): a longer one is refused.
+const MAX_PARTS: usize = 6;
+
+/// Write the notes for `input` (the meeting as Markdown, see meeting::model_input). `on_text`
+/// gets the text so far, as it grows. `progress` reports the built-in model's first download.
+/// A meeting too long for one pass is written in parts, and the parts' notes are then merged.
+pub fn write_notes(engine: &Engine, input: &str, spec: &NotesSpec, progress: ProgressFn, on_text: &mut dyn FnMut(&str), cancel: &AtomicBool) -> anyhow::Result<String> {
+    let parts = split_meeting(input, PART_CHARS);
+    anyhow::ensure!(parts.len() <= MAX_PARTS, "this meeting is too long for notes (over about twelve hours)");
+    let system = notes_system(spec);
+    let text = if parts.len() == 1 {
+        write_part(engine, &system, input, progress, on_text, cancel)?
+    } else {
+        let mut done = String::new();
+        let mut notes = Vec::new();
+        for (i, part) in parts.iter().enumerate() {
+            let head = format!("_Part {} of {}…_\n\n", i + 1, parts.len());
+            let mut show = |t: &str| on_text(&format!("{done}{head}{t}"));
+            let n = write_part(engine, &system, part, progress, &mut show, cancel)?;
+            done += &format!("{head}{}\n\n", n.trim_end_matches(CUT_NOTE));
+            notes.push(n.trim_end_matches(CUT_NOTE).to_string());
+        }
+        merge_parts(engine, spec, &notes, progress, on_text, cancel)?
+    };
+    let fix = |t: &str| without_copies(&in_meeting_order(t), &spec.mine);
+    Ok(match text.strip_suffix(CUT_NOTE) {
+        Some(notes) => fix(notes) + CUT_NOTE,
+        None => fix(&text),
+    })
+}
+
+fn write_part(engine: &Engine, system: &str, input: &str, progress: ProgressFn, on_text: &mut dyn FnMut(&str), cancel: &AtomicBool) -> anyhow::Result<String> {
+    let messages = vec![json!({"role": "system", "content": system}), json!({"role": "user", "content": input})];
     // Temperature 0: at 0.2 the 4B model gave the recorder's own task to someone else in half
     // of the runs (bench/summary/results.md, "Notes by topic"). 3000 tokens: the times make the
-    // notes about a third longer; it still fits in `CONTEXT` after `MAX_INPUT_CHARS`.
-    let text = complete(engine, messages, 3000, 0.0, progress, on_text, cancel)?;
-    Ok(match text.strip_suffix(CUT_NOTE) {
-        Some(notes) => in_meeting_order(notes) + CUT_NOTE,
-        None => in_meeting_order(&text),
-    })
+    // notes about a third longer; it still fits in `CONTEXT` after `PART_CHARS`.
+    complete(engine, messages, 3000, 0.0, progress, on_text, cancel)
+}
+
+/// The parts' notes become the notes of the whole meeting: the topics that came back in more
+/// than one part become one section. The times stay, so `in_meeting_order` can sort them.
+fn merge_parts(engine: &Engine, spec: &NotesSpec, notes: &[String], progress: ProgressFn, on_text: &mut dyn FnMut(&str), cancel: &AtomicBool) -> anyhow::Result<String> {
+    let system = format!(
+        "{}\n\nThe meeting was long, so its notes were written in parts. Below are the notes of each part, in order. \
+Merge them into the notes of the whole meeting, with the rules above: one section for each topic (a topic in more \
+than one part becomes one section), every bullet with its time, nothing added and nothing left out but repeats.",
+        notes_system(spec)
+    );
+    let input: String = notes.iter().enumerate().map(|(i, n)| format!("<part n=\"{}\">\n{}\n</part>\n\n", i + 1, n.trim())).collect();
+    let messages = vec![json!({"role": "system", "content": system}), json!({"role": "user", "content": input})];
+    complete(engine, messages, 4000, 0.0, progress, on_text, cancel)
+}
+
+/// The meeting (meeting::model_input: a title, the duration, your notes, then "## Transcript"
+/// with one paragraph per turn) in parts of at most `max` characters, cut only between
+/// paragraphs. Each part has the title and your notes, and says which part it is.
+pub fn split_meeting(input: &str, max: usize) -> Vec<String> {
+    if input.chars().count() <= max {
+        return vec![input.to_string()];
+    }
+    let (head, transcript) = match input.find("\n## Transcript\n") {
+        Some(at) => (&input[..at], &input[at + "\n## Transcript\n".len()..]),
+        None => ("", input),
+    };
+    let room = max.saturating_sub(head.chars().count() + 64).max(max / 4);
+    let mut chunks: Vec<String> = vec![String::new()];
+    for para in transcript.split("\n\n").filter(|p| !p.trim().is_empty()) {
+        // A paragraph longer than a part is cut between sentences (it does not happen in a real
+        // meeting: a turn is joined from lines of a few seconds each).
+        let mut pieces = vec![para.to_string()];
+        if para.chars().count() > room {
+            pieces = cut_long(para, room);
+        }
+        for piece in pieces {
+            let cur = chunks.last_mut().expect("one chunk");
+            if !cur.is_empty() && cur.chars().count() + piece.chars().count() + 2 > room {
+                chunks.push(String::new());
+            }
+            let cur = chunks.last_mut().expect("one chunk");
+            if !cur.is_empty() {
+                cur.push_str("\n\n");
+            }
+            cur.push_str(&piece);
+        }
+    }
+    let n = chunks.len();
+    chunks.into_iter().enumerate().map(|(i, c)| format!("{}\n## Transcript (part {} of {n})\n\n{c}\n", head.trim_end(), i + 1)).collect()
+}
+
+fn cut_long(text: &str, room: usize) -> Vec<String> {
+    let mut out = vec![String::new()];
+    for word in text.split(' ') {
+        let cur = out.last_mut().expect("one");
+        if cur.chars().count() + word.chars().count() + 1 > room && !cur.is_empty() {
+            out.push(String::new());
+        }
+        let cur = out.last_mut().expect("one");
+        if !cur.is_empty() {
+            cur.push(' ');
+        }
+        cur.push_str(word);
+    }
+    out
+}
+
+/// Your notes guide the notes and are never pasted in, but a small model still copies some: a
+/// bullet that is only one of your labels ("- GOAL", "- Questions:") goes, and a bullet that kept
+/// your own list mark ("- 2. …", "- - …") loses it. Idea from Yogurt (MIT).
+pub fn without_copies(md: &str, mine: &str) -> String {
+    fn bare(l: &str) -> &str {
+        let l = l.trim_start().trim_start_matches('#').trim_start();
+        for mark in ["- ", "* ", "+ "] {
+            if let Some(r) = l.strip_prefix(mark) {
+                return r;
+            }
+        }
+        // "1. ", "12) ": a list's number (not a year: "2025. ").
+        let digits = l.chars().take_while(|c| c.is_ascii_digit()).count();
+        if (1..=2).contains(&digits) {
+            let rest = &l[digits..];
+            if let Some(r) = rest.strip_prefix(". ").or_else(|| rest.strip_prefix(") ")) {
+                return r;
+            }
+        }
+        l
+    }
+    fn fold(s: &str) -> String {
+        bare(s).replace("**", "").replace("__", "").trim_end_matches(|c: char| c == ':' || c.is_whitespace()).trim().to_lowercase()
+    }
+    // A typed line that names what follows: a heading, "Goal:", or one in capitals.
+    fn is_label(l: &str) -> bool {
+        let t = l.trim();
+        if t.starts_with('#') {
+            return true;
+        }
+        if t.starts_with("- ") || t.starts_with("* ") || t.starts_with("+ ") {
+            return false;
+        }
+        let letters: Vec<char> = t.chars().filter(|c| c.is_alphabetic()).collect();
+        t.ends_with(':') || (!letters.is_empty() && letters.iter().all(|c| !c.is_lowercase()) && letters.iter().any(|c| c.is_uppercase()))
+    }
+    let labels: std::collections::HashSet<String> = mine.lines().filter(|l| !l.trim().is_empty() && is_label(l)).map(fold).filter(|l| !l.is_empty()).collect();
+    let mut out: Vec<String> = Vec::new();
+    for line in md.lines() {
+        let indent = line.len() - line.trim_start().len();
+        let t = line.trim_start();
+        let Some(body) = t.strip_prefix("- ").or_else(|| t.strip_prefix("* ")) else {
+            out.push(line.to_string());
+            continue;
+        };
+        let body = bare(body);
+        if labels.contains(&fold(body)) {
+            continue;
+        }
+        out.push(format!("{}- {body}", &line[..indent]));
+    }
+    out.join("\n")
 }
 
 /// "(04:19)", "(1:04:19)" → seconds: the first time in brackets in `line`, as the transcript
@@ -742,6 +923,36 @@ pub fn chat(
         kept.pop();
     }
     let mut messages = vec![json!({"role": "system", "content": chat_prompt(meeting, names)})];
+    messages.extend(kept.into_iter().rev());
+    messages.push(json!({"role": "user", "content": question}));
+    complete(engine, messages, 1500, 0.2, progress, on_text, cancel)
+}
+
+/// Answer a question across meetings: `system` holds the instructions and the sources
+/// (library::prompt); `history`: the earlier (role, text) turns of this conversation.
+pub fn ask_library(
+    engine: &Engine,
+    system: &str,
+    history: &[(String, String)],
+    question: &str,
+    progress: ProgressFn,
+    on_text: &mut dyn FnMut(&str),
+    cancel: &AtomicBool,
+) -> anyhow::Result<String> {
+    let mut kept = Vec::new();
+    let mut size = 0;
+    for (role, text) in history.iter().rev() {
+        size += text.chars().count();
+        if size > CHAT_HISTORY_CHARS {
+            break;
+        }
+        kept.push(json!({"role": role, "content": text}));
+    }
+    // A question first: some chat templates refuse an answer right after the instructions.
+    if kept.last().is_some_and(|m| m["role"] == "assistant") {
+        kept.pop();
+    }
+    let mut messages = vec![json!({"role": "system", "content": system})];
     messages.extend(kept.into_iter().rev());
     messages.push(json!({"role": "user", "content": question}));
     complete(engine, messages, 1500, 0.2, progress, on_text, cancel)
@@ -1057,6 +1268,52 @@ impl Drop for Busy {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn spec(lang: &str) -> NotesSpec {
+        NotesSpec { lang: lang.into(), ..Default::default() }
+    }
+
+    #[test]
+    fn a_rewrite_instruction_comes_last_and_quoted() {
+        let plain = notes_system(&spec("Spanish"));
+        assert_eq!(plain, system_prompt("Spanish", &[], ""));
+        let s = notes_system(&NotesSpec { lang: "Spanish".into(), instruction: "  Shorter, in English \"please\"  ".into(), ..Default::default() });
+        assert!(s.starts_with(&plain));
+        assert!(s.ends_with("not part of the meeting: \"Shorter, in English \\\"please\\\"\""), "{s}");
+        let long = notes_system(&NotesSpec { instruction: "x".repeat(2000), ..Default::default() });
+        assert!(long.matches('x').count() <= MAX_INSTRUCTION + 20);
+    }
+
+    #[test]
+    fn a_long_meeting_is_split_between_paragraphs_with_its_title_and_notes() {
+        let mut input = String::from("# Planning\n\n3 h 10 min\n\n## Notes\n\n- ask about Friday\n\n## Transcript\n\n");
+        for i in 0..300 {
+            input += &format!("**Me** ({:02}:{:02}): {}\n\n", i / 60, i % 60, "word ".repeat(40));
+        }
+        assert_eq!(split_meeting(&input, input.len() + 1), vec![input.clone()], "short enough: one part");
+        let parts = split_meeting(&input, 20_000);
+        assert!(parts.len() >= 3, "{}", parts.len());
+        for (i, p) in parts.iter().enumerate() {
+            assert!(p.starts_with("# Planning"));
+            assert!(p.contains("- ask about Friday"));
+            assert!(p.contains(&format!("## Transcript (part {} of {})", i + 1, parts.len())));
+            assert!(p.chars().count() <= 20_000, "{}", p.chars().count());
+        }
+        let turns: usize = parts.iter().map(|p| p.matches("**Me**").count()).sum();
+        assert_eq!(turns, 300, "every turn once, none cut");
+        // One giant paragraph is cut between words.
+        let giant = format!("# T\n\n## Transcript\n\n**Me** (00:00): {}", "longword ".repeat(5000));
+        let parts = split_meeting(&giant, 10_000);
+        assert!(parts.len() >= 5 && parts.iter().all(|p| p.chars().count() <= 10_000));
+    }
+
+    #[test]
+    fn copied_labels_from_your_notes_go() {
+        let mine = "GOAL:\nship v2\n## Questions\n- what about pricing\n1. Call Ana";
+        let md = "## Launch\n- GOAL\n- **Ana** ships v2 on Friday (02:10)\n  - 1. Call Ana first\n- Questions:\n- 2025. was a good year (03:00)";
+        assert_eq!(without_copies(md, mine), "## Launch\n- **Ana** ships v2 on Friday (02:10)\n  - Call Ana first\n- 2025. was a good year (03:00)");
+        assert_eq!(without_copies(md, ""), "## Launch\n- GOAL\n- **Ana** ships v2 on Friday (02:10)\n  - Call Ana first\n- Questions:\n- 2025. was a good year (03:00)");
+    }
     use std::io::{Read, Write};
 
     #[test]
@@ -1150,7 +1407,7 @@ mod tests {
     fn a_cloud_model_gets_its_own_temperature_and_openai_its_own_limit() {
         let ok = format!("data: {}\n\ndata: [DONE]\n\n", json!({"choices": [{"delta": {"content": "## Tema\n- Hecho (00:01)"}}]}));
         let (url, got) = scripted_server(vec![(200, "text/event-stream", ok)]);
-        let text = write_notes(&server("openai", url, "gpt-5-mini", "sk-1"), "**Them** (00:01): Hola.", "Spanish", &[], "", &mut |_, _, _| {}, &mut |_| {}, &AtomicBool::new(false)).unwrap();
+        let text = write_notes(&server("openai", url, "gpt-5-mini", "sk-1"), "**Them** (00:01): Hola.", &spec("Spanish"), &mut |_, _, _| {}, &mut |_| {}, &AtomicBool::new(false)).unwrap();
         assert_eq!(text, "## Tema\n- Hecho (00:01)");
         let body = body_of(&got.join().unwrap()[0]);
         assert!(body.get("temperature").is_none(), "{body}");
@@ -1163,7 +1420,7 @@ mod tests {
         let refusal = r#"{"error":{"message":"Unsupported value: 'temperature' does not support 0.0 with this model. Only the default (1) value is supported.","param":"temperature"}}"#;
         let ok = format!("data: {}\n\ndata: [DONE]\n\n", json!({"choices": [{"delta": {"content": "ok"}}]}));
         let (url, got) = scripted_server(vec![(400, "application/json", refusal.into()), (200, "text/event-stream", ok)]);
-        write_notes(&server("custom", url, "o4", ""), "x", "English", &[], "", &mut |_, _, _| {}, &mut |_| {}, &AtomicBool::new(false)).unwrap();
+        write_notes(&server("custom", url, "o4", ""), "x", &spec("English"), &mut |_, _, _| {}, &mut |_| {}, &AtomicBool::new(false)).unwrap();
         let reqs = got.join().unwrap();
         assert_eq!(body_of(&reqs[0])["temperature"], 0.0);
         let second = body_of(&reqs[1]);
@@ -1201,7 +1458,7 @@ mod tests {
     #[test]
     fn a_refused_key_says_which_provider() {
         let (url, _got) = scripted_server(vec![(401, "application/json", r#"{"error":{"message":"No auth credentials found"}}"#.into())]);
-        let e = write_notes(&server("openrouter", url, "openai/gpt-5-mini", "bad"), "x", "English", &[], "", &mut |_, _, _| {}, &mut |_| {}, &AtomicBool::new(false)).unwrap_err().to_string();
+        let e = write_notes(&server("openrouter", url, "openai/gpt-5-mini", "bad"), "x", &spec("English"), &mut |_, _, _| {}, &mut |_| {}, &AtomicBool::new(false)).unwrap_err().to_string();
         assert_eq!(e, "OpenRouter refused the API key (check it in Settings): No auth credentials found");
     }
 
@@ -1235,7 +1492,7 @@ mod tests {
     fn own_server_gets_the_instructions_the_key_and_the_model() {
         let (url, got) = fake_server("## Versión 2.4\n- **Martín** cierra el ticket 412");
         let engine = server("custom", url, "qwen3.5:4b", "sk-test");
-        let text = write_notes(&engine, "**Them** (00:01): Hola.", "Spanish", &[], "", &mut |_, _, _| {}, &mut |_| {}, &AtomicBool::new(false)).unwrap();
+        let text = write_notes(&engine, "**Them** (00:01): Hola.", &spec("Spanish"), &mut |_, _, _| {}, &mut |_| {}, &AtomicBool::new(false)).unwrap();
         assert_eq!(text, "## Versión 2.4\n- **Martín** cierra el ticket 412");
         let req = got.join().unwrap();
         assert!(req.starts_with("POST /v1/chat/completions "), "{req}");
@@ -1346,7 +1603,7 @@ mod tests {
         assert!(!builtin_status(DEFAULT_MODEL).downloaded);
         let mut steps = Vec::new();
         let input = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../bench/summary/meeting-es.md")).unwrap();
-        let text = write_notes(&Engine::Builtin { gpu: true, model: DEFAULT_MODEL.into() }, &input, "Spanish", &[], "", &mut |w, _, _| steps.push(w.to_string()), &mut |_| {}, &AtomicBool::new(false));
+        let text = write_notes(&Engine::Builtin { gpu: true, model: DEFAULT_MODEL.into() }, &input, &spec("Spanish"), &mut |w, _, _| steps.push(w.to_string()), &mut |_| {}, &AtomicBool::new(false));
         stop_builtin();
         let text = text.unwrap();
         assert!(steps.iter().any(|s| s == "the model runner"), "{steps:?}");

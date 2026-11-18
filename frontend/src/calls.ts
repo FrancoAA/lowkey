@@ -10,15 +10,25 @@ const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as 
 export function renderCalls(backend: Backend, status: Status, onError: (m: string) => void): void {
   const card = $<HTMLElement>("calls-card");
   const detect = $<HTMLInputElement>("calls-detect");
+  const autoStop = $<HTMLInputElement>("calls-auto-stop");
+  const names = $<HTMLInputElement>("calls-names");
   const apps = $<HTMLDivElement>("calls-apps");
   const c = status.calls;
   card.hidden = !c?.available;
   if (!c?.available) return;
   detect.checked = c.detect;
+  autoStop.checked = c.auto_stop;
+  names.checked = c.names;
   if (!detect.dataset.wired) {
     detect.dataset.wired = "1";
     detect.addEventListener("change", () => {
       void backend.saveOptions({ call_detection: detect.checked }).catch((err) => onError(String(err)));
+    });
+    autoStop.addEventListener("change", () => {
+      void backend.saveOptions({ auto_stop: autoStop.checked }).catch((err) => onError(String(err)));
+    });
+    names.addEventListener("change", () => {
+      void backend.saveOptions({ call_names: names.checked }).catch((err) => onError(String(err)));
     });
   }
   apps.hidden = !c.detect || !c.apps.length;

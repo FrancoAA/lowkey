@@ -1,6 +1,8 @@
 import "./style.css";
 import type { AiNotesEvent, JobEvent, JobResult, ModelInfo, Segment, Status } from "./api";
 import { getBackend, type Backend, type FileRef } from "./backend";
+import { initAsk } from "./ask";
+import { renderCalendar } from "./calendar";
 import { Dictation, type DictationState } from "./dictation";
 import { renderCalls } from "./calls";
 import { initHistory } from "./history";
@@ -71,6 +73,10 @@ const exportAuto = $<HTMLInputElement>("export-auto");
 const exportParts = [...document.querySelectorAll<HTMLInputElement>(".export-parts input")];
 const agentsRecording = $<HTMLInputElement>("agents-recording");
 const voicesOn = $<HTMLInputElement>("voices-on");
+const keepAudio = $<HTMLInputElement>("keep-audio");
+keepAudio.addEventListener("change", () => {
+  void backend?.saveOptions({ keep_audio: keepAudio.checked }).catch((err) => showError(String(err)));
+});
 const screenCard = $<HTMLDivElement>("screen-card");
 const screenCheck = $<HTMLButtonElement>("screen-check");
 const screenStatus = $<HTMLElement>("screen-status");
@@ -92,7 +98,8 @@ let backend!: Backend;
 let jobState = ""; // state of the job shown in the result card
 let status: Status | null = null;
 /** The Meetings section (its note-app buttons follow the status). */
-let meetingsView: { refreshExport(): void } | null = null;
+let askPage: { shown(): void } | null = null;
+let meetingsView: { refreshExport(): void; refreshAgenda(): void; showList(): void; openAt(id: string, at: number | null): Promise<void> } | null = null;
 let busy = false;
 let current: { result: JobResult | null; segments: Segment[]; baseName: string } = { result: null, segments: [], baseName: "transcript" };
 
@@ -260,6 +267,7 @@ function renderThemeToggle(): void {
   const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
   themeToggleText.textContent = next === "dark" ? "Dark mode" : "Light mode";
   themeToggle.title = `Switch to ${next} mode`;
+  themeToggle.setAttribute("aria-label", `Switch to ${next} mode`);
   themeToggle.dataset.next = next;
 }
 themeToggle.addEventListener("click", () => {
@@ -299,6 +307,25 @@ quitButton.addEventListener("click", async () => {
   }
   await backend.quit();
 });
+
+/** Automated tests (OPENWHISPER_TEST_LOG): each control that gets the keyboard focus goes to
+ * the test log ("page-focus"), so a test can move with Tab until the control it wants. */
+let focusReported = false;
+function reportFocus(): void {
+  if (focusReported || !backend) return;
+  focusReported = true;
+  const b = backend;
+  document.addEventListener("focusin", (e) => {
+    const el = e.target as HTMLElement;
+    void b.testEvent("page-focus", {
+      id: el.id || "",
+      section: el.dataset.section ?? "",
+      cls: el.className && typeof el.className === "string" ? el.className : "",
+      label: (el.getAttribute("aria-label") ?? el.textContent ?? "").trim().slice(0, 80),
+      page: section,
+    });
+  });
+}
 
 function applyStatus(next: Status): void {
   status = next;
@@ -344,6 +371,11 @@ function applyStatus(next: Status): void {
   renderPreview();
   renderKey();
   if (backend) renderCalls(backend, status, showError);
+  if (status.test) reportFocus();
+  if (backend) renderCalendar(backend, status, showError, () => {
+    void refreshStatus();
+    meetingsView?.refreshAgenda();
+  });
   renderAi();
   renderAgents();
   renderVoices();
@@ -478,6 +510,8 @@ function handleRef(file: FileRef): void {
     return;
   }
   // The app checks the size and the content; this only catches an obviously wrong file early.
+  // A file dropped or opened from another page: its text shows on Transcribe.
+  if (section !== "transcribe") showSection("transcribe");
   if (!MEDIA_EXT.test(file.name)) {
     showError(`“${file.name}” is not an audio or video file. Try MP3, WAV, M4A, OGG, FLAC, WEBM or a video with sound.`);
     return;
@@ -964,46 +998,87 @@ window.addEventListener("blur", () => {
 // Space is handled globally (and its default "click" is suppressed), so only real clicks/Enter land here.
 micButton.addEventListener("click", toggleDictation);
 
-// ------------------------------------------------------------------ sections
-// One window: Transcribe (files, dictation here, the result), Meetings, and the settings sections.
-const tabs = [...document.querySelectorAll<HTMLButtonElement>("#settings-tabs .nav-item")];
-let section = "transcribe";
+// ------------------------------------------------------------------ pages
+// The sidebar's pages (Meetings, Ask, Transcribe, Dictations) and the Settings page, whose parts
+// are tabs under its title. The window opens on Meetings.
+const navItems = [...document.querySelectorAll<HTMLButtonElement>(".sidebar .nav-item[data-section]")];
+const tabs = [...document.querySelectorAll<HTMLButtonElement>("#settings-tabs .tab")];
+const settingsPage = $<HTMLElement>("settings-page");
+const PAGES = ["meetings", "ask", "transcribe", "history"];
+let section = "meetings";
+/** The last page before Settings: Esc and Ctrl+, go back to it. */
+let lastPage = "meetings";
 
-/** In a settings section (not Transcribe or Meetings): Ctrl+, and Esc go back to Transcribe. */
+/** On the Settings page (one of its parts). */
 function inSettings(): boolean {
-  return !["transcribe", "meetings", "history"].includes(section);
+  return !PAGES.includes(section);
 }
 
 function showSection(name: string, focus = false): void {
   if (capturing) stopCapture();
   if (name !== "transcribe" && dictation.state !== "idle") return; // finish the dictation first
   section = name;
+  if (!inSettings()) lastPage = name;
+  for (const n of navItems) {
+    const on = n.dataset.section === name || (n.id === "nav-settings" && inSettings());
+    if (on) n.setAttribute("aria-current", "page");
+    else n.removeAttribute("aria-current");
+  }
+  // Shown first: a hidden control cannot take the focus.
+  settingsPage.hidden = !inSettings();
+  for (const p of document.querySelectorAll<HTMLElement>(".content .section")) p.hidden = p.dataset.section !== name;
   for (const t of tabs) {
     const on = t.dataset.section === name;
     t.setAttribute("aria-selected", String(on));
     t.tabIndex = on ? 0 : -1; // one tab stop for the list; arrows move inside it
     if (on && focus) t.focus();
   }
-  for (const p of document.querySelectorAll<HTMLElement>(".settings-content .section")) p.hidden = p.dataset.section !== name;
+  // Back on a page from the keyboard (Esc or Ctrl+, in Settings): the focus on its sidebar item.
+  if (focus && !inSettings()) navItems.find((n) => n.dataset.section === name)?.focus();
+  $<HTMLElement>("app").querySelector(".content")!.scrollTop = 0;
   if (name === "history") history?.refresh();
   if (name === "speech") microphone?.refresh();
+  if (name === "ask") askPage?.shown();
 }
-showSection("transcribe");
+showSection("meetings");
 
+for (const n of navItems) n.addEventListener("click", () => showSection(n.id === "nav-settings" && inSettings() ? section : n.dataset.section!));
 for (const t of tabs) t.addEventListener("click", () => showSection(t.dataset.section!));
 $<HTMLElement>("settings-tabs").addEventListener("keydown", (e) => {
   const i = tabs.findIndex((t) => t.dataset.section === section);
-  const to = { ArrowDown: i + 1, ArrowRight: i + 1, ArrowUp: i - 1, ArrowLeft: i - 1, Home: 0, End: tabs.length - 1 }[e.key];
+  // Left and Right as tabs on top; Up and Down too, as a column on a wide window.
+  const to = { ArrowRight: i + 1, ArrowDown: i + 1, ArrowLeft: i - 1, ArrowUp: i - 1, Home: 0, End: tabs.length - 1 }[e.key];
   if (to === undefined) return;
   e.preventDefault();
   showSection(tabs[(to + tabs.length) % tabs.length].dataset.section!, true);
 });
+
+/** Ctrl+K and the sidebar's Search: the meetings' search field, on the list. */
+function openSearch(): void {
+  showSection("meetings");
+  meetingsView?.showList();
+  const field = $<HTMLInputElement>("meetings-search");
+  field.focus();
+  field.select();
+}
+$<HTMLButtonElement>("side-search").addEventListener("click", openSearch);
+
 document.addEventListener("keydown", (e) => {
-  if (e.key === "," && e.ctrlKey && !e.altKey && !e.metaKey) {
+  const ctrl = e.ctrlKey && !e.altKey && !e.metaKey;
+  if (e.key === "," && ctrl) {
     e.preventDefault();
-    showSection(inSettings() ? "transcribe" : "general", true);
-  } else if (e.key.toLowerCase() === "f" && e.ctrlKey && !e.altKey && !e.metaKey && (section === "meetings" || section === "history")) {
-    // Ctrl+F: the section's search field (Meetings: on the list, not inside a meeting).
+    showSection(inSettings() ? lastPage : "general", true);
+  } else if (e.key.toLowerCase() === "k" && ctrl) {
+    e.preventDefault();
+    openSearch();
+  } else if (ctrl && ["1", "2", "3", "4"].includes(e.key) && !capturing) {
+    // Ctrl+1…4: the sidebar's pages, in its order.
+    e.preventDefault();
+    const page = PAGES[Number(e.key) - 1];
+    showSection(page, false);
+    document.querySelector<HTMLButtonElement>(`.sidebar .nav-item[data-section="${page}"]`)?.focus();
+  } else if (e.key.toLowerCase() === "f" && ctrl && (section === "meetings" || section === "history")) {
+    // Ctrl+F: the page's search field (Meetings: on the list, not inside a meeting).
     const field = $<HTMLInputElement>(section === "meetings" ? "meetings-search" : "history-search");
     if (field.offsetParent) {
       e.preventDefault();
@@ -1012,7 +1087,7 @@ document.addEventListener("keydown", (e) => {
     }
   } else if (e.key === "Escape" && inSettings() && !capturing && dictation.state === "idle") {
     e.preventDefault();
-    showSection("transcribe", true);
+    showSection(lastPage, true);
   }
 });
 
@@ -1263,6 +1338,7 @@ function renderVoices(): void {
   const v = status?.voices;
   if (!v) return;
   if (!voicesSaving) voicesOn.checked = v.on;
+  keepAudio.checked = !!status?.keep_audio;
   voicesOn.disabled = !v.supported && !v.on; // on from another computer's config: it can be turned off
   const set = (state: string, text: string, progress: number | null = null) => {
     voicesStatus.dataset.state = state;
@@ -1349,6 +1425,10 @@ void getBackend().then((b) => {
   );
   b.onOpenFiles((files) => files[0] && handleRef(files[0]));
   const liveDot = document.querySelector<HTMLElement>('.nav-item[data-section="meetings"] .nav-live')!;
+  askPage = initAsk(b, { openMeeting: (id, at) => {
+    showSection("meetings");
+    void meetingsView?.openAt(id, at);
+  } });
   // Settings → Meetings → Notes shows the model at work: notes, or an answer (also its first download).
   const onAi = (kind: "notes" | "chat") => (e: AiNotesEvent) => {
     aiLive = e;

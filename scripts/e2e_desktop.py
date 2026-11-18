@@ -521,7 +521,12 @@ esac
             check(vx < tx or vy < ty, f"the video is on the left of the notes, or above them on a narrow window ({vx},{vy} / {tx},{ty})")
             wx, wy = win("Lowkey")["at"]
             n = len(page())
-            pointer(f"abs:{wx + loaded['tab'][0]},{wy + loaded['tab'][1]},{{W}},{{H}}", "sleep:200", "click")
+            # The Transcript tab from the keyboard (the video's size moves the tabs once it loads):
+            # Tab to the chosen tab (Summary), then Left twice.
+            focus(win("Lowkey")["address"])
+            tab_to(by_id("tab-notes"), "the Summary tab")
+            press_key("Left")
+            press_key("Left")
             tab = wait(lambda: next((e for e in page()[n:] if e["state"] == "tab"), None), 5, "the transcript tab")
             if tab["para"]:
                 # A click on a paragraph: the video at its moment (paused: as it was), the paragraph marked.
@@ -733,6 +738,68 @@ esac
                 run(["hyprctl", "dispatch", f'hl.dsp.send_key_state({{ mods = "", key = "{k}", state = "{st}" }})'], env)
                 time.sleep(0.05)
 
+        def ctrl_key(k: str) -> None:
+            for st in ("down", "up"):
+                run(["hyprctl", "dispatch", f'hl.dsp.send_key_state({{ mods = "CTRL", key = "{k}", state = "{st}" }})'], env)
+                time.sleep(0.05)
+
+        # The page reports each control that gets the focus ("page-focus": id, section, class,
+        # label, page), so the steps move with Tab until the control they want, whatever the
+        # layout around it.
+        def focused() -> dict:
+            f = events("page-focus")
+            return f[-1] if f else {}
+
+        def tab_to(match, what: str, back: bool = False, steps: int = 80) -> dict:
+            for _ in range(steps):
+                f = focused()
+                if f and match(f):
+                    return f
+                n = len(events("page-focus"))
+                for st in ("down", "up"):
+                    run(["hyprctl", "dispatch", f'hl.dsp.send_key_state({{ mods = "{"SHIFT" if back else ""}", key = "Tab", state = "{st}" }})'], env)
+                    time.sleep(0.03)
+                end = time.monotonic() + 1.0  # out of the page (the window's own focus) reports nothing
+                while len(events("page-focus")) == n and time.monotonic() < end:
+                    time.sleep(0.03)
+            raise RuntimeError(f"Tab did not reach {what}; the focus is on {focused()}")
+
+        def by_id(i: str):
+            return lambda f: f.get("id") == i
+
+        SETTINGS_TABS = ["general", "speech", "dictation", "meeting-settings", "connections", "about"]
+
+        def page_click() -> None:
+            """A click on the sidebar's empty part: the page gets the keyboard (a window shown again
+            from the tray may keep it in GTK, outside the page)."""
+            if not pointer_tool:
+                return
+            mw = win("Lowkey")
+            (wx, wy), (_, wh) = mw["at"], mw["size"]
+            pointer(f"abs:{wx + 120},{wy + wh - 160},{{W}},{{H}}", "sleep:150", "click")
+            time.sleep(0.3)
+
+        def open_settings(tab: str) -> None:
+            """Ctrl+, opens Settings with the focus on its first tab (General); the arrows move to `tab`."""
+            for attempt in range(3):  # on Settings already, Ctrl+, goes back: then once more
+                n = len(events("page-focus"))
+                ctrl_key("comma")
+                end = time.monotonic() + 3
+                while len(events("page-focus")) == n and time.monotonic() < end:
+                    time.sleep(0.05)
+                f = focused() if len(events("page-focus")) > n else {}
+                if f.get("section") == "general" and "tab" in f.get("cls", ""):
+                    break
+                if not f:
+                    print(f"  note: Ctrl+, reached no control (try {attempt + 1}): a click on the page first")
+                    page_click()
+            else:
+                raise AssertionError(f"Ctrl+, did not open Settings (focus: {focused()})")
+            for _ in range(SETTINGS_TABS.index(tab)):
+                press_key("Right")
+            wait(lambda: focused().get("section") == tab, 5, f"the {tab} tab")
+            time.sleep(0.3)
+
         # ---------------------------------------------------------------- history and paste last
         hist_file = tmp / "data" / "lowkey" / "history.json"
         kept = wait(lambda: hist_file.exists() and len(json.loads(hist_file.read_text())) >= 3 and json.loads(hist_file.read_text()), 10, "history entries")
@@ -745,10 +812,8 @@ esac
         wait(lambda: typed.read_text() == before + d2["text"], 10, "the last dictation typed again")
         check(True, f"the paste-last key types the last dictation again: {d2['text']!r}")
         focus(main_win["address"])
-        for st in ("down", "up"):  # Ctrl+, -> General, then Up -> History
-            run(["hyprctl", "dispatch", f'hl.dsp.send_key_state({{ mods = "CTRL", key = "comma", state = "{st}" }})'], env)
-            time.sleep(0.05)
-        press_key("Up")
+        ctrl_key("4")  # Ctrl+4: Dictations (the history)
+        wait(lambda: focused().get("section") == "history", 5, "the Dictations page")
         time.sleep(0.8)
         shot("29-desktop-history.png")
 
@@ -756,7 +821,15 @@ esac
         cfg_file = tmp / "config" / "lowkey" / "config.toml"
 
         def busctl(*a) -> str:
-            return run(["busctl", f"--address={bus_addr}", "--json=short", *a], env)
+            # One more try on a timeout: the app's main thread can be busy for a moment (a meeting
+            # that saves), and the tray answers on it.
+            try:
+                return run(["busctl", f"--address={bus_addr}", "--json=short", *a], env)
+            except RuntimeError as e:
+                if "timed out" not in str(e):
+                    raise
+                time.sleep(2.0)
+                return run(["busctl", f"--address={bus_addr}", "--json=short", *a], env)
 
         def tray_target():
             """The app's connection and object path that hold the tray menu (None: not yet)."""
@@ -869,15 +942,12 @@ esac
         cfg_file = tmp / "config" / "lowkey" / "config.toml"
         main_win = wait(lambda: win("Lowkey"), 10, "main window")
         focus(main_win["address"])
-        # Settings: Ctrl+, opens them with the focus on the section list; Down moves to Model,
-        # Tab to its first control (the model list).
-        for st in ("down", "up"):
-            run(["hyprctl", "dispatch", f'hl.dsp.send_key_state({{ mods = "CTRL", key = "comma", state = "{st}" }})'], env)
-            time.sleep(0.05)
-        time.sleep(0.3)
+        # Settings: Ctrl+, opens the page on General (the focus on its tab); then Speech, and Tab
+        # to the speech model's list.
+        open_settings("general")
         shot("20-desktop-settings-general.png")
-        press_key("Down")  # Model
-        press_key("Tab")  # the model list
+        open_settings("speech")
+        tab_to(by_id("model-select"), "the speech model's list")
         # Parakeet (670 MB) only when it is cached, so the run stays offline-capable; else Small.
         with_pk = BENCH_PARAKEET.is_dir()
         last = "parakeet-v3" if with_pk else "small"
@@ -934,11 +1004,9 @@ esac
         def latest_status() -> dict:
             return events("status")[-1] if events("status") else {}
 
-        for st in ("down", "up"):  # Shift+Tab: back to the section list (on Model)
-            run(["hyprctl", "dispatch", f'hl.dsp.send_key_state({{ mods = "SHIFT", key = "Tab", state = "{st}" }})'], env)
-            time.sleep(0.05)
-        press_key("Down")  # Dictation
-        press_key("Tab")  # its first control: the key button (Change, or "Let the app manage it")
+        open_settings("dictation")
+        # Its key button: "Let the app manage it" when the key comes from the config, else Change.
+        tab_to(by_id("key-adopt" if config_bind else "key-change"), "the dictation key's button")
         if config_bind:
             # The key comes from the bindings.lua block: Options offers to take it over.
             check(latest_status().get("hotkey_source") == "config", "Options: the key comes from the config block")
@@ -950,6 +1018,7 @@ esac
             check(len(backups) == 1 and "open-whisper.dictation" in backups[0].read_text(), f"a backup of the old config: {backups[0].name if backups else None}")
             check(len(x_binds()) == 2 and all(b["description"] in (RUNTIME_DESC, "") for b in x_binds()), "SUPER+CTRL+X now comes from the app")
             check((tmp / "config" / "autostart" / "lowkey.desktop").exists(), "taking the key over turned on start at login")
+            tab_to(by_id("key-change"), "the dictation key's Change")
         # A combination that another shortcut uses is refused; the key stays.
         n_ev = len(events("hotkey-change"))
         press_key("Return")  # Change
@@ -979,7 +1048,8 @@ esac
         # The meeting key: added at start (one bind); it cannot take the dictation key; it moves.
         mk = binds_on(68, "M")
         check(len(mk) == 1 and mk[0]["description"] == MEETING_DESC, "the meeting key SUPER+CTRL+M is added at start (one bind)")
-        press_key("Tab")  # Meeting key → Change
+        open_settings("meeting-settings")
+        tab_to(by_id("meeting-key-change"), "the meeting key's Change")
         n_mk = len(events("meeting-key-change"))
         press_key("Return")
         time.sleep(0.3)
@@ -999,14 +1069,14 @@ esac
         press_combo("SUPER CTRL", "M")
         wait(lambda: 'meeting_hotkey = "SUPER + CTRL + M"' in cfg_file.read_text() and binds_on(68, "M") and not binds_on(72, "M"), 15, "meeting key back")
         print("  ok  meeting key back to SUPER+CTRL+M")
-        press_key("Tab")  # past the paste-last key's Change, to the login switch
         # Start at login: the autostart entry appears and goes (in the test's own XDG_CONFIG_HOME).
         autostart = tmp / "config" / "autostart" / "lowkey.desktop"
         # Franco's real entries (old and new name): never touched.
         real_autostart = [Path.home() / ".config" / "autostart" / n for n in ("open-whisper.desktop", "lowkey.desktop")]
         real_before = [f.exists() for f in real_autostart]
         was = autostart.exists()  # on after taking the key over (--config-bind)
-        press_key("Tab")
+        open_settings("general")
+        tab_to(by_id("login-check"), "the login switch")
         press_key("space")
         wait(lambda: autostart.exists() != was, 10, "autostart entry toggled")
         press_key("space")
@@ -1019,41 +1089,26 @@ esac
         wait(lambda: not autostart.exists(), 10, "autostart entry removed")
         check([f.exists() for f in real_autostart] == real_before, "your real ~/.config/autostart was not touched")
         print("  ok  start at login turned off again")
-        press_key("Escape")
-        # Settings → Models → AI notes (General, down to Models, then Tab past the speech model
-        # and the idle menu to the notes model: the view scrolls to it).
-        for st in ("down", "up"):
-            run(["hyprctl", "dispatch", f'hl.dsp.send_key_state({{ mods = "CTRL", key = "comma", state = "{st}" }})'], env)
-            time.sleep(0.05)
-        press_key("Down")
-        for _ in range(3):
-            press_key("Tab")
+        # Settings → Meetings → Notes: the notes model (the view scrolls to it).
+        open_settings("meeting-settings")
+        tab_to(by_id("ai-engine"), "the notes model")
         time.sleep(0.6)
         shot("28-desktop-settings-ai-notes.png")
-        press_key("Escape")
-        # Settings → Note apps (General, Models, Shortcuts, Live preview, Note apps): the folder in a vault.
-        for st in ("down", "up"):
-            run(["hyprctl", "dispatch", f'hl.dsp.send_key_state({{ mods = "CTRL", key = "comma", state = "{st}" }})'], env)
-            time.sleep(0.05)
-        for _ in range(4):
-            press_key("Down")
-        time.sleep(0.6)
+        # Settings → Connections → Note apps: the folder in a vault.
+        open_settings("connections")
         shot("40-desktop-settings-note-apps.png")
-        press_key("Escape")
+        press_key("Escape")  # back to the page before Settings
 
         # ---------------------------------------------------------------- Meetings
-        def ctrl_key(k: str) -> None:
-            for st in ("down", "up"):
-                run(["hyprctl", "dispatch", f'hl.dsp.send_key_state({{ mods = "CTRL", key = "{k}", state = "{st}" }})'], env)
-                time.sleep(0.05)
 
         meetings_dir = tmp / "data" / "lowkey" / "meetings"
-        press_key("Down")  # Meetings (from the Transcribe tab)
-        press_key("Tab")  # the search field
-        press_key("Tab")  # Record
+        ctrl_key("1")  # Ctrl+1: Meetings
+        wait(lambda: focused().get("section") == "meetings", 5, "the Meetings page")
+        tab_to(by_id("meeting-start"), "Record")
         n_m = len(events("meeting"))
+        n_s = len(events("meeting-start"))  # (the tray's meeting started one already)
         press_key("Return")
-        started = wait(lambda: events("meeting-start")[-1:] or None, 15, "meeting started")[0]
+        started = wait(lambda: events("meeting-start")[n_s:] or None, 15, "meeting started")[0]
         check("Ok" in started["result"], f"Meetings: recording starts ({started['result']})")
         mid = started["result"]["Ok"]
 
@@ -1072,7 +1127,8 @@ esac
         time.sleep(0.8)
         shot("21-desktop-meeting-live.png")
         focus(main_win["address"])
-        press_key("Return")  # Stop: it has the focus after Start
+        tab_to(by_id("meeting-stop"), "Stop", back=True)  # it has the focus after Start (else back to it)
+        press_key("Return")
         wait(lambda: next((m for m in events("meeting")[n_m:] if m["meeting"]["id"] == mid and m["state"] == "done"), None), 60, "meeting saved")
         saved = json.loads((meetings_dir / f"{mid}.json").read_text())
         me_text = " ".join(x["text"] for x in saved["lines"] if x["speaker"] == "me").lower()
@@ -1129,9 +1185,9 @@ esac
                   "the same note, written again with the AI notes")
             time.sleep(1.0)
             shot("25-desktop-meeting-ai-notes.png")
-            # Ask about this meeting: Ctrl+K, a question, Enter; the answer is saved with it.
+            # Ask about this meeting: Ctrl+J (opens the panel and its box), a question, Enter; the answer is saved with it.
             focus(main_win["address"])
-            ctrl_key("k")
+            ctrl_key("j")
             for ch in "what did they say about the country":
                 press_key("space" if ch == " " else ch)
             n_c = len(events("ai-chat"))
@@ -1150,7 +1206,15 @@ esac
             # last word replaced by a name; saved, in the note too, and offered for the Vocabulary.
             mw = win("Lowkey")
             (wx, wy) = mw["at"]
-            pointer(f"abs:{wx + 372},{wy + 242},{{W}},{{H}}", "sleep:200", "click")  # the Transcript tab
+            # The questions close (Ctrl+J again, from their box): the transcript gets the room.
+            ctrl_key("j")
+            wait(lambda: focused().get("id") == "chat-toggle", 5, "the questions closed")
+            # The Transcript tab, from the keyboard: Shift+Tab to the chosen tab (Summary; the tabs
+            # pattern has one stop), then Left twice: My notes, Transcript.
+            tab_to(by_id("tab-notes"), "the Summary tab", back=True)
+            press_key("Left")
+            press_key("Left")
+            wait(lambda: focused().get("id") == "tab-transcript", 5, "the Transcript tab")
             time.sleep(0.8)
 
             def them_label():
@@ -1161,7 +1225,8 @@ esac
                 w_ = mw["size"][0]
                 hits = [(i // 3 % w_, i // 3 // w_) for i in range(0, len(raw) - 2, 3)
                         if abs(raw[i] - 0x4F) < 12 and abs(raw[i + 1] - 0x6D) < 12 and abs(raw[i + 2] - 0x8A) < 12]
-                hits = [h for h in hits if h[0] > 240]  # the page, not the side menu
+                # (Only Them's labels and the live legend have this colour: the sidebar is a bar on
+                # top in this narrow window, so the whole page counts.)
                 return min(hits, key=lambda h: (h[1], h[0])) if len(hits) > 20 else None
 
             label = wait(them_label, 10, "a Them paragraph in the Transcript tab")
@@ -1214,6 +1279,22 @@ esac
                 if (vault_notes / note.name).is_file():
                     wait(lambda: "**John** (" in (vault_notes / note.name).read_text(), 15, "the note with the name")
                     print("  ok  the note in the folder has the name")
+            # Ask across meetings (Ctrl+2): the parts of the meetings found for the question, and
+            # an answer that cites them as [n].
+            ctrl_key("2")
+            tab_to(by_id("ask-input"), "the Ask box")
+            for ch in "what did they say about the country":
+                press_key("space" if ch == " " else ch)
+            n_l = len(events("library-answer"))
+            press_key("Return")
+            la = wait(lambda: next((e for e in events("library-answer")[n_l:] if e["state"] in ("done", "error", "cancelled")), None), 180, "an answer across meetings")
+            cited = re.findall(r"\[(\d+)", la["text"])
+            check(la["state"] == "done" and la["sources"] and any(x["meeting_id"] == mid for x in la["sources"]) and cited,
+                  f"Ask across meetings: {len(la['sources'])} sources, cited {sorted(set(cited))}: {la['text'][:80]!r}")
+            time.sleep(1.0)
+            shot("43-desktop-ask.png")
+            ctrl_key("1")  # back to the meeting
+            time.sleep(0.5)
         else:
             print(f"  SKIP AI notes: no cached Qwen3.5 4B and runner in {BENCH_LLM}")
         # A wide window: the AI notes and the chat side by side (the nested window, full screen).
@@ -1246,9 +1327,8 @@ esac
             press_key(ch)
         time.sleep(1.0)
         shot("32-desktop-meetings-search.png")
-        press_key("Tab")  # Record
-        press_key("Tab")  # the first result (the newest meeting)
-        press_key("Tab")  # its Delete button
+        # The first result (the newest meeting), then its Delete button.
+        tab_to(lambda f: "meeting-item-delete" in f.get("cls", ""), "the first result's Delete")
         press_key("Return")
         time.sleep(0.6)
         shot("33-desktop-meeting-delete-confirm.png")
@@ -1304,13 +1384,11 @@ esac
         check(zrec["meeting"]["title"] == "Zoom call", f"the meeting key records the offered call, named after it: {zrec['meeting']['title']!r}")
         outputs.write_text("[]")  # Zoom leaves the microphone
         ended = wait(lambda: next((e for e in events("call")[n_c:] if e["state"] == "ended"), None), 15, "call ended")
-        check(ended["auto"] is False and any(m["state"] == "recording" for m in events("meeting")[-2:]),
-              "the call ended: the strip says so; a recording you started goes on until you stop it")
-        time.sleep(0.6)
+        check(ended["auto"] is True, "the call ended: Stop when the call ends (on by default) stops the meeting it records")
+        time.sleep(0.3)
         shot("31-desktop-call-ended.png")
-        meeting_key()
         wait(lambda: next((m for m in events("meeting")[n_z:] if m["state"] == "done"), None), 60, "the call's meeting saved")
-        print("  ok  the call's meeting saved with the key")
+        print("  ok  the call's meeting stopped and saved by itself")
         zid = zrec["meeting"]["id"]
         zex = wait(lambda: next((e for e in events("meeting-export") if e["id"] == zid and e["state"] in ("saved", "error")), None), 60, "the call's note")
         check(zex["state"] == "saved" and zex["file"].endswith(" Zoom call.md") and (vault_notes / zex["file"]).is_file(),
@@ -1355,21 +1433,14 @@ esac
         check(len(app_pids()) == 1, "one app process")
         if pointer_tool:
             strip_step()
-        # The theme switch and Exit at the bottom of the side menu: a second launch opens the
-        # window; Ctrl+, puts the focus on the section list, End goes to About; the switch and
-        # Exit come after the page in the Tab order (after About's 4 links), never right after
-        # the section list.
+        # The theme switch and Exit at the bottom of the sidebar: a second launch opens the
+        # window; Tab goes to the switch, then to Exit.
         run(["hyprctl", "dispatch", f'hl.dsp.exec_cmd("{APP}")'], env)
         qwin = wait(lambda: win("Lowkey"), 20, "the window from a second launch")
         focus(qwin["address"])
         time.sleep(0.5)
-        for st in ("down", "up"):
-            run(["hyprctl", "dispatch", f'hl.dsp.send_key_state({{ mods = "CTRL", key = "comma", state = "{st}" }})'], env)
-            time.sleep(0.05)
-        time.sleep(0.4)
-        press_key("End")  # About
-        for _ in range(5):
-            press_key("Tab")
+        ctrl_key("1")
+        tab_to(by_id("theme-toggle"), "the theme switch")
         theme_before = re.search(r'^theme = "(\w+)"', cfg_file.read_text(), re.M)
         press_key("Return")  # the theme switch: light <-> dark, saved
         flipped = wait(lambda: (m := re.search(r'^theme = "(light|dark)"', cfg_file.read_text(), re.M)) and m.group(1), 10, "theme saved from the switch")
@@ -1378,7 +1449,7 @@ esac
         shot("36-desktop-theme-switch.png")
         press_key("Return")  # and back
         wait(lambda: re.search(r'^theme = "(light|dark)"', cfg_file.read_text(), re.M).group(1) != flipped, 10, "theme switched back")
-        press_key("Tab")
+        tab_to(by_id("app-quit"), "Exit")
         time.sleep(0.3)
         shot("35-desktop-exit-button.png")
         press_key("Return")

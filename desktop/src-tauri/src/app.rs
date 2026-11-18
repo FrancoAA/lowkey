@@ -40,6 +40,9 @@ pub struct App {
     export_edits: Mutex<std::collections::HashMap<String, u64>>,
     /// Meetings whose voices are being told apart (after Stop).
     voices_working: Mutex<std::collections::BTreeSet<String>>,
+    /// The meeting being transcribed again from its kept audio (one at a time).
+    retranscribing: Mutex<Option<String>>,
+    retranscribe_cancel: Arc<AtomicBool>,
     started: Instant,
     /// The overlay page has loaded and rendered (shown only then: no blank first frame).
     overlay_ready: AtomicBool,
@@ -72,6 +75,14 @@ pub struct App {
     call_offer: Mutex<Option<(crate::calls::Call, Instant)>>,
     /// The meeting recording a detected call: its id, the call, started automatically.
     call_session: Mutex<Option<(String, crate::calls::Call, bool)>>,
+    /// The known call apps and pages on the microphone at the last look (Linux).
+    calls_now: Mutex<Vec<crate::calls::Call>>,
+    /// Settings → Meetings → Calendar: the linked calendar's last good events, and why the last
+    /// read failed ("" = it worked).
+    calendar: Mutex<Option<crate::calendar::Feed>>,
+    calendar_error: Mutex<String>,
+    /// The calendar event the next meeting records (the agenda's Record), by its id.
+    start_event: Mutex<Option<String>>,
     /// Calls seen while the app runs (Settings lists them with their policy).
     calls_seen: Mutex<Vec<crate::calls::Call>>,
     /// Hyprland: the strip's drag while the mouse button is down.
@@ -318,10 +329,17 @@ impl App {
             "history_keep": cfg.history_keep,
             "calls": {
                 "detect": cfg.call_detection,
+                "auto_stop": cfg.auto_stop,
+                "names": cfg.call_names,
                 "available": cfg!(target_os = "linux"),
                 "apps": self.call_apps(&cfg),
             },
             "recording": self.meeting.lock().is_some(),
+            "calendar": {
+                "linked": !cfg.calendar_url.is_empty(),
+                "name": self.calendar.lock().as_ref().and_then(|f| f.name.clone()).unwrap_or_else(|| cfg.calendar_name.clone()),
+                "error": self.calendar_error.lock().clone(),
+            },
             // OPENWHISPER_TEST_LOG: the page reports its player's events (`test_event`).
             "test": std::env::var_os("OPENWHISPER_TEST_LOG").is_some(),
             // The providers (chat, speech, default models) and which have a key; never the keys.
@@ -345,6 +363,7 @@ impl App {
                 "download": crate::voices::download_state(),
                 "working": *self.voices_working.lock(),
             },
+            "keep_audio": cfg.keep_audio,
             // Settings → Meetings → Screen video; `chosen`: a screen is remembered.
             "screen": {
                 "supported": crate::screen::SUPPORTED, "chosen": !cfg.screen_token.is_empty(),
@@ -763,9 +782,12 @@ impl App {
                 // A call is offered: the recording is that call (its name, and "ended" later).
                 let offered = self.call_offer.lock().take().map(|(c, _)| c);
                 let title = offered.as_ref().map(|c| format!("{} call", c.label)).unwrap_or_else(|| title.to_string());
+                // Not offered (refused before, or "never"), but a call is on the microphone now:
+                // the recording is that call too, for its end.
+                let bound = offered.clone().or_else(|| self.calls_now.lock().first().cloned());
                 match meeting_start_inner(self, &title) {
                 Ok(live) => {
-                    if let Some(c) = offered {
+                    if let Some(c) = bound {
                         *self.call_session.lock() = Some((live.meeting.id.clone(), c, false));
                     }
                     emit_logged(&self.handle, "meeting-start", json!({"result": {"Ok": live.meeting.id}}));
@@ -809,6 +831,46 @@ impl App {
         out.into_iter().map(|(key, label, policy)| json!({"key": key, "label": label, "policy": policy})).collect()
     }
 
+    /// Settings → Meetings → Calendar: read the linked calendar every 5 minutes (a failed read
+    /// keeps the last good events). The address is never logged.
+    fn watch_calendar(self: &Arc<Self>) {
+        let weak = Arc::downgrade(self);
+        let _ = std::thread::Builder::new().name("calendar".into()).spawn(move || loop {
+            let Some(app) = weak.upgrade() else { return };
+            let url = app.config.lock().calendar_url.clone();
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
+            if url.is_empty() {
+                *app.calendar.lock() = None;
+            } else {
+                let current = app.calendar.lock().clone().filter(|f| f.url.as_str() == url);
+                let feed = match current {
+                    Some(f) => Some(f),
+                    None => crate::calendar::normalize(&url).ok().map(crate::calendar::Feed::new),
+                };
+                if let Some(mut f) = feed {
+                    if f.due(now) {
+                        let r = f.refresh(now); // not under a lock: it can take seconds
+                        let error = match r {
+                            Ok(()) => String::new(),
+                            Err(e) => calendar_error_text(e).to_string(),
+                        };
+                        let changed = *app.calendar_error.lock() != error;
+                        *app.calendar_error.lock() = error;
+                        // Unlinked or changed meanwhile: this read is not that calendar's.
+                        if app.config.lock().calendar_url == url {
+                            *app.calendar.lock() = Some(f);
+                        }
+                        if changed {
+                            app.emit_status();
+                        }
+                    }
+                }
+            }
+            drop(app);
+            std::thread::sleep(Duration::from_secs(30));
+        });
+    }
+
     /// Call detection (Linux): look once a second at who uses the microphone.
     #[cfg(target_os = "linux")]
     fn watch_calls(self: &Arc<Self>) {
@@ -826,6 +888,7 @@ impl App {
                     let Some(json) = crate::microphones::mic_users_json() else { continue };
                     let users = crate::calls::parse_users(&json);
                     if users.is_empty() && detector_idle(&app) {
+                        app.calls_now.lock().clear();
                         let _ = detector.step(Instant::now(), vec![]);
                         continue;
                     }
@@ -833,6 +896,7 @@ impl App {
                     let titles = std::cell::OnceCell::new();
                     let calls: Vec<crate::calls::Call> =
                         users.iter().filter_map(|u| crate::calls::classify(u, &|pid| titles.get_or_init(window_titles).get(&pid).cloned())).collect();
+                    *app.calls_now.lock() = calls.iter().filter(|c| c.known).cloned().collect();
                     for action in detector.step(Instant::now(), calls) {
                         app.on_call(action);
                     }
@@ -852,8 +916,18 @@ impl App {
                         seen.push(call.clone());
                     }
                 }
-                if self.meeting.lock().is_some() || self.meeting_starting.load(Ordering::SeqCst) {
+                if self.meeting_starting.load(Ordering::SeqCst) {
                     return; // already recording
+                }
+                let live_id = self.meeting.lock().as_ref().map(|s| s.id());
+                if let Some(id) = live_id {
+                    // A meeting started by hand, then the call began: the meeting records that
+                    // call, so it can stop when the call ends.
+                    let mut session = self.call_session.lock();
+                    if session.is_none() {
+                        *session = Some((id, call.clone(), false));
+                    }
+                    return;
                 }
                 let policy = self.config.lock().call_policies.get(&call.key).cloned().unwrap_or_else(|| "ask".into());
                 emit_logged(&self.handle, "call", json!({"state": "detected", "key": call.key, "label": call.label, "policy": policy}));
@@ -910,8 +984,10 @@ impl App {
                 let live_id = self.meeting.lock().as_ref().map(|s| s.id());
                 if let Some((id, c, auto)) = session {
                     if c.key == call.key && live_id.as_deref() == Some(id.as_str()) {
-                        if auto {
-                            // Started by itself: it stops by itself.
+                        // Started by itself, or "Stop when the call ends" (on by default): it
+                        // stops by itself. The call was off the microphone for 3 s already, so a
+                        // new headset or a short mute does not stop it.
+                        if auto || self.config.lock().auto_stop {
                             emit_logged(&self.handle, "call", json!({"state": "ended", "key": call.key, "label": call.label, "auto": true}));
                             let me = self.clone();
                             std::thread::spawn(move || {
@@ -1308,6 +1384,7 @@ struct OptionsIn {
     ai_prompt: Option<String>,
     mcp_recording: Option<bool>,
     meeting_voices: Option<bool>,
+    keep_audio: Option<bool>,
     /// Some("") turns the note-app folder off.
     export_dir: Option<String>,
     export_auto: Option<bool>,
@@ -1319,6 +1396,8 @@ struct OptionsIn {
     microphone: Option<String>,
     avoid_bluetooth_mic: Option<bool>,
     call_detection: Option<bool>,
+    auto_stop: Option<bool>,
+    call_names: Option<bool>,
     /// One call's policy: { key, policy }.
     call_policy: Option<CallPolicyIn>,
 }
@@ -1472,6 +1551,9 @@ fn apply_options(app: &AppRef, options: OptionsIn) -> Result<Value, String> {
         if let Some(on) = options.mcp_recording {
             cfg.mcp_recording = on;
         }
+        if let Some(on) = options.keep_audio {
+            cfg.keep_audio = on;
+        }
         if let Some(on) = options.meeting_voices {
             if on && !crate::voices::SUPPORTED {
                 return Err("This build cannot tell voices apart (Linux x86_64 only).".into());
@@ -1496,6 +1578,12 @@ fn apply_options(app: &AppRef, options: OptionsIn) -> Result<Value, String> {
         }
         if let Some(on) = options.call_detection {
             cfg.call_detection = on;
+        }
+        if let Some(on) = options.auto_stop {
+            cfg.auto_stop = on;
+        }
+        if let Some(on) = options.call_names {
+            cfg.call_names = on;
         }
         if let Some(cp) = options.call_policy {
             if !crate::calls::POLICIES.contains(&cp.policy.as_str()) || cp.key.is_empty() || cp.key.len() > 64 {
@@ -1624,8 +1712,9 @@ fn window_dictation_inner(app: &AppRef, action: &str) -> Result<Option<String>, 
 // ------------------------------------------------------------------ meetings
 /// Start recording a meeting: the mic ("Me") and the computer's sound ("Them").
 #[tauri::command]
-async fn meeting_start(app: State<'_, AppRef>, title: String) -> Result<meeting::Live, String> {
+async fn meeting_start(app: State<'_, AppRef>, title: String, event_uid: Option<String>) -> Result<meeting::Live, String> {
     let app = app.inner().clone();
+    *app.start_event.lock() = event_uid;
     // Off the window's thread: opening the devices can take seconds.
     let a2 = app.clone();
     let r = tauri::async_runtime::spawn_blocking(move || meeting_start_inner(&a2, &title)).await.map_err(|e| e.to_string()).and_then(|r| r);
@@ -1688,7 +1777,24 @@ fn meeting_open(app: &AppRef, title: &str) -> Result<meeting::Live, String> {
             let _ = h.emit("meeting-level", json!({"me": me, "them": them}));
         }
     });
-    let doc = meeting::Meeting::new(title, &crate::providers::speech_label(&model).unwrap_or_else(|| model.clone()));
+    let mut doc = meeting::Meeting::new(title, &crate::providers::speech_label(&model).unwrap_or_else(|| model.clone()));
+    // The calendar event it records: the one asked for (the agenda's Record), else the one at
+    // this time. Its title replaces a title the app made up ("Meeting · …", "Zoom call").
+    let asked = app.start_event.lock().take();
+    let event = app.calendar.lock().as_ref().and_then(|f| {
+        let now = doc.started_at as i64;
+        match &asked {
+            Some(id) => f.events.iter().find(|e| &e.id == id).cloned(),
+            None => f.near(now).cloned(),
+        }
+    });
+    if let Some(e) = event {
+        let made_up = doc.title.starts_with("Meeting") || doc.title.ends_with(" call");
+        if made_up && !e.title.trim().is_empty() {
+            doc.title = e.title.trim().chars().take(meeting::MAX_TITLE).collect();
+        }
+        doc.attendees = e.attendees.clone();
+    }
     let id = doc.id.clone();
     let session = meeting::Session::new(meeting::dir(), doc, transcribe, emit).map_err(|e| format!("Could not save the meeting: {e:#}"))?;
     if app.config.lock().meeting_voices && crate::voices::SUPPORTED {
@@ -1697,6 +1803,16 @@ fn meeting_open(app: &AppRef, title: &str) -> Result<meeting::Live, String> {
         } else if let Err(e) = session.keep_their_sound(&crate::voices::tape_path(&meeting::dir(), &id)) {
             session.notice(format!("The others' voices will not be told apart in this meeting: {e:#}."));
         }
+    }
+    if app.config.lock().keep_audio {
+        if let Err(e) = session.keep_audio() {
+            session.notice(format!("The audio of this meeting is not kept: {e:#}."));
+        }
+    }
+    if cfg!(target_os = "linux") && app.config.lock().call_names {
+        // The call on the microphone now, when there is one: only its app is read.
+        let hint = app.calls_now.lock().first().map(|c| c.key.clone());
+        session.watch_call(hint.as_deref());
     }
     if let Err(e) = session.open_sources() {
         session.abandon();
@@ -1785,6 +1901,84 @@ fn meeting_video_url(id: String, file: String) -> Result<Option<String>, String>
     crate::video_server::url(&name).map(Some).map_err(|e| format!("The video cannot be played: {e:#}"))
 }
 
+/// The address the page plays a meeting's kept audio from (None: not kept, or not on disk).
+#[tauri::command]
+fn meeting_audio_url(id: String) -> Result<Option<String>, String> {
+    if !meeting::valid_id(&id) {
+        return Err(format!("unknown meeting {id:?}"));
+    }
+    let dir = meeting::dir();
+    let kept = meeting::load_in(&dir, &id).is_ok_and(|m| !m.audio.is_empty());
+    if !kept || !meeting::audio_path(&dir, &id).is_file() {
+        return Ok(None);
+    }
+    crate::video_server::url(&meeting::audio_file(&id)).map(Some).map_err(|e| format!("The audio cannot be played: {e:#}"))
+}
+
+/// Transcribe a saved meeting again from its kept audio, with the speech model now chosen (in
+/// the background; "meeting-retranscribe" events: working (progress) | done (meeting) | error |
+/// cancelled). `cancel`: stop the one running.
+#[tauri::command]
+fn meeting_retranscribe(app: State<'_, AppRef>, id: String, cancel: Option<bool>) -> Result<(), String> {
+    let app = app.inner().clone();
+    if cancel == Some(true) {
+        app.retranscribe_cancel.store(true, Ordering::SeqCst);
+        return Ok(());
+    }
+    if !meeting::valid_id(&id) {
+        return Err(format!("unknown meeting {id:?}"));
+    }
+    if live_session(&app, &id).is_some() {
+        return Err("Stop the recording first.".into());
+    }
+    if voices_pending(&app, &id) {
+        return Err(VOICES_PENDING.into());
+    }
+    {
+        let mut busy = app.retranscribing.lock();
+        if busy.is_some() {
+            return Err("Another meeting is being transcribed again. Wait for it.".into());
+        }
+        *busy = Some(id.clone());
+    }
+    app.retranscribe_cancel.store(false, Ordering::SeqCst);
+    let model = app.current_model();
+    let language = app.current_language();
+    let engines = app.engines.clone();
+    let voices = app.config.lock().meeting_voices && crate::voices::SUPPORTED && crate::voices::present();
+    std::thread::spawn(move || {
+        let h = app.handle.clone();
+        let send = |state: &str, progress: f64, detail: &str, m: Option<&meeting::Meeting>| {
+            emit_logged(&h, "meeting-retranscribe", json!({"id": id, "state": state, "progress": progress, "detail": detail, "meeting": m}));
+        };
+        send("working", 0.0, "", None);
+        let transcribe: meeting::TranscribeFn = Arc::new(move |pcm| {
+            engines.transcribe(&model, Input { path: None, pcm: Some(pcm), language: language.clone() }, Arc::new(|_| {})).map(|o| o.segments)
+        });
+        let last = Mutex::new(Instant::now());
+        let progress = |p: f64| {
+            let mut l = last.lock();
+            if l.elapsed() >= Duration::from_millis(500) {
+                *l = Instant::now();
+                drop(l);
+                send("working", p, "", None);
+            }
+        };
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| meeting::retranscribe(&meeting::dir(), &id, &transcribe, voices, &progress, &app.retranscribe_cancel)))
+            .unwrap_or_else(|_| Err(anyhow::anyhow!("it stopped with an internal error")));
+        *app.retranscribing.lock() = None;
+        match r {
+            Ok(m) => {
+                send("done", 1.0, "", Some(&m));
+                auto_export_after_edits(&app, &id);
+            }
+            Err(_) if app.retranscribe_cancel.load(Ordering::SeqCst) => send("cancelled", 0.0, "", None),
+            Err(e) => send("error", 0.0, &format!("The meeting was not transcribed again: {e:#}"), None),
+        }
+    });
+    Ok(())
+}
+
 /// Stop, transcribe the last seconds, save. Returns the saved meeting.
 #[tauri::command]
 async fn meeting_stop(app: State<'_, AppRef>) -> Result<meeting::Meeting, String> {
@@ -1809,6 +2003,24 @@ fn stop_meeting(app: &AppRef) -> Result<meeting::Meeting, String> {
     if let Ok(m) = &r {
         let theirs = session.their_sound();
         let them = m.lines.iter().any(|l| l.speaker == meeting::Speaker::Them);
+        let samples = session.call_samples();
+        let voices_next = theirs.is_some() && them && app.config.lock().meeting_voices;
+        let mut m = m.clone();
+        if voices_next {
+            // Named once the voices are told apart (tell_voices_apart).
+            if !samples.is_empty() {
+                if let Ok(json) = serde_json::to_vec(&samples) {
+                    let _ = std::fs::write(meeting::call_samples_path(&meeting::dir(), &m.id), json);
+                }
+            }
+        } else if them && !samples.is_empty() {
+            if let Ok(named) = meeting::edit_in(&meeting::dir(), &m.id, |x| {
+                meeting::apply_call_names(x, &samples);
+            }) {
+                m = named;
+            }
+        }
+        let m = &m;
         match theirs {
             // The voices first (about 2 min for an hour); the note app and the AI notes then
             // get the speakers.
@@ -1860,11 +2072,28 @@ fn tell_voices_apart(app: &AppRef, id: &str, tape: &std::path::Path) {
     if r.is_err() {
         crate::voices::verify(); // a broken model downloads again when the setting is turned on
     }
-    let r = r.and_then(|turns| meeting::edit_in(&meeting::dir(), id, |m| meeting::set_people(m, &turns)));
+    // The call app's names for the voices found (kept next to the meeting since Stop).
+    let names_file = meeting::call_samples_path(&meeting::dir(), id);
+    let samples: Vec<crate::callnames::Sample> = std::fs::read(&names_file).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
+    let r = r.and_then(|turns| {
+        meeting::edit_in(&meeting::dir(), id, |m| {
+            meeting::set_people(m, &turns);
+            meeting::apply_call_names(m, &samples);
+        })
+    });
+    let _ = std::fs::remove_file(&names_file);
     drop(working);
     match r {
         Ok(m) => emit_logged(&app.handle, "meeting-voices", json!({"id": id, "state": "done", "detail": "", "meeting": m})),
-        Err(e) => emit_logged(&app.handle, "meeting-voices", json!({"id": id, "state": "error", "detail": format!("The voices could not be told apart: {e:#}")})),
+        Err(e) => {
+            // No voices: the call app's names still name the lines it clearly shows.
+            if !samples.is_empty() {
+                let _ = meeting::edit_in(&meeting::dir(), id, |m| {
+                    meeting::apply_call_names(m, &samples);
+                });
+            }
+            emit_logged(&app.handle, "meeting-voices", json!({"id": id, "state": "error", "detail": format!("The voices could not be told apart: {e:#}")}))
+        }
     }
 }
 
@@ -1922,7 +2151,7 @@ fn after_meeting(app: &AppRef, m: &meeting::Meeting) {
     let cfg = app.config.lock().clone();
     let ready = if cfg.ai_engine == "server" { crate::providers::chat_access(&cfg).is_ok() } else { llm::builtin_status(&cfg.ai_builtin_model).supported };
     if cfg.ai_auto && ready && !m.lines.is_empty() {
-        if let Err(why) = start_ai_notes(app, m.id.clone()) {
+        if let Err(why) = start_ai_notes(app, m.id.clone(), String::new()) {
             // e.g. another meeting's notes are being written: say so in this meeting.
             emit_logged(&app.handle, "ai-notes", json!({"id": m.id, "state": "error", "detail": format!("Not written: {why} Then use Write notes."), "progress": 0.0, "text": ""}));
         }
@@ -2288,7 +2517,11 @@ fn ai_engine(app: &AppRef) -> anyhow::Result<llm::Engine> {
 
 /// Write the AI notes of a saved meeting (in the background; "ai-notes" events follow it).
 #[tauri::command]
-fn meeting_ai_notes(app: State<'_, AppRef>, id: String) -> Result<(), String> {
+fn meeting_ai_notes(app: State<'_, AppRef>, id: String, instruction: Option<String>) -> Result<(), String> {
+    let instruction = instruction.unwrap_or_default();
+    if instruction.chars().count() > llm::MAX_INSTRUCTION {
+        return Err(format!("The instruction is too long (over {} characters).", llm::MAX_INSTRUCTION));
+    }
     let app = app.inner().clone();
     if !meeting::valid_id(&id) {
         return Err(format!("unknown meeting {id:?}"));
@@ -2299,7 +2532,7 @@ fn meeting_ai_notes(app: State<'_, AppRef>, id: String) -> Result<(), String> {
     if voices_pending(&app, &id) {
         return Err(VOICES_PENDING.into());
     }
-    start_ai_notes(&app, id)
+    start_ai_notes(&app, id, instruction)
 }
 
 #[tauri::command]
@@ -2318,7 +2551,7 @@ fn ai_busy_reason(app: &AppRef, id: &str) -> String {
     }
 }
 
-fn start_ai_notes(app: &AppRef, id: String) -> Result<(), String> {
+fn start_ai_notes(app: &AppRef, id: String, instruction: String) -> Result<(), String> {
     let busy = llm::Busy::take(&app.ai_busy).ok_or_else(|| ai_busy_reason(app, &id))?;
     app.ai_cancel.store(false, Ordering::SeqCst);
     *app.ai_job.lock() = Some(id.clone());
@@ -2328,7 +2561,7 @@ fn start_ai_notes(app: &AppRef, id: String) -> Result<(), String> {
         .name("ai-notes".into())
         .spawn(move || {
             let _busy = busy;
-            run_ai_notes(&app, &id);
+            run_ai_notes(&app, &id, &instruction);
             *app.ai_job.lock() = None;
             app.emit_status();
         })
@@ -2339,7 +2572,8 @@ fn start_ai_notes(app: &AppRef, id: String) -> Result<(), String> {
     Ok(())
 }
 
-fn run_ai_notes(app: &AppRef, id: &str) {
+/// `instruction`: Regenerate's "how" for this time only ("" = none).
+fn run_ai_notes(app: &AppRef, id: &str, instruction: &str) {
     let h = app.handle.clone();
     let send = |state: &str, detail: &str, progress: f64, text: &str| {
         emit_logged(&h, "ai-notes", json!({"id": id, "state": state, "detail": detail, "progress": progress, "text": text}));
@@ -2382,7 +2616,8 @@ fn run_ai_notes(app: &AppRef, id: &str) {
         let mut on_text = |t: &str| send("writing", "Writing…", 0.0, t);
         let names = crate::vocabulary::Vocabulary::new(&app.config.lock().vocabulary).names();
         let prompt = app.config.lock().ai_prompt.clone();
-        let text = llm::write_notes(&engine, &input, &lang, &names, &prompt, &mut progress, &mut on_text, &app.ai_cancel)?;
+        let spec = llm::NotesSpec { lang, names, prompt, instruction: instruction.to_string(), mine: m.notes.clone() };
+        let text = llm::write_notes(&engine, &input, &spec, &mut progress, &mut on_text, &app.ai_cancel)?;
         // Nothing written (an empty answer): the notes there stay.
         anyhow::ensure!(!text.trim().is_empty(), "the model wrote no notes; the notes did not change");
         Ok((text, label))
@@ -2497,6 +2732,144 @@ fn run_chat(app: &AppRef, id: &str, question: &str) {
         }
         Err(_) if app.ai_cancel.load(Ordering::SeqCst) => send("cancelled", "Stopped", 0.0, ""),
         Err(e) => send("error", &format!("{e:#}"), 0.0, ""),
+    }
+}
+
+// ------------------------------------------------------------------ Calendar
+fn calendar_error_text(e: crate::calendar::LinkError) -> &'static str {
+    use crate::calendar::LinkError::*;
+    match e {
+        BadUrl => "This is not a calendar address: it must start with https:// or webcal://.",
+        Unreachable => "The calendar did not answer. Check the address and the network.",
+        NotCalendar => "The address does not give a calendar (maybe a sign-in page). Use the private iCal address.",
+        PublicAddress => "This is Google's public address: use \"Secret address in iCal format\" instead.",
+    }
+}
+
+/// Link a pasted iCal address: checked first (it must give a calendar); returns its name.
+#[tauri::command]
+async fn calendar_link(app: State<'_, AppRef>, url: String) -> Result<String, String> {
+    let app = app.inner().clone();
+    let linked = tauri::async_runtime::spawn_blocking(move || crate::calendar::connect(&url)).await.map_err(|e| e.to_string())?.map_err(|e| calendar_error_text(e).to_string())?;
+    {
+        let mut cfg = app.config.lock();
+        cfg.calendar_url = linked.url.to_string();
+        cfg.calendar_name = linked.name.clone();
+        cfg.save().map_err(|e| e.to_string())?;
+    }
+    *app.calendar.lock() = None; // read at once by the calendar thread
+    *app.calendar_error.lock() = String::new();
+    let a2 = app.clone();
+    let url = linked.url.clone();
+    std::thread::spawn(move || {
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
+        let mut f = crate::calendar::Feed::new(url.clone());
+        let r = f.refresh(now);
+        if a2.config.lock().calendar_url == url.as_str() {
+            *a2.calendar_error.lock() = r.err().map(|e| calendar_error_text(e).to_string()).unwrap_or_default();
+            *a2.calendar.lock() = Some(f);
+        }
+        a2.emit_status();
+    });
+    app.emit_status();
+    Ok(linked.name)
+}
+
+#[tauri::command]
+fn calendar_unlink(app: State<'_, AppRef>) -> Result<(), String> {
+    {
+        let mut cfg = app.config.lock();
+        cfg.calendar_url.clear();
+        cfg.calendar_name.clear();
+        cfg.save().map_err(|e| e.to_string())?;
+    }
+    *app.calendar.lock() = None;
+    app.calendar_error.lock().clear();
+    app.emit_status();
+    Ok(())
+}
+
+/// The linked calendar's events that are not over yet, up to the end of tomorrow.
+#[tauri::command]
+fn calendar_events(app: State<'_, AppRef>) -> Vec<crate::calendar::Event> {
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
+    let until = crate::calendar::window(now).0 + 3 * 86_400; // yesterday's start + 3 days
+    app.calendar.lock().as_ref().map(|f| f.events.iter().filter(|e| e.end > now && e.start < until).cloned().collect()).unwrap_or_default()
+}
+
+// ------------------------------------------------------------------ Ask across meetings
+#[derive(Deserialize)]
+struct Turn {
+    role: String,
+    text: String,
+}
+
+/// Ask a question across all meetings (the Ask page; in the background, "library-answer" events
+/// follow it). The conversation lives in the page: it sends the earlier turns.
+#[tauri::command]
+fn library_ask(app: State<'_, AppRef>, question: String, history: Vec<Turn>, utc_offset_minutes: Option<i32>) -> Result<(), String> {
+    let app = app.inner().clone();
+    let question = question.trim().to_string();
+    if question.is_empty() {
+        return Err("Type a question.".into());
+    }
+    if question.chars().count() > meeting::MAX_QUESTION {
+        return Err(format!("The question is too long (over {} characters).", meeting::MAX_QUESTION));
+    }
+    let history: Vec<(String, String)> = history.into_iter().filter(|t| t.role == "user" || t.role == "assistant").map(|t| (t.role, t.text)).collect();
+    let offset = utc_offset_minutes.unwrap_or(0).clamp(-14 * 60, 14 * 60);
+    let busy = llm::Busy::take(&app.ai_busy).ok_or_else(|| ai_busy_reason(&app, ""))?;
+    app.ai_cancel.store(false, Ordering::SeqCst);
+    std::thread::Builder::new()
+        .name("library".into())
+        .spawn(move || {
+            let _busy = busy;
+            run_library(&app, &question, &history, offset);
+            app.emit_status();
+        })
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn run_library(app: &AppRef, question: &str, history: &[(String, String)], offset: i32) {
+    let h = app.handle.clone();
+    let send = |state: &str, detail: &str, text: &str, sources: &[crate::library::Source]| {
+        emit_logged(&h, "library-answer", json!({"state": state, "detail": detail, "text": text, "sources": sources}));
+    };
+    send("preparing", "Looking through your meetings…", "", &[]);
+    let mut sources = Vec::new();
+    let result = (|| -> anyhow::Result<String> {
+        let dir = meeting::dir();
+        let meetings: Vec<meeting::Meeting> = meeting::list_in(&dir).into_iter().filter_map(|s| meeting::load_in(&dir, &s.id).ok()).collect();
+        anyhow::ensure!(!meetings.is_empty(), "there are no meetings yet: record one first");
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
+        let (_, found) = crate::library::retrieve(&meetings, question, now, offset);
+        sources = found;
+        let names = crate::vocabulary::Vocabulary::new(&app.config.lock().vocabulary).names();
+        let system = crate::library::prompt(&sources, offset, &names);
+        send("preparing", &format!("Found {} part{} of your meetings. Getting the model ready…", sources.len(), if sources.len() == 1 { "" } else { "s" }), "", &sources);
+        let engine = ai_engine(app)?;
+        let mut last = Instant::now() - Duration::from_secs(1);
+        let mut progress = |what: &str, done: u64, total: u64| match what {
+            "starting" => send("preparing", "Starting the model…", "", &sources),
+            "thinking" => send("preparing", "Thinking…", "", &sources),
+            "writing" | "checking the download" => {}
+            what if last.elapsed() >= Duration::from_millis(250) || done == total => {
+                last = Instant::now();
+                let p = if total > 0 { done as f64 / total as f64 } else { 0.0 };
+                send("preparing", &format!("Downloading {what} (once)… {}% of {} MB", (p * 100.0) as u32, total / 1_000_000), "", &sources);
+            }
+            _ => {}
+        };
+        let count = sources.len();
+        let mut on_text = |t: &str| send("writing", "", &crate::library::tidy_citations(t, count), &sources);
+        let text = llm::ask_library(&engine, &system, history, question, &mut progress, &mut on_text, &app.ai_cancel)?;
+        Ok(crate::library::tidy_citations(&text, count))
+    })();
+    match result {
+        Ok(text) => send("done", "", &text, &sources),
+        Err(_) if app.ai_cancel.load(Ordering::SeqCst) => send("cancelled", "Stopped", "", &sources),
+        Err(e) => send("error", &format!("{e:#}"), "", &sources),
     }
 }
 
@@ -3000,6 +3373,8 @@ pub fn run() {
             meeting_update,
             meeting_delete,
             meeting_video_url,
+            meeting_audio_url,
+            meeting_retranscribe,
             test_event,
             screen_forget,
             screen_check,
@@ -3009,6 +3384,10 @@ pub fn run() {
             meeting_ai_notes,
             ai_notes_cancel,
             meeting_chat,
+            library_ask,
+            calendar_link,
+            calendar_unlink,
+            calendar_events,
             meeting_chat_clear,
             app_quit
         ])
@@ -3076,6 +3455,8 @@ pub fn run() {
                 overlay_hovered: AtomicBool::new(false),
                 export_edits: Mutex::new(Default::default()),
                 voices_working: Mutex::new(Default::default()),
+                retranscribing: Mutex::new(None),
+                retranscribe_cancel: Arc::new(AtomicBool::new(false)),
                 started: Instant::now(),
                 overlay_ready: AtomicBool::new(false),
                 overlay_pending: AtomicBool::new(false),
@@ -3103,6 +3484,10 @@ pub fn run() {
                 pasting: AtomicBool::new(false),
                 call_offer: Mutex::new(None),
                 call_session: Mutex::new(None),
+                calls_now: Mutex::new(Vec::new()),
+                calendar: Mutex::new(None),
+                calendar_error: Mutex::new(String::new()),
+                start_event: Mutex::new(None),
                 calls_seen: Mutex::new(Vec::new()),
                 overlay_wants: [AtomicBool::new(false), AtomicBool::new(false)],
                 overlay_capsule: AtomicBool::new(false),
@@ -3119,6 +3504,7 @@ pub fn run() {
             });
             #[cfg(target_os = "linux")]
             app.watch_calls();
+            app.watch_calendar();
             // A model runner that a crash left behind holds ~3 GB: stop it.
             std::thread::spawn(llm::stop_stale);
             // Every microphone open (dictation, meetings, the test) asks which one, now.

@@ -89,6 +89,18 @@ pub struct Config {
     pub avoid_bluetooth_mic: bool,
     /// Offer to record when a call app uses the microphone (Linux).
     pub call_detection: bool,
+    /// Stop a meeting by itself when the call it records ends (its app leaves the microphone).
+    pub auto_stop: bool,
+    /// Name the others from the call app's window (Zoom, Teams, Meet), read through the
+    /// accessibility bus while a meeting records (Linux; src/callnames.rs).
+    pub call_names: bool,
+    /// Keep each meeting's audio (one Opus file next to it, about 16 MB an hour): to listen
+    /// again, and to transcribe it again with another model. Off by default.
+    pub keep_audio: bool,
+    /// Settings → Meetings → Calendar: the private iCal address (a secret: never sent to the
+    /// page, never logged), and its name. "" = none.
+    pub calendar_url: String,
+    pub calendar_name: String,
     /// Per call ("zoom", "google-meet", "browser:firefox"): ask | always | never. Missing = ask.
     /// (A table: the toml writer puts it after the plain values.)
     pub call_policies: std::collections::BTreeMap<String, String>,
@@ -151,6 +163,11 @@ impl Default for Config {
             microphone: String::new(),
             avoid_bluetooth_mic: true,
             call_detection: true,
+            auto_stop: true,
+            call_names: true,
+            keep_audio: false,
+            calendar_url: String::new(),
+            calendar_name: String::new(),
             call_policies: Default::default(),
             ai_engine: "builtin".into(),
             ai_builtin_model: crate::llm::DEFAULT_MODEL.into(),

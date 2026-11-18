@@ -107,7 +107,7 @@ fn openrouter_writes_the_notes_and_answers() {
     let input = std::fs::read_to_string(root().join("bench/summary/meeting-es.md")).unwrap();
     let t = Instant::now();
     let (mut first, mut updates, mut steps) = (None, 0, Vec::new());
-    let notes = llm::write_notes(&engine, &input, "Spanish", &["Martín".into()], "", &mut |w, _, _| steps.push(w.to_string()), &mut |_| {
+    let notes = llm::write_notes(&engine, &input, &llm::NotesSpec { lang: "Spanish".into(), names: vec!["Martín".into()], ..Default::default() }, &mut |w, _, _| steps.push(w.to_string()), &mut |_| {
         first.get_or_insert_with(|| t.elapsed());
         updates += 1;
     }, &AtomicBool::new(false))
@@ -130,7 +130,7 @@ fn openrouter_writes_the_notes_and_answers() {
 fn openrouter_refuses_a_wrong_key_clearly() {
     let mut a = openrouter(&chat_model());
     a.key = "sk-or-v1-wrong".into();
-    let e = llm::write_notes(&llm::Engine::Server { access: a.clone() }, "**Me** (00:01): Hola.", "Spanish", &[], "", &mut |_, _, _| {}, &mut |_| {}, &AtomicBool::new(false)).unwrap_err();
+    let e = llm::write_notes(&llm::Engine::Server { access: a.clone() }, "**Me** (00:01): Hola.", &llm::NotesSpec { lang: "Spanish".into(), ..Default::default() }, &mut |_, _, _| {}, &mut |_| {}, &AtomicBool::new(false)).unwrap_err();
     eprintln!("notes: {e}");
     assert!(e.to_string().starts_with("OpenRouter refused the API key"), "{e}");
     let speech = providers::speech_access(&format!("cloud:openrouter/{}", speech_model()), &BTreeMap::from([("openrouter".to_string(), "sk-or-v1-wrong".to_string())]), "").unwrap();

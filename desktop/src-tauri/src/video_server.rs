@@ -69,8 +69,12 @@ pub fn url(file: &str) -> anyhow::Result<String> {
     Ok(SERVER.get().expect("set above").url(file))
 }
 
-/// A video's name ("m-<digits>-<n>.webm" or ".mp4", nothing else: no path) → its type.
+/// A video's name ("m-<digits>-<n>.webm" or ".mp4", nothing else: no path) → its type. A
+/// meeting's kept audio ("m-<digits>.opus") is served too.
 fn video_name(name: &str) -> Option<&'static str> {
+    if crate::meeting::is_audio_file(name) {
+        return Some("audio/ogg");
+    }
     match crate::screen::video_file(name)?.1 {
         crate::screen::Container::Webm => Some("video/webm"),
         crate::screen::Container::Mp4 => Some("video/mp4"),

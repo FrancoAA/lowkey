@@ -24,6 +24,13 @@ export class Dictation {
 
   constructor(private waveform: Waveform, private cb: DictationCallbacks) {
     void (async () => {
+      // In a plain browser (the demo, the page tests) there is no app to dictate with.
+      if (!("__TAURI_INTERNALS__" in window)) {
+        this.invoke = async () => {
+          throw new Error("Dictation works in the app only.");
+        };
+        return;
+      }
       const core = await import("@tauri-apps/api/core");
       this.invoke = core.invoke;
       const { listen } = await import("@tauri-apps/api/event");

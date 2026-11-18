@@ -99,6 +99,17 @@ pub struct Meeting {
     /// one for each time the screen was recorded.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub videos: Vec<Video>,
+    /// "Me" lines found to be an echo of the others from the speakers (src/echo.rs): out of the
+    /// transcript, kept here and never deleted.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub echoes: Vec<Line>,
+    /// The people invited to the calendar event it was recorded for (src/calendar.rs).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub attendees: Vec<crate::calendar::Person>,
+    /// Settings → Meetings → Keep the audio: its file next to the meeting ("<id>.opus": Me on
+    /// the left, Them on the right; src/recording.rs). "" = not kept.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub audio: String,
 }
 
 /// A meeting's screen video (src/screen.rs), a file next to the meeting's JSON.
@@ -246,6 +257,8 @@ pub fn load_in(dir: &Path, id: &str) -> anyhow::Result<Meeting> {
 pub fn delete_in(dir: &Path, id: &str) -> anyhow::Result<()> {
     let _one = ONE_EDIT.lock();
     std::fs::remove_file(file_in(dir, id)?).map_err(|e| anyhow::anyhow!("meeting {id}: {e}"))?;
+    let _ = std::fs::remove_file(call_samples_path(dir, id));
+    let _ = std::fs::remove_file(audio_path(dir, id));
     crate::screen::delete_files(dir, id); // its screen video
     Ok(())
 }
@@ -517,74 +530,32 @@ impl Chunker {
 }
 
 // ------------------------------------------------------------------ echo
-/// Chinese and Japanese have no spaces: each character counts as a word there.
-fn no_spaces_script(c: char) -> bool {
-    matches!(c as u32, 0x3040..=0x30FF | 0x3400..=0x4DBF | 0x4E00..=0x9FFF | 0xF900..=0xFAFF)
-}
-
-fn words(text: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    for w in text.split_whitespace() {
-        let mut cur = String::new();
-        for c in w.chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase) {
-            if no_spaces_script(c) {
-                if !cur.is_empty() {
-                    out.push(std::mem::take(&mut cur));
-                }
-                out.push(c.to_string());
-            } else {
-                cur.push(c);
-            }
-        }
-        if !cur.is_empty() {
-            out.push(cur);
-        }
+/// "Me" lines that are an echo of "Them" (src/echo.rs) move to `Meeting::echoes`: only when the
+/// audio has shown that the microphone hears the speakers, and only lines that end after
+/// `since - 30` s (earlier ones were judged already).
+fn take_echoes(doc: &mut Meeting, det: &mut crate::echo::Detector, since: f64) {
+    if !det.present() {
+        return;
     }
-    out
-}
-
-/// Longest common subsequence of two word lists (words in the same order).
-fn common_in_order(a: &[String], b: &[String]) -> usize {
-    let mut row = vec![0usize; b.len() + 1];
-    for x in a {
-        let mut diag = 0;
-        for (j, y) in b.iter().enumerate() {
-            let up = row[j + 1];
-            row[j + 1] = if x == y { diag + 1 } else { up.max(row[j]) };
-            diag = up;
-        }
-    }
-    row[b.len()]
-}
-
-/// Without headphones the microphone also hears the others: their words come back as "Me", at
-/// the same time. A "Me" line of 3+ words is an echo when it lies inside the time of "Them"
-/// lines (1.5 s of slack for the different cuts) and 80% of its words are in them, in order.
-/// So "Me" repeating the others' words after they spoke is kept.
-fn is_echo(me: &Line, them: &[&Line]) -> bool {
-    const SLACK: f64 = 1.5;
-    let mine = words(&me.text);
-    if mine.len() < 3 {
-        return false;
-    }
-    let near: Vec<&&Line> = them.iter().filter(|t| t.start < me.end && me.start < t.end).collect();
-    let (Some(from), Some(to)) = (near.iter().map(|t| t.start).reduce(f64::min), near.iter().map(|t| t.end).reduce(f64::max)) else {
-        return false;
-    };
-    if me.start < from - SLACK || me.end > to + SLACK {
-        return false;
-    }
-    let theirs: Vec<String> = near.iter().flat_map(|t| words(&t.text)).collect();
-    common_in_order(&mine, &theirs) as f64 >= 0.8 * mine.len() as f64
-}
-
-fn drop_echoes(lines: &mut Vec<Line>, since: f64) {
-    let them: Vec<Line> = lines.iter().filter(|l| l.speaker == Speaker::Them && l.end >= since - 30.0).cloned().collect();
+    let them: Vec<Line> = doc.lines.iter().filter(|l| l.speaker == Speaker::Them && l.end >= since - 30.0).cloned().collect();
     if them.is_empty() {
         return;
     }
-    let refs: Vec<&Line> = them.iter().collect();
-    lines.retain(|l| l.speaker != Speaker::Me || l.end < since - 30.0 || !is_echo(l, &refs));
+    let segs: Vec<crate::echo::Seg> = them.iter().map(|l| crate::echo::Seg { start: l.start, end: l.end, text: &l.text }).collect();
+    let mut kept = Vec::with_capacity(doc.lines.len());
+    for l in std::mem::take(&mut doc.lines) {
+        let judged = l.speaker == Speaker::Me && l.end >= since - 30.0;
+        if judged {
+            let over = det.over(l.start, l.end);
+            let at = |s: f64| det.correlated_at(s);
+            if crate::echo::is_echo(crate::echo::Seg { start: l.start, end: l.end, text: &l.text }, &segs, &at, over) {
+                doc.echoes.push(l);
+                continue;
+            }
+        }
+        kept.push(l);
+    }
+    doc.lines = kept;
 }
 
 /// "[Music]", "(applause)": sound labels, not speech.
@@ -735,6 +706,121 @@ pub fn set_people(m: &mut Meeting, turns: &[crate::voices::Turn]) {
     m.transcript_version += 1;
 }
 
+/// Names from the call app (src/callnames.rs) for the others. With voices told apart: each
+/// person gets the name the app showed for most of their speech (an empty name only: a name you
+/// typed stays). Without: each "Them" line the app clearly names gets a person of that name.
+/// Never a name that another person has already. True when something changed.
+pub fn apply_call_names(m: &mut Meeting, samples: &[crate::callnames::Sample]) -> bool {
+    if samples.iter().all(|s| !s.ok || (s.speaking.is_empty() && s.participants.is_empty())) {
+        return false;
+    }
+    let taken = |people: &[String], name: &str| people.iter().any(|p| p.trim().eq_ignore_ascii_case(name.trim()));
+    let mut changed = false;
+    if m.lines.iter().any(|l| l.speaker == Speaker::Them && l.person > 0) {
+        let lines: Vec<(f64, f64, u32)> = m.lines.iter().filter(|l| l.speaker == Speaker::Them).map(|l| (l.start, l.end, l.person)).collect();
+        for (person, name) in crate::callnames::name_people(&lines, samples, &[]) {
+            let i = person as usize - 1;
+            if i < m.people.len() && m.people[i].trim().is_empty() && !taken(&m.people, &name) {
+                m.people[i] = name.chars().take(MAX_NAME).collect();
+                changed = true;
+            }
+        }
+        return changed;
+    }
+    for l in m.lines.iter_mut().filter(|l| l.speaker == Speaker::Them && l.person == 0) {
+        let Some(name) = crate::callnames::name_for(l.start, l.end, samples, &[]) else { continue };
+        let name: String = name.chars().take(MAX_NAME).collect();
+        let n = match m.people.iter().position(|p| p.trim().eq_ignore_ascii_case(name.trim())) {
+            Some(i) => i + 1,
+            None => {
+                m.people.push(name);
+                m.people.len()
+            }
+        };
+        l.person = n as u32;
+        changed = true;
+    }
+    changed
+}
+
+/// The name of a meeting's audio file: "<id>.opus".
+pub fn audio_file(id: &str) -> String {
+    format!("{id}.opus")
+}
+
+pub fn audio_path(dir: &Path, id: &str) -> PathBuf {
+    dir.join(audio_file(id))
+}
+
+/// "m-<digits>.opus": a meeting's audio file name (nothing else: no path).
+pub fn is_audio_file(name: &str) -> bool {
+    name.strip_suffix(".opus").is_some_and(valid_id)
+}
+
+/// Transcribe a meeting again from its kept audio, with the speech model now chosen: both
+/// sources cut at pauses as when it recorded, the echo found again, and the voices told apart
+/// again when `voices` (then the names given are cleared: the people are new). The notes stay
+/// as written (the transcript's version goes up: "Write the summary again" is offered).
+/// `progress`: 0..1 of the audio done.
+pub fn retranscribe(dir: &Path, id: &str, transcribe: &TranscribeFn, voices: bool, progress: &dyn Fn(f64), cancel: &AtomicBool) -> anyhow::Result<Meeting> {
+    let m = load_in(dir, id)?;
+    anyhow::ensure!(!m.audio.is_empty() && audio_path(dir, id).is_file(), "this meeting's audio is not kept");
+    let (me, them) = crate::recording::read(&audio_path(dir, id))?;
+    let total = me.len().max(them.len()).max(1);
+    let mut det = crate::echo::Detector::new();
+    for (track, pcm) in [(crate::echo::Track::Me, &me), (crate::echo::Track::Them, &them)] {
+        for (i, block) in pcm.chunks(RATE as usize).enumerate() {
+            det.push(track, i * RATE as usize, block);
+        }
+    }
+    let mut lines: Vec<Line> = Vec::new();
+    let mut done = 0usize;
+    for (who, pcm) in [(Speaker::Me, &me), (Speaker::Them, &them)] {
+        let mut ch = Chunker::default();
+        let mut chunks = Vec::new();
+        for (i, block) in pcm.chunks(RATE as usize / 10).enumerate() {
+            chunks.extend(ch.push(block, i * RATE as usize / 10));
+        }
+        chunks.extend(ch.flush());
+        for c in chunks {
+            anyhow::ensure!(!cancel.load(Ordering::SeqCst), "cancelled");
+            let (start, len) = (c.start, c.pcm.len());
+            let segments = transcribe(c.pcm)?;
+            let (offset, secs) = (start as f64 / RATE as f64, len as f64 / RATE as f64);
+            for seg in segments {
+                let text = seg.text.trim();
+                if text.is_empty() || is_label(text) {
+                    continue;
+                }
+                let a = offset + seg.start.clamp(0.0, secs);
+                lines.push(Line { speaker: who, start: a, end: (offset + seg.end.clamp(0.0, secs)).max(a), text: text.to_string(), person: 0 });
+            }
+            done += len;
+            progress((done as f64 / (2 * total) as f64).min(0.99));
+        }
+    }
+    lines.sort_by(|a, b| a.start.total_cmp(&b.start));
+    let turns = if voices && them.iter().any(|x| x.abs() > 1e-4) { crate::voices::turns(&them).ok() } else { None };
+    edit_in(dir, id, |m| {
+        m.lines = lines;
+        m.echoes.clear();
+        take_echoes(m, &mut det, 0.0);
+        match &turns {
+            Some(t) => set_people(m, t),
+            None => {
+                m.people.clear();
+                m.transcript_version += 1;
+            }
+        }
+    })
+}
+
+/// The call app's readings of a meeting whose voices are told apart later: kept next to it
+/// until then (`<id>.callnames.json`, in the private meetings folder).
+pub fn call_samples_path(dir: &Path, id: &str) -> PathBuf {
+    dir.join(format!("{id}.callnames.json"))
+}
+
 /// What the language model reads: the title, your notes and the transcript (no AI notes).
 /// No date: the app may not know the time zone here, and a wrong date would end up in the notes.
 pub fn model_input(m: &Meeting) -> String {
@@ -779,6 +865,10 @@ pub fn to_markdown_utc(m: &Meeting, parts: Parts) -> String {
 
 fn markdown(m: &Meeting, when: &str, parts: Parts) -> String {
     let mut s = format!("# {}\n\n{when}\n\n", m.title);
+    let invited: Vec<&str> = m.attendees.iter().map(|p| if p.name.trim().is_empty() { p.email.as_deref().unwrap_or("") } else { p.name.trim() }).filter(|n| !n.is_empty()).collect();
+    if !invited.is_empty() {
+        s += &format!("Invited: {}\n\n", invited.join(", "));
+    }
     if parts.ai_notes && !m.ai_notes.trim().is_empty() {
         // The model's own "## …" headings go one level down, under this one.
         let body: String = m.ai_notes.trim().lines().map(|l| if l.starts_with('#') { format!("#{l}\n") } else { format!("{l}\n") }).collect();
@@ -874,6 +964,10 @@ struct Inner {
     tape: Mutex<Option<crate::voices::Tape>>,
     /// See `Live::screen`.
     screen: Mutex<Screen>,
+    /// Does the microphone hear the speakers? (src/echo.rs)
+    echo: Mutex<crate::echo::Detector>,
+    /// Keep the audio: both sources into one file, at the transcript's positions.
+    recorder: Mutex<Option<crate::recording::Writer>>,
 }
 
 /// More pieces than this waiting: the model is slower than the speech.
@@ -890,6 +984,18 @@ impl Inner {
             let mut c = self.chunkers[who.index()].lock();
             (c.position_for(at), c.push(block, at))
         };
+        let track = if who == Speaker::Me { crate::echo::Track::Me } else { crate::echo::Track::Them };
+        self.echo.lock().push(track, pos, block);
+        let mut rec = self.recorder.lock();
+        if let Some(r) = rec.as_mut() {
+            let ch = if who == Speaker::Me { crate::recording::Channel::Me } else { crate::recording::Channel::Them };
+            if let Err(e) = r.write_at(ch, block, pos) {
+                // What is written plays up to here; the rest of the meeting is not kept.
+                *rec = None;
+                drop(rec);
+                self.notice(format!("The audio is not kept from here on: {e:#}."));
+            }
+        }
         if who == Speaker::Them {
             // At the transcript's own position: the voices' times are the lines' times.
             let mut tape = self.tape.lock();
@@ -965,7 +1071,7 @@ impl Inner {
             doc.lines.insert(at, line);
         }
         if first < f64::MAX {
-            drop_echoes(&mut doc.lines, first);
+            take_echoes(&mut doc, &mut self.echo.lock(), first);
         }
     }
 
@@ -1017,6 +1123,9 @@ pub struct Session {
     video_stop: Mutex<()>,
     /// Screen videos started in this meeting: the next one's number (never the same twice).
     videos_started: AtomicUsize,
+    /// Names from the call app (src/callnames.rs): its readings while it records, and after Stop.
+    call_watch: Mutex<Option<crate::callnames::Watcher>>,
+    call_samples: Mutex<Vec<crate::callnames::Sample>>,
 }
 
 impl Session {
@@ -1041,6 +1150,8 @@ impl Session {
             saving: Mutex::new(()),
             tape: Mutex::new(None),
             screen: Mutex::new(Screen::Off),
+            echo: Mutex::new(crate::echo::Detector::new()),
+            recorder: Mutex::new(None),
         });
         let w = inner.clone();
         let worker = std::thread::Builder::new().name("meeting".into()).spawn(move || {
@@ -1065,11 +1176,33 @@ impl Session {
             video: Mutex::new(None),
             video_stop: Mutex::new(()),
             videos_started: AtomicUsize::new(0),
+            call_watch: Mutex::new(None),
+            call_samples: Mutex::new(Vec::new()),
         }))
     }
 
     pub fn id(&self) -> String {
         self.inner.doc.lock().id.clone()
+    }
+
+    /// Read the call app's window while it records, for the others' names (call before
+    /// `open_sources`, or right after). `hint`: the call's key (calls.rs), None: any call app.
+    pub fn watch_call(&self, hint: Option<&str>) {
+        *self.call_watch.lock() = Some(crate::callnames::Watcher::start(self.inner.clock, hint));
+    }
+
+    /// Keep the meeting's audio in the meetings folder (call before `open_sources`).
+    pub fn keep_audio(&self) -> anyhow::Result<()> {
+        let mut doc = self.inner.doc.lock();
+        let w = crate::recording::Writer::create(&audio_path(&self.inner.dir, &doc.id))?;
+        doc.audio = audio_file(&doc.id);
+        *self.inner.recorder.lock() = Some(w);
+        Ok(())
+    }
+
+    /// After `finish`: what the call app showed (empty when it was not read).
+    pub fn call_samples(&self) -> Vec<crate::callnames::Sample> {
+        std::mem::take(&mut *self.call_samples.lock())
     }
 
     /// Keep the computer's sound in `path` until Stop, to tell the voices apart (call before
@@ -1316,12 +1449,21 @@ impl Session {
 
     fn stop_sources(&self) {
         *self.inner.ended.lock() = Some(self.inner.clock.elapsed().as_secs_f64());
+        if let Some(w) = self.call_watch.lock().take() {
+            *self.call_samples.lock() = w.stop();
+        }
         // The mic's stop sends its last block to the tap; then the rest of each source goes out.
         if let Some(mut m) = self.mic.lock().take() {
             m.stop();
         }
         if let Some(mut s) = self.system.lock().take() {
             s.stop();
+        }
+        // Both sources have stopped: the last frames, and the file's end.
+        if let Some(r) = self.inner.recorder.lock().take() {
+            if let Err(e) = r.finish() {
+                self.inner.notice(format!("The end of the audio was not saved: {e:#}."));
+            }
         }
         self.stop_video(); // (waits for a Stop screen on its way)
         *self.inner.screen.lock() = Screen::Off; // a picker's answer after this is discarded (`attach_video`)
@@ -1347,6 +1489,9 @@ impl Session {
             let mut doc = self.inner.doc.lock();
             doc.state = "done".into();
             doc.duration = elapsed;
+            // The sweep: live, a "Me" line was checked only against the lines in by then, and
+            // before the room's echo was known.
+            take_echoes(&mut doc, &mut self.inner.echo.lock(), 0.0);
         }
         *self.inner.state.lock() = "done";
         if let Some(t) = self.inner.tape.lock().take() {
@@ -1649,28 +1794,81 @@ mod tests {
     }
 
     #[test]
-    fn echoes_of_the_others_are_dropped_from_me() {
-        let them = line(Speaker::Them, 10.0, 14.0, "We should ship the new version on Friday.");
-        let echo = line(Speaker::Me, 10.5, 14.2, "we should ship the new version friday");
+    fn the_kept_audio_plays_back_and_transcribes_again() {
+        let dir = temp("audio");
+        let emit: EmitFn = Arc::new(|_| {});
+        let first: TranscribeFn = Arc::new(|_| Ok(vec![Segment { start: 0.2, end: 1.0, text: "first try".into() }]));
+        let doc = Meeting::new("Kept", "small");
+        let id = doc.id.clone();
+        let s = Session::new(dir.clone(), doc, first, emit).unwrap();
+        s.keep_audio().unwrap();
+        s.inner.feed(Speaker::Them, &[tone(3.0), quiet(1.5)].concat(), 0);
+        s.inner.feed(Speaker::Me, &[quiet(5.0), tone(3.0), quiet(1.5)].concat(), 0);
+        let m = s.finish();
+        assert_eq!(m.audio, audio_file(&id));
+        assert!(is_audio_file(&m.audio) && !is_audio_file("../x.opus") && !is_audio_file("m-1-1.webm"));
+        let (me, them) = crate::recording::read(&audio_path(&dir, &id)).unwrap();
+        assert!(me.len() >= 9 * R && them.len() >= 4 * R, "both tracks kept: {} {}", me.len(), them.len());
+        // Again, with another "model": the lines are new, on both sides, in time order.
+        let again: TranscribeFn = Arc::new(|_| Ok(vec![Segment { start: 0.2, end: 1.0, text: "second try".into() }]));
+        let m = retranscribe(&dir, &id, &again, false, &|_| {}, &AtomicBool::new(false)).unwrap();
+        assert!(m.lines.iter().all(|l| l.text == "second try"));
+        assert!(m.lines.iter().any(|l| l.speaker == Speaker::Me) && m.lines.iter().any(|l| l.speaker == Speaker::Them));
+        assert!(m.lines.windows(2).all(|w| w[0].start <= w[1].start));
+        assert_eq!(m.transcript_version, 1);
+        delete_in(&dir, &id).unwrap();
+        assert!(!audio_path(&dir, &id).exists(), "deleted with the meeting");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn names_from_the_call_app_fill_only_empty_places() {
+        use crate::callnames::Sample;
+        let talking = |at: f64, who: &str| Sample { at, speaking: vec![who.into()], participants: vec!["Kara".into(), "Omar".into(), "Me Myself".into()], me: Some("Me Myself".into()), ok: true };
+        let mut samples = Vec::new();
+        for i in 0..20 {
+            samples.push(talking(i as f64 * 0.5, "Kara"));
+            samples.push(talking(20.0 + i as f64 * 0.5, "Omar"));
+        }
+        samples.sort_by(|a, b| a.at.total_cmp(&b.at));
+        // No voices: each clearly named line gets a person of that name.
+        let mut m = Meeting { lines: vec![line(Speaker::Them, 1.0, 8.0, "hello"), line(Speaker::Them, 21.0, 28.0, "hi"), line(Speaker::Me, 10.0, 12.0, "yes")], ..Default::default() };
+        assert!(apply_call_names(&mut m, &samples));
+        assert_eq!(m.people, vec!["Kara".to_string(), "Omar".to_string()]);
+        assert_eq!((m.lines[0].person, m.lines[1].person, m.lines[2].person), (1, 2, 0));
+        // With voices: only an empty name is filled.
+        let mut m = Meeting { lines: vec![line(Speaker::Them, 1.0, 8.0, "hello"), line(Speaker::Them, 21.0, 28.0, "hi")], people: vec![String::new(), "Mine".into()], ..Default::default() };
+        m.lines[0].person = 1;
+        m.lines[1].person = 2;
+        assert!(apply_call_names(&mut m, &samples));
+        assert_eq!(m.people, vec!["Kara".to_string(), "Mine".to_string()]);
+        // Nothing read: nothing changes.
+        assert!(!apply_call_names(&mut m, &[Sample::unknown(1.0)]));
+    }
+
+    #[test]
+    fn echoes_move_out_only_when_the_audio_shows_them() {
+        let them = line(Speaker::Them, 10.0, 14.0, "We should ship the new version on Friday after the review.");
+        let echo = line(Speaker::Me, 10.5, 14.2, "we should ship the new version friday after review");
         let mine = line(Speaker::Me, 15.0, 17.0, "I think Monday is better for us.");
-        let later = line(Speaker::Me, 40.0, 44.0, "we should ship the new version on Friday");
-        let short = line(Speaker::Me, 11.0, 11.5, "the version");
-        let mut lines = vec![them.clone(), echo, mine.clone(), short.clone(), later.clone()];
-        drop_echoes(&mut lines, 0.0);
-        assert_eq!(lines, vec![them, mine, short, later], "the echo goes; own words, short words and later repeats stay");
-        // Repeating a part of what they said, after they spoke (with headphones): kept.
-        let them = line(Speaker::Them, 10.0, 14.0, "we should do that tomorrow at noon and then review");
-        let repeat = line(Speaker::Me, 16.0, 18.0, "we should do that at noon");
-        let mut lines = vec![them.clone(), repeat.clone()];
-        drop_echoes(&mut lines, 0.0);
-        assert_eq!(lines.len(), 2, "said after them: not an echo");
-        // The same words in another order are not an echo either.
-        let mixed = line(Speaker::Me, 10.5, 13.5, "review then noon at tomorrow that do should we");
-        assert!(!is_echo(&mixed, &[&them]));
-        // Chinese: each character is a word, so the rule works without spaces.
-        let zh_them = line(Speaker::Them, 0.0, 3.0, "我们明天中午发布新版本");
-        let zh_echo = line(Speaker::Me, 0.2, 3.1, "我们明天中午发布新版");
-        assert!(is_echo(&zh_echo, &[&zh_them]));
+        let mut m = Meeting { lines: vec![them.clone(), echo.clone(), mine.clone()], ..Default::default() };
+        // Headphones (no leak heard): nothing moves, even a copy word for word.
+        let mut det = crate::echo::Detector::new();
+        take_echoes(&mut m, &mut det, 0.0);
+        assert_eq!(m.lines.len(), 3);
+        assert!(m.echoes.is_empty());
+        // A leak from the speakers: the copy moves to `echoes`; your own words stay.
+        let r = RATE as usize;
+        let theirs: Vec<f32> = (0..24 * r).map(|i| if (i as f64 / r as f64) % 0.5 < 0.3 { 0.3 * (i as f32 / 7.0).sin() * ((i % 97) as f32 / 97.0 + 0.2) } else { 0.001 }).collect();
+        let leak: Vec<f32> = (0..theirs.len()).map(|i| if i >= 960 { 0.3 * theirs[i - 960] } else { 0.0 }).collect();
+        for i in (0..theirs.len()).step_by(1600) {
+            det.push(crate::echo::Track::Them, i, &theirs[i..(i + 1600).min(theirs.len())]);
+            det.push(crate::echo::Track::Me, i, &leak[i..(i + 1600).min(leak.len())]);
+        }
+        assert!(det.present());
+        take_echoes(&mut m, &mut det, 0.0);
+        assert_eq!(m.lines, vec![them, mine]);
+        assert_eq!(m.echoes, vec![echo]);
     }
 
     #[test]
