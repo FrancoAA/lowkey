@@ -335,11 +335,18 @@ impl Engines {
         };
         let _one_at_a_time = self.run_lock.lock();
         let vocab = self.vocabulary.lock().clone();
-        let fixed_sink = vocabulary_sink(&vocab, sink);
+        let prompt_text = vocab.whisper_prompt();
+        // Parakeet has no prompt, but it can write a stock line on noise too.
+        let check = crate::hallucination::Check::new(match model {
+            Loaded::Whisper(_) => prompt_text.as_deref(),
+            #[cfg(parakeet)]
+            Loaded::Parakeet(_) => None,
+        }, &pcm, audio::RATE);
+        let fixed_sink = vocabulary_sink(&vocab, checked_sink(&check, sink));
         let mut out = match model {
             Loaded::Whisper(ctx) => {
-                let prompt: Vec<std::ffi::c_int> = match vocab.whisper_prompt() {
-                    Some(p) => self.whisper_tokens(&ctx).tokenize(&p, 220),
+                let prompt: Vec<std::ffi::c_int> = match &prompt_text {
+                    Some(p) => self.whisper_tokens(&ctx).tokenize(p, 220),
                     None => Vec::new(),
                 };
                 run_whisper_cpp(&ctx, &pcm, input.language.as_deref(), &prompt, &fixed_sink)
@@ -348,6 +355,7 @@ impl Engines {
             #[cfg(parakeet)]
             Loaded::Parakeet(rec) => run_parakeet(&rec, &pcm, &fixed_sink),
         }?;
+        out.segments = out.segments.into_iter().filter_map(|s| check.keep(s)).collect();
         for seg in &mut out.segments {
             seg.text = vocab.apply(&seg.text);
         }
@@ -369,7 +377,10 @@ impl Engines {
         let (prompt, terms) = (vocab.whisper_prompt(), vocab.names());
         let hints = crate::cloud_stt::Hints { language: input.language.as_deref(), prompt: prompt.as_deref(), terms: &terms };
         let vad = vad_model();
-        let mut out = crate::cloud_stt::transcribe(&access, &pcm, &hints, vad.as_deref(), &vocabulary_sink(&vocab, sink))?;
+        // The provider gets the same prompt, and its Whisper can read it back too.
+        let check = crate::hallucination::Check::new(prompt.as_deref(), &pcm, audio::RATE);
+        let mut out = crate::cloud_stt::transcribe(&access, &pcm, &hints, vad.as_deref(), &vocabulary_sink(&vocab, checked_sink(&check, sink)))?;
+        out.segments = out.segments.into_iter().filter_map(|s| check.keep(s)).collect();
         for seg in &mut out.segments {
             seg.text = vocab.apply(&seg.text);
         }
@@ -392,6 +403,20 @@ fn vad_model() -> Option<PathBuf> {
         }
     }
     Some(vad)
+}
+
+/// Segments that Whisper made up never reach the sink (src/hallucination.rs), so the live
+/// text matches the result.
+fn checked_sink(check: &crate::hallucination::Check, sink: Sink) -> Sink {
+    let check = check.clone();
+    Arc::new(move |ev| match ev {
+        EngineEvent::Segment(seg) => {
+            if let Some(seg) = check.keep(seg) {
+                sink(EngineEvent::Segment(seg))
+            }
+        }
+        other => sink(other),
+    })
 }
 
 /// Segments go to the sink as they come: fixed there too, so live text matches the result.

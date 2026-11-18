@@ -282,8 +282,17 @@ Record a call or a talk, as text next to your notes (Linux for now). No bot join
   3 s off it, the strip says the call ended. Who uses the microphone comes from PipeWire
   (`pactl`), a browser's page from its Hyprland window title. (Idea from
   [Hex](https://github.com/anomalyco/hex), MIT.)
-- Use headphones. Without them the microphone also hears the others; the app removes a "Me"
-  line when most of its words are in a "Them" line at the same time.
+- Use headphones. Without them the microphone also hears the others from the speakers. The app
+  finds this in the sound itself: the microphone follows the computer's sound a little late, at
+  the same delay each time. Only then does it take a "Me" line out of the transcript, when its
+  words are in a "Them" line said at the same time and the microphone was no louder than the
+  leak. Your own short replies ("yes", "right") stay. The lines taken out are kept in the
+  meeting's file (`echoes`), not deleted. (Idea and rules from
+  [Yogurt](https://github.com/FrigadeHQ/yogurt), MIT.)
+- Lines that Whisper makes up are dropped: the Vocabulary's prompt read back ("Glossary:
+  Lisandro…"), the prompt's names put in front of speech as a label, and stock lines such as
+  "Thanks for watching!" where the sound was not clearly speech. This works for dictation and
+  files too. (From Yogurt, MIT.)
 - Tell the others that you record. Meetings are saved as JSON in
   `~/.local/share/lowkey/meetings` (a private folder). The audio is not kept (with Who is
   speaking on, the computer's sound only until the voices are told apart after Stop). The

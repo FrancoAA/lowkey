@@ -99,6 +99,10 @@ pub struct Meeting {
     /// one for each time the screen was recorded.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub videos: Vec<Video>,
+    /// "Me" lines found to be an echo of the others from the speakers (src/echo.rs): out of the
+    /// transcript, kept here and never deleted.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub echoes: Vec<Line>,
 }
 
 /// A meeting's screen video (src/screen.rs), a file next to the meeting's JSON.
@@ -517,74 +521,32 @@ impl Chunker {
 }
 
 // ------------------------------------------------------------------ echo
-/// Chinese and Japanese have no spaces: each character counts as a word there.
-fn no_spaces_script(c: char) -> bool {
-    matches!(c as u32, 0x3040..=0x30FF | 0x3400..=0x4DBF | 0x4E00..=0x9FFF | 0xF900..=0xFAFF)
-}
-
-fn words(text: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    for w in text.split_whitespace() {
-        let mut cur = String::new();
-        for c in w.chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase) {
-            if no_spaces_script(c) {
-                if !cur.is_empty() {
-                    out.push(std::mem::take(&mut cur));
-                }
-                out.push(c.to_string());
-            } else {
-                cur.push(c);
-            }
-        }
-        if !cur.is_empty() {
-            out.push(cur);
-        }
+/// "Me" lines that are an echo of "Them" (src/echo.rs) move to `Meeting::echoes`: only when the
+/// audio has shown that the microphone hears the speakers, and only lines that end after
+/// `since - 30` s (earlier ones were judged already).
+fn take_echoes(doc: &mut Meeting, det: &mut crate::echo::Detector, since: f64) {
+    if !det.present() {
+        return;
     }
-    out
-}
-
-/// Longest common subsequence of two word lists (words in the same order).
-fn common_in_order(a: &[String], b: &[String]) -> usize {
-    let mut row = vec![0usize; b.len() + 1];
-    for x in a {
-        let mut diag = 0;
-        for (j, y) in b.iter().enumerate() {
-            let up = row[j + 1];
-            row[j + 1] = if x == y { diag + 1 } else { up.max(row[j]) };
-            diag = up;
-        }
-    }
-    row[b.len()]
-}
-
-/// Without headphones the microphone also hears the others: their words come back as "Me", at
-/// the same time. A "Me" line of 3+ words is an echo when it lies inside the time of "Them"
-/// lines (1.5 s of slack for the different cuts) and 80% of its words are in them, in order.
-/// So "Me" repeating the others' words after they spoke is kept.
-fn is_echo(me: &Line, them: &[&Line]) -> bool {
-    const SLACK: f64 = 1.5;
-    let mine = words(&me.text);
-    if mine.len() < 3 {
-        return false;
-    }
-    let near: Vec<&&Line> = them.iter().filter(|t| t.start < me.end && me.start < t.end).collect();
-    let (Some(from), Some(to)) = (near.iter().map(|t| t.start).reduce(f64::min), near.iter().map(|t| t.end).reduce(f64::max)) else {
-        return false;
-    };
-    if me.start < from - SLACK || me.end > to + SLACK {
-        return false;
-    }
-    let theirs: Vec<String> = near.iter().flat_map(|t| words(&t.text)).collect();
-    common_in_order(&mine, &theirs) as f64 >= 0.8 * mine.len() as f64
-}
-
-fn drop_echoes(lines: &mut Vec<Line>, since: f64) {
-    let them: Vec<Line> = lines.iter().filter(|l| l.speaker == Speaker::Them && l.end >= since - 30.0).cloned().collect();
+    let them: Vec<Line> = doc.lines.iter().filter(|l| l.speaker == Speaker::Them && l.end >= since - 30.0).cloned().collect();
     if them.is_empty() {
         return;
     }
-    let refs: Vec<&Line> = them.iter().collect();
-    lines.retain(|l| l.speaker != Speaker::Me || l.end < since - 30.0 || !is_echo(l, &refs));
+    let segs: Vec<crate::echo::Seg> = them.iter().map(|l| crate::echo::Seg { start: l.start, end: l.end, text: &l.text }).collect();
+    let mut kept = Vec::with_capacity(doc.lines.len());
+    for l in std::mem::take(&mut doc.lines) {
+        let judged = l.speaker == Speaker::Me && l.end >= since - 30.0;
+        if judged {
+            let over = det.over(l.start, l.end);
+            let at = |s: f64| det.correlated_at(s);
+            if crate::echo::is_echo(crate::echo::Seg { start: l.start, end: l.end, text: &l.text }, &segs, &at, over) {
+                doc.echoes.push(l);
+                continue;
+            }
+        }
+        kept.push(l);
+    }
+    doc.lines = kept;
 }
 
 /// "[Music]", "(applause)": sound labels, not speech.
@@ -874,6 +836,8 @@ struct Inner {
     tape: Mutex<Option<crate::voices::Tape>>,
     /// See `Live::screen`.
     screen: Mutex<Screen>,
+    /// Does the microphone hear the speakers? (src/echo.rs)
+    echo: Mutex<crate::echo::Detector>,
 }
 
 /// More pieces than this waiting: the model is slower than the speech.
@@ -890,6 +854,8 @@ impl Inner {
             let mut c = self.chunkers[who.index()].lock();
             (c.position_for(at), c.push(block, at))
         };
+        let track = if who == Speaker::Me { crate::echo::Track::Me } else { crate::echo::Track::Them };
+        self.echo.lock().push(track, pos, block);
         if who == Speaker::Them {
             // At the transcript's own position: the voices' times are the lines' times.
             let mut tape = self.tape.lock();
@@ -965,7 +931,7 @@ impl Inner {
             doc.lines.insert(at, line);
         }
         if first < f64::MAX {
-            drop_echoes(&mut doc.lines, first);
+            take_echoes(&mut doc, &mut self.echo.lock(), first);
         }
     }
 
@@ -1041,6 +1007,7 @@ impl Session {
             saving: Mutex::new(()),
             tape: Mutex::new(None),
             screen: Mutex::new(Screen::Off),
+            echo: Mutex::new(crate::echo::Detector::new()),
         });
         let w = inner.clone();
         let worker = std::thread::Builder::new().name("meeting".into()).spawn(move || {
@@ -1347,6 +1314,9 @@ impl Session {
             let mut doc = self.inner.doc.lock();
             doc.state = "done".into();
             doc.duration = elapsed;
+            // The sweep: live, a "Me" line was checked only against the lines in by then, and
+            // before the room's echo was known.
+            take_echoes(&mut doc, &mut self.inner.echo.lock(), 0.0);
         }
         *self.inner.state.lock() = "done";
         if let Some(t) = self.inner.tape.lock().take() {
@@ -1649,28 +1619,28 @@ mod tests {
     }
 
     #[test]
-    fn echoes_of_the_others_are_dropped_from_me() {
-        let them = line(Speaker::Them, 10.0, 14.0, "We should ship the new version on Friday.");
-        let echo = line(Speaker::Me, 10.5, 14.2, "we should ship the new version friday");
+    fn echoes_move_out_only_when_the_audio_shows_them() {
+        let them = line(Speaker::Them, 10.0, 14.0, "We should ship the new version on Friday after the review.");
+        let echo = line(Speaker::Me, 10.5, 14.2, "we should ship the new version friday after review");
         let mine = line(Speaker::Me, 15.0, 17.0, "I think Monday is better for us.");
-        let later = line(Speaker::Me, 40.0, 44.0, "we should ship the new version on Friday");
-        let short = line(Speaker::Me, 11.0, 11.5, "the version");
-        let mut lines = vec![them.clone(), echo, mine.clone(), short.clone(), later.clone()];
-        drop_echoes(&mut lines, 0.0);
-        assert_eq!(lines, vec![them, mine, short, later], "the echo goes; own words, short words and later repeats stay");
-        // Repeating a part of what they said, after they spoke (with headphones): kept.
-        let them = line(Speaker::Them, 10.0, 14.0, "we should do that tomorrow at noon and then review");
-        let repeat = line(Speaker::Me, 16.0, 18.0, "we should do that at noon");
-        let mut lines = vec![them.clone(), repeat.clone()];
-        drop_echoes(&mut lines, 0.0);
-        assert_eq!(lines.len(), 2, "said after them: not an echo");
-        // The same words in another order are not an echo either.
-        let mixed = line(Speaker::Me, 10.5, 13.5, "review then noon at tomorrow that do should we");
-        assert!(!is_echo(&mixed, &[&them]));
-        // Chinese: each character is a word, so the rule works without spaces.
-        let zh_them = line(Speaker::Them, 0.0, 3.0, "我们明天中午发布新版本");
-        let zh_echo = line(Speaker::Me, 0.2, 3.1, "我们明天中午发布新版");
-        assert!(is_echo(&zh_echo, &[&zh_them]));
+        let mut m = Meeting { lines: vec![them.clone(), echo.clone(), mine.clone()], ..Default::default() };
+        // Headphones (no leak heard): nothing moves, even a copy word for word.
+        let mut det = crate::echo::Detector::new();
+        take_echoes(&mut m, &mut det, 0.0);
+        assert_eq!(m.lines.len(), 3);
+        assert!(m.echoes.is_empty());
+        // A leak from the speakers: the copy moves to `echoes`; your own words stay.
+        let r = RATE as usize;
+        let theirs: Vec<f32> = (0..24 * r).map(|i| if (i as f64 / r as f64) % 0.5 < 0.3 { 0.3 * (i as f32 / 7.0).sin() * ((i % 97) as f32 / 97.0 + 0.2) } else { 0.001 }).collect();
+        let leak: Vec<f32> = (0..theirs.len()).map(|i| if i >= 960 { 0.3 * theirs[i - 960] } else { 0.0 }).collect();
+        for i in (0..theirs.len()).step_by(1600) {
+            det.push(crate::echo::Track::Them, i, &theirs[i..(i + 1600).min(theirs.len())]);
+            det.push(crate::echo::Track::Me, i, &leak[i..(i + 1600).min(leak.len())]);
+        }
+        assert!(det.present());
+        take_echoes(&mut m, &mut det, 0.0);
+        assert_eq!(m.lines, vec![them, mine]);
+        assert_eq!(m.echoes, vec![echo]);
     }
 
     #[test]
