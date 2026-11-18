@@ -927,6 +927,36 @@ pub fn chat(
     complete(engine, messages, 1500, 0.2, progress, on_text, cancel)
 }
 
+/// Answer a question across meetings: `system` holds the instructions and the sources
+/// (library::prompt); `history`: the earlier (role, text) turns of this conversation.
+pub fn ask_library(
+    engine: &Engine,
+    system: &str,
+    history: &[(String, String)],
+    question: &str,
+    progress: ProgressFn,
+    on_text: &mut dyn FnMut(&str),
+    cancel: &AtomicBool,
+) -> anyhow::Result<String> {
+    let mut kept = Vec::new();
+    let mut size = 0;
+    for (role, text) in history.iter().rev() {
+        size += text.chars().count();
+        if size > CHAT_HISTORY_CHARS {
+            break;
+        }
+        kept.push(json!({"role": role, "content": text}));
+    }
+    // A question first: some chat templates refuse an answer right after the instructions.
+    if kept.last().is_some_and(|m| m["role"] == "assistant") {
+        kept.pop();
+    }
+    let mut messages = vec![json!({"role": "system", "content": system})];
+    messages.extend(kept.into_iter().rev());
+    messages.push(json!({"role": "user", "content": question}));
+    complete(engine, messages, 1500, 0.2, progress, on_text, cancel)
+}
+
 /// One chat completion, streamed. Starts the built-in server when needed.
 fn complete(
     engine: &Engine,

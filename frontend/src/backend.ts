@@ -325,7 +325,7 @@ async function desktopBackend(): Promise<Backend> {
       },
     },
     library: {
-      ask: (question, history) => invoke("library_ask", { question, history }),
+      ask: (question, history) => invoke("library_ask", { question, history, utcOffsetMinutes: -new Date().getTimezoneOffset() }),
       onAnswer(cb) {
         void listen<LibraryAnswerEvent>("library-answer", (e) => cb(e.payload));
       },

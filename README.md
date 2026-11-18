@@ -286,6 +286,17 @@ Record a call or a talk, as text next to your notes (Linux for now). No bot join
   questions and answers are saved with the meeting (**Clear** deletes them); search and the
   export do not include them. <kbd>Enter</kbd> asks, <kbd>Shift</kbd>+<kbd>Enter</kbd> starts a
   new line, and the button stops an answer.
+- **Ask across meetings** (the **Ask** page in the sidebar): questions over all your meetings
+  ("what did Kara say about pricing?", "my tasks this week", "catch me up on yesterday"). The
+  app first finds the parts that fit, with no model: the dates and people the question names
+  ("yesterday", "last week", "in March", "the last 10 days", a speaker's name), then the
+  transcript pieces (about 300 words) that share the most of its rare words. A question that
+  gathers ("my tasks", "what did we decide", "catch me up") gets each matching meeting's notes
+  instead. The notes model answers from those parts only, with a number after each fact; a
+  click on a number, or on a source under the answer, opens that meeting at that moment. The
+  conversation stays until **New conversation** (it is not saved). English and Spanish date
+  words. (Idea and rules from [Yogurt](https://github.com/FrigadeHQ/yogurt), MIT; it also
+  searches by meaning with an embedding model, which Lowkey does not do yet.)
 - **Calls are detected** (Linux; Settings → Meetings → Offer to record calls, on by default): when Zoom,
   Teams, Slack, Discord, Signal… or a browser on Google Meet, Teams, Jitsi… uses the
   microphone for 2 s (an unknown browser page: 20 s), the strip says "Zoom call detected ·

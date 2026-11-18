@@ -15,6 +15,7 @@ pub mod hallucination;
 pub mod history;
 pub mod hyprland;
 pub mod jobs;
+pub mod library;
 pub mod llm;
 #[cfg(test)]
 mod live_providers;

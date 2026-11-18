@@ -2530,6 +2530,82 @@ fn run_chat(app: &AppRef, id: &str, question: &str) {
     }
 }
 
+// ------------------------------------------------------------------ Ask across meetings
+#[derive(Deserialize)]
+struct Turn {
+    role: String,
+    text: String,
+}
+
+/// Ask a question across all meetings (the Ask page; in the background, "library-answer" events
+/// follow it). The conversation lives in the page: it sends the earlier turns.
+#[tauri::command]
+fn library_ask(app: State<'_, AppRef>, question: String, history: Vec<Turn>, utc_offset_minutes: Option<i32>) -> Result<(), String> {
+    let app = app.inner().clone();
+    let question = question.trim().to_string();
+    if question.is_empty() {
+        return Err("Type a question.".into());
+    }
+    if question.chars().count() > meeting::MAX_QUESTION {
+        return Err(format!("The question is too long (over {} characters).", meeting::MAX_QUESTION));
+    }
+    let history: Vec<(String, String)> = history.into_iter().filter(|t| t.role == "user" || t.role == "assistant").map(|t| (t.role, t.text)).collect();
+    let offset = utc_offset_minutes.unwrap_or(0).clamp(-14 * 60, 14 * 60);
+    let busy = llm::Busy::take(&app.ai_busy).ok_or_else(|| ai_busy_reason(&app, ""))?;
+    app.ai_cancel.store(false, Ordering::SeqCst);
+    std::thread::Builder::new()
+        .name("library".into())
+        .spawn(move || {
+            let _busy = busy;
+            run_library(&app, &question, &history, offset);
+            app.emit_status();
+        })
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn run_library(app: &AppRef, question: &str, history: &[(String, String)], offset: i32) {
+    let h = app.handle.clone();
+    let send = |state: &str, detail: &str, text: &str, sources: &[crate::library::Source]| {
+        emit_logged(&h, "library-answer", json!({"state": state, "detail": detail, "text": text, "sources": sources}));
+    };
+    send("preparing", "Looking through your meetings…", "", &[]);
+    let mut sources = Vec::new();
+    let result = (|| -> anyhow::Result<String> {
+        let dir = meeting::dir();
+        let meetings: Vec<meeting::Meeting> = meeting::list_in(&dir).into_iter().filter_map(|s| meeting::load_in(&dir, &s.id).ok()).collect();
+        anyhow::ensure!(!meetings.is_empty(), "there are no meetings yet: record one first");
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
+        let (_, found) = crate::library::retrieve(&meetings, question, now, offset);
+        sources = found;
+        let names = crate::vocabulary::Vocabulary::new(&app.config.lock().vocabulary).names();
+        let system = crate::library::prompt(&sources, offset, &names);
+        send("preparing", &format!("Found {} part{} of your meetings. Getting the model ready…", sources.len(), if sources.len() == 1 { "" } else { "s" }), "", &sources);
+        let engine = ai_engine(app)?;
+        let mut last = Instant::now() - Duration::from_secs(1);
+        let mut progress = |what: &str, done: u64, total: u64| match what {
+            "starting" => send("preparing", "Starting the model…", "", &sources),
+            "thinking" => send("preparing", "Thinking…", "", &sources),
+            "writing" | "checking the download" => {}
+            what if last.elapsed() >= Duration::from_millis(250) || done == total => {
+                last = Instant::now();
+                let p = if total > 0 { done as f64 / total as f64 } else { 0.0 };
+                send("preparing", &format!("Downloading {what} (once)… {}% of {} MB", (p * 100.0) as u32, total / 1_000_000), "", &sources);
+            }
+            _ => {}
+        };
+        let count = sources.len();
+        let mut on_text = |t: &str| send("writing", "", &crate::library::tidy_citations(t, count), &sources);
+        let text = llm::ask_library(&engine, &system, history, question, &mut progress, &mut on_text, &app.ai_cancel)?;
+        Ok(crate::library::tidy_citations(&text, count))
+    })();
+    match result {
+        Ok(text) => send("done", "", &text, &sources),
+        Err(_) if app.ai_cancel.load(Ordering::SeqCst) => send("cancelled", "Stopped", "", &sources),
+        Err(e) => send("error", &format!("{e:#}"), "", &sources),
+    }
+}
+
 #[tauri::command]
 fn meeting_delete(app: State<'_, AppRef>, id: String) -> Result<(), String> {
     if live_session(app.inner(), &id).is_some() {
@@ -3039,6 +3115,7 @@ pub fn run() {
             meeting_ai_notes,
             ai_notes_cancel,
             meeting_chat,
+            library_ask,
             meeting_chat_clear,
             app_quit
         ])
