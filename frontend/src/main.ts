@@ -1046,7 +1046,8 @@ for (const n of navItems) n.addEventListener("click", () => showSection(n.id ===
 for (const t of tabs) t.addEventListener("click", () => showSection(t.dataset.section!));
 $<HTMLElement>("settings-tabs").addEventListener("keydown", (e) => {
   const i = tabs.findIndex((t) => t.dataset.section === section);
-  const to = { ArrowRight: i + 1, ArrowLeft: i - 1, Home: 0, End: tabs.length - 1 }[e.key];
+  // Left and Right as tabs on top; Up and Down too, as a column on a wide window.
+  const to = { ArrowRight: i + 1, ArrowDown: i + 1, ArrowLeft: i - 1, ArrowUp: i - 1, Home: 0, End: tabs.length - 1 }[e.key];
   if (to === undefined) return;
   e.preventDefault();
   showSection(tabs[(to + tabs.length) % tabs.length].dataset.section!, true);
