@@ -276,7 +276,7 @@
                   <textarea id="mine-input" class="mine-input" spellcheck="true" aria-label="My notes" placeholder="Write what matters to you: questions, points, names. The summary follows them. Saved as you type."></textarea>
                 </div>
                 <div id="transcript-panel" class="transcript-panel" role="tabpanel" aria-labelledby="tab-transcript" hidden>
-                  <!-- Two columns (a wide window): the transcript's own head, beside the tabs. -->
+                  <!-- In the side panel (a wide meeting): the transcript's own head. -->
                   <h2 class="transcript-head" aria-hidden="true">Transcript</h2>
                   <div id="meeting-transcript" class="meeting-transcript" tabindex="0" aria-label="Transcript"></div>
                 </div>
@@ -304,6 +304,8 @@
                 </form>
               </aside>
             </div>
+            <!-- A wide meeting: the transcript, moved here from its tab (meetings.ts). -->
+            <aside id="transcript-side" class="transcript-side" aria-label="Transcript"></aside>
             <footer class="meeting-foot">
               <span class="foot-note">
                 <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></svg>

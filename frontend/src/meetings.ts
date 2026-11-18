@@ -180,6 +180,7 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
   const footText = $<HTMLElement>("meeting-foot-text");
   const notesPanel = $<HTMLDivElement>("notes-panel");
   const notesPane = $<HTMLElement>("notes-pane");
+  const transcriptSide = $<HTMLElement>("transcript-side");
   const transcriptPanel = $<HTMLDivElement>("transcript-panel");
   /** The model and what to do with the summary: in the foot, next to "Saved on this computer". */
   const aiMeta = footText;
@@ -986,8 +987,8 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
     ["notes", tabNotes],
   ] as const;
 
-  /** The notes' side is wide enough for two columns: the transcript is always on the right, the
-   * summary or your notes on the left (no Transcript tab then). */
+  /** A wide meeting: the transcript is a side panel on the right, always in view, from the top
+   * to the foot (no Transcript tab then); the summary or your notes on the left. */
   let dual = false;
   /** The tab on screen: in two columns, the transcript is not one. */
   const shownTab = () => (dual && tab === "transcript" ? "notes" : tab);
@@ -1000,7 +1001,6 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
       b.tabIndex = t === on ? 0 : -1;
     }
     tabTranscript.hidden = dual;
-    notesPane.toggleAttribute("data-dual", dual);
     notesPanel.hidden = on !== "notes";
     minePanel.hidden = on !== "mine";
     transcriptPanel.hidden = !dual && tab !== "transcript";
@@ -1049,17 +1049,20 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
     });
   }
 
-  // Two columns from this width of the notes' side (it does not change with them: no loop).
-  new ResizeObserver(() => {
-    const d = notesPane.clientWidth >= 1000;
-    // The title and its chips stay over the left column (the line between the columns runs up).
-    view.style.setProperty("--dual-w", `${notesPane.clientWidth / 2}px`);
+  // The side panel from this width of the meeting (more with the questions open, which share the
+  // left side). The meeting's width does not change with the panel: no loop.
+  function checkDual(): void {
+    const cs = getComputedStyle(view);
+    const w = view.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+    const d = !view.hidden && w >= (chatOpen ? 1500 : 1100);
     view.toggleAttribute("data-dual", d);
     if (d === dual) return;
     dual = d;
+    (dual ? transcriptSide : notesPane).append(transcriptPanel);
     renderTab();
     renderAi();
-  }).observe(notesPane);
+  }
+  new ResizeObserver(checkDual).observe(view);
 
   // ---------------------------------------------------------------- menus (Copy, More)
   function closeMenus(except?: HTMLElement): void {
@@ -1178,6 +1181,7 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
   function renderChatOpen(): void {
     body.toggleAttribute("data-chat", chatOpen);
     chatToggle.setAttribute("aria-expanded", String(chatOpen));
+    checkDual();
   }
   function setChatOpen(on: boolean, focus = true): void {
     chatOpen = on;

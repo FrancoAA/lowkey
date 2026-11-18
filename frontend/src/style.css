@@ -644,38 +644,27 @@ mark { background: color-mix(in srgb, var(--tint) 22%, transparent); color: inhe
 .notes-panel, .transcript-panel, .mine-panel { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 10px; border-radius: 4px; }
 .notes-panel:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 35%, transparent); }
 .pane-title { font-size: 14px; font-weight: 600; color: var(--foreground); }
-/* Two columns (the notes' side is 1000 px or wider, meetings.ts): the summary or your notes on the
-   left, the transcript on the right, each with its own head on one line and its own scroll. */
+/* A wide meeting (meetings.ts): the transcript is a side panel on the right, from the top of the
+   window to the foot's line; the top bar, the title, the tabs and the summary on its left. */
 .transcript-head { display: none; }
-.notes-pane[data-dual] {
-  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-rows: auto auto auto minmax(0, 1fr);
-  gap: 0;
+.transcript-side { display: none; }
+.meeting-view[data-dual] {
+  display: grid; grid-template-columns: minmax(0, 1fr) clamp(380px, 36%, 640px);
+  grid-template-rows: auto auto auto auto minmax(0, 1fr) auto; gap: 0 40px;
 }
-/* The two head lines meet at the line between the columns, and run on to the meeting's edges
-   (the list's line on the left, the window's edge on the right). */
-.notes-pane[data-dual] > * { grid-column: 1; margin-right: 40px; }
-.notes-pane[data-dual] > .notes-head {
-  grid-row: 1; margin: 0 0 16px calc(-1 * var(--page-pad, 0px)); padding: 0 40px 0 var(--page-pad, 0px);
+.meeting-view[data-dual] > * { grid-column: 1; }
+.meeting-view[data-dual] > .meeting-top { grid-row: 1; margin-bottom: 14px; }
+.meeting-view[data-dual] > .meeting-head { grid-row: 2; margin-bottom: 14px; }
+.meeting-view[data-dual] > .meeting-live { grid-row: 3; margin-bottom: 14px; }
+.meeting-view[data-dual] > .notices { grid-row: 4; margin-bottom: 14px; }
+.meeting-view[data-dual] > .meeting-body { grid-row: 5; margin-bottom: 14px; }
+.meeting-view[data-dual] > .meeting-foot { grid-row: 6; grid-column: 1 / -1; }
+.meeting-view[data-dual] > .transcript-side {
+  grid-column: 2; grid-row: 1 / 6; display: flex; flex-direction: column; min-height: 0;
+  margin: -12px calc(-1 * var(--page-pad, 0px)) 0 0; padding: 12px 24px 0 28px; border-left: 1px solid var(--border);
 }
-.notes-pane[data-dual] > .progress, .notes-pane[data-dual] > .ai-error { grid-row: 2; margin-bottom: 12px; }
-.notes-pane[data-dual] > .ai-error { grid-row: 3; }
-.notes-pane[data-dual] > .notes-panel, .notes-pane[data-dual] > .mine-panel { grid-row: 4; }
-.notes-pane[data-dual] > .transcript-panel {
-  position: relative; grid-column: 2; grid-row: 1 / -1; gap: 16px; margin: 0 0 -14px; padding: 0; border-radius: 0;
-}
-/* The line between the columns: from the top of the window to the foot's line. */
-.notes-pane[data-dual] > .transcript-panel::before {
-  content: ""; position: absolute; left: 0; top: -100vh; bottom: 0; width: 1px; background: var(--border); pointer-events: none;
-}
-.meeting-view[data-dual] > .meeting-head, .meeting-view[data-dual] > .meeting-live, .meeting-view[data-dual] > .notices {
-  max-width: calc(var(--dual-w, 100%) - 40px);
-}
-.notes-pane[data-dual] .transcript-head {
-  display: flex; align-items: center; flex: none; height: 38px; margin: 0 calc(-1 * var(--page-pad, 0px)) 0 0;
-  padding: 0 var(--page-pad, 0px) 0 40px;
-  border-bottom: 1px solid var(--border); font-size: 14px; font-weight: 550; color: var(--foreground);
-}
-.notes-pane[data-dual] .meeting-transcript { padding-left: 40px; }
+.transcript-side .transcript-panel { flex: 1; min-height: 0; gap: 12px; border-radius: 0; }
+.transcript-side .transcript-head { display: flex; align-items: center; flex: none; min-height: 36px; margin: 0; font-size: 14px; font-weight: 600; }
 .pending { font-size: 12px; color: var(--muted-foreground); }
 .meeting-transcript {
   flex: 1; min-height: 0; overflow-y: auto; padding: 0 10px 14px 2px;
