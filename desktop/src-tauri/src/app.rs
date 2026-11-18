@@ -74,6 +74,12 @@ pub struct App {
     call_session: Mutex<Option<(String, crate::calls::Call, bool)>>,
     /// The known call apps and pages on the microphone at the last look (Linux).
     calls_now: Mutex<Vec<crate::calls::Call>>,
+    /// Settings → Meetings → Calendar: the linked calendar's last good events, and why the last
+    /// read failed ("" = it worked).
+    calendar: Mutex<Option<crate::calendar::Feed>>,
+    calendar_error: Mutex<String>,
+    /// The calendar event the next meeting records (the agenda's Record), by its id.
+    start_event: Mutex<Option<String>>,
     /// Calls seen while the app runs (Settings lists them with their policy).
     calls_seen: Mutex<Vec<crate::calls::Call>>,
     /// Hyprland: the strip's drag while the mouse button is down.
@@ -325,6 +331,11 @@ impl App {
                 "apps": self.call_apps(&cfg),
             },
             "recording": self.meeting.lock().is_some(),
+            "calendar": {
+                "linked": !cfg.calendar_url.is_empty(),
+                "name": self.calendar.lock().as_ref().and_then(|f| f.name.clone()).unwrap_or_else(|| cfg.calendar_name.clone()),
+                "error": self.calendar_error.lock().clone(),
+            },
             // OPENWHISPER_TEST_LOG: the page reports its player's events (`test_event`).
             "test": std::env::var_os("OPENWHISPER_TEST_LOG").is_some(),
             // The providers (chat, speech, default models) and which have a key; never the keys.
@@ -813,6 +824,46 @@ impl App {
         }
         out.sort_by(|a, b| a.1.cmp(&b.1));
         out.into_iter().map(|(key, label, policy)| json!({"key": key, "label": label, "policy": policy})).collect()
+    }
+
+    /// Settings → Meetings → Calendar: read the linked calendar every 5 minutes (a failed read
+    /// keeps the last good events). The address is never logged.
+    fn watch_calendar(self: &Arc<Self>) {
+        let weak = Arc::downgrade(self);
+        let _ = std::thread::Builder::new().name("calendar".into()).spawn(move || loop {
+            let Some(app) = weak.upgrade() else { return };
+            let url = app.config.lock().calendar_url.clone();
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
+            if url.is_empty() {
+                *app.calendar.lock() = None;
+            } else {
+                let current = app.calendar.lock().clone().filter(|f| f.url.as_str() == url);
+                let feed = match current {
+                    Some(f) => Some(f),
+                    None => crate::calendar::normalize(&url).ok().map(crate::calendar::Feed::new),
+                };
+                if let Some(mut f) = feed {
+                    if f.due(now) {
+                        let r = f.refresh(now); // not under a lock: it can take seconds
+                        let error = match r {
+                            Ok(()) => String::new(),
+                            Err(e) => calendar_error_text(e).to_string(),
+                        };
+                        let changed = *app.calendar_error.lock() != error;
+                        *app.calendar_error.lock() = error;
+                        // Unlinked or changed meanwhile: this read is not that calendar's.
+                        if app.config.lock().calendar_url == url {
+                            *app.calendar.lock() = Some(f);
+                        }
+                        if changed {
+                            app.emit_status();
+                        }
+                    }
+                }
+            }
+            drop(app);
+            std::thread::sleep(Duration::from_secs(30));
+        });
     }
 
     /// Call detection (Linux): look once a second at who uses the microphone.
@@ -1648,8 +1699,9 @@ fn window_dictation_inner(app: &AppRef, action: &str) -> Result<Option<String>, 
 // ------------------------------------------------------------------ meetings
 /// Start recording a meeting: the mic ("Me") and the computer's sound ("Them").
 #[tauri::command]
-async fn meeting_start(app: State<'_, AppRef>, title: String) -> Result<meeting::Live, String> {
+async fn meeting_start(app: State<'_, AppRef>, title: String, event_uid: Option<String>) -> Result<meeting::Live, String> {
     let app = app.inner().clone();
+    *app.start_event.lock() = event_uid;
     // Off the window's thread: opening the devices can take seconds.
     let a2 = app.clone();
     let r = tauri::async_runtime::spawn_blocking(move || meeting_start_inner(&a2, &title)).await.map_err(|e| e.to_string()).and_then(|r| r);
@@ -1712,7 +1764,24 @@ fn meeting_open(app: &AppRef, title: &str) -> Result<meeting::Live, String> {
             let _ = h.emit("meeting-level", json!({"me": me, "them": them}));
         }
     });
-    let doc = meeting::Meeting::new(title, &crate::providers::speech_label(&model).unwrap_or_else(|| model.clone()));
+    let mut doc = meeting::Meeting::new(title, &crate::providers::speech_label(&model).unwrap_or_else(|| model.clone()));
+    // The calendar event it records: the one asked for (the agenda's Record), else the one at
+    // this time. Its title replaces a title the app made up ("Meeting · …", "Zoom call").
+    let asked = app.start_event.lock().take();
+    let event = app.calendar.lock().as_ref().and_then(|f| {
+        let now = doc.started_at as i64;
+        match &asked {
+            Some(id) => f.events.iter().find(|e| &e.id == id).cloned(),
+            None => f.near(now).cloned(),
+        }
+    });
+    if let Some(e) = event {
+        let made_up = doc.title.starts_with("Meeting") || doc.title.ends_with(" call");
+        if made_up && !e.title.trim().is_empty() {
+            doc.title = e.title.trim().chars().take(meeting::MAX_TITLE).collect();
+        }
+        doc.attendees = e.attendees.clone();
+    }
     let id = doc.id.clone();
     let session = meeting::Session::new(meeting::dir(), doc, transcribe, emit).map_err(|e| format!("Could not save the meeting: {e:#}"))?;
     if app.config.lock().meeting_voices && crate::voices::SUPPORTED {
@@ -2530,6 +2599,68 @@ fn run_chat(app: &AppRef, id: &str, question: &str) {
     }
 }
 
+// ------------------------------------------------------------------ Calendar
+fn calendar_error_text(e: crate::calendar::LinkError) -> &'static str {
+    use crate::calendar::LinkError::*;
+    match e {
+        BadUrl => "This is not a calendar address: it must start with https:// or webcal://.",
+        Unreachable => "The calendar did not answer. Check the address and the network.",
+        NotCalendar => "The address does not give a calendar (maybe a sign-in page). Use the private iCal address.",
+        PublicAddress => "This is Google's public address: use \"Secret address in iCal format\" instead.",
+    }
+}
+
+/// Link a pasted iCal address: checked first (it must give a calendar); returns its name.
+#[tauri::command]
+async fn calendar_link(app: State<'_, AppRef>, url: String) -> Result<String, String> {
+    let app = app.inner().clone();
+    let linked = tauri::async_runtime::spawn_blocking(move || crate::calendar::connect(&url)).await.map_err(|e| e.to_string())?.map_err(|e| calendar_error_text(e).to_string())?;
+    {
+        let mut cfg = app.config.lock();
+        cfg.calendar_url = linked.url.to_string();
+        cfg.calendar_name = linked.name.clone();
+        cfg.save().map_err(|e| e.to_string())?;
+    }
+    *app.calendar.lock() = None; // read at once by the calendar thread
+    *app.calendar_error.lock() = String::new();
+    let a2 = app.clone();
+    let url = linked.url.clone();
+    std::thread::spawn(move || {
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
+        let mut f = crate::calendar::Feed::new(url.clone());
+        let r = f.refresh(now);
+        if a2.config.lock().calendar_url == url.as_str() {
+            *a2.calendar_error.lock() = r.err().map(|e| calendar_error_text(e).to_string()).unwrap_or_default();
+            *a2.calendar.lock() = Some(f);
+        }
+        a2.emit_status();
+    });
+    app.emit_status();
+    Ok(linked.name)
+}
+
+#[tauri::command]
+fn calendar_unlink(app: State<'_, AppRef>) -> Result<(), String> {
+    {
+        let mut cfg = app.config.lock();
+        cfg.calendar_url.clear();
+        cfg.calendar_name.clear();
+        cfg.save().map_err(|e| e.to_string())?;
+    }
+    *app.calendar.lock() = None;
+    app.calendar_error.lock().clear();
+    app.emit_status();
+    Ok(())
+}
+
+/// The linked calendar's events that are not over yet, up to the end of tomorrow.
+#[tauri::command]
+fn calendar_events(app: State<'_, AppRef>) -> Vec<crate::calendar::Event> {
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
+    let until = crate::calendar::window(now).0 + 3 * 86_400; // yesterday's start + 3 days
+    app.calendar.lock().as_ref().map(|f| f.events.iter().filter(|e| e.end > now && e.start < until).cloned().collect()).unwrap_or_default()
+}
+
 // ------------------------------------------------------------------ Ask across meetings
 #[derive(Deserialize)]
 struct Turn {
@@ -3116,6 +3247,9 @@ pub fn run() {
             ai_notes_cancel,
             meeting_chat,
             library_ask,
+            calendar_link,
+            calendar_unlink,
+            calendar_events,
             meeting_chat_clear,
             app_quit
         ])
@@ -3211,6 +3345,9 @@ pub fn run() {
                 call_offer: Mutex::new(None),
                 call_session: Mutex::new(None),
                 calls_now: Mutex::new(Vec::new()),
+                calendar: Mutex::new(None),
+                calendar_error: Mutex::new(String::new()),
+                start_event: Mutex::new(None),
                 calls_seen: Mutex::new(Vec::new()),
                 overlay_wants: [AtomicBool::new(false), AtomicBool::new(false)],
                 overlay_capsule: AtomicBool::new(false),
@@ -3227,6 +3364,7 @@ pub fn run() {
             });
             #[cfg(target_os = "linux")]
             app.watch_calls();
+            app.watch_calendar();
             // A model runner that a crash left behind holds ~3 GB: stop it.
             std::thread::spawn(llm::stop_stale);
             // Every microphone open (dictation, meetings, the test) asks which one, now.

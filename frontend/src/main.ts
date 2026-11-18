@@ -2,6 +2,7 @@ import "./style.css";
 import type { AiNotesEvent, JobEvent, JobResult, ModelInfo, Segment, Status } from "./api";
 import { getBackend, type Backend, type FileRef } from "./backend";
 import { initAsk } from "./ask";
+import { renderCalendar } from "./calendar";
 import { Dictation, type DictationState } from "./dictation";
 import { renderCalls } from "./calls";
 import { initHistory } from "./history";
@@ -94,7 +95,7 @@ let jobState = ""; // state of the job shown in the result card
 let status: Status | null = null;
 /** The Meetings section (its note-app buttons follow the status). */
 let askPage: { shown(): void } | null = null;
-let meetingsView: { refreshExport(): void; showList(): void; openAt(id: string, at: number | null): Promise<void> } | null = null;
+let meetingsView: { refreshExport(): void; refreshAgenda(): void; showList(): void; openAt(id: string, at: number | null): Promise<void> } | null = null;
 let busy = false;
 let current: { result: JobResult | null; segments: Segment[]; baseName: string } = { result: null, segments: [], baseName: "transcript" };
 
@@ -347,6 +348,10 @@ function applyStatus(next: Status): void {
   renderPreview();
   renderKey();
   if (backend) renderCalls(backend, status, showError);
+  if (backend) renderCalendar(backend, status, showError, () => {
+    void refreshStatus();
+    meetingsView?.refreshAgenda();
+  });
   renderAi();
   renderAgents();
   renderVoices();

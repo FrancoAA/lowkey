@@ -6,7 +6,7 @@
  * are answered by the same model, and saved with it. The app records, transcribes, writes and
  * saves (desktop/src-tauri/src/meeting.rs, llm.rs); this page shows it and sends the title.
  */
-import type { AiNotesEvent, ChatMessage, Meeting, MeetingLine, MeetingLive, MeetingSummary, MeetingVideo, VocabTerm } from "./api";
+import type { AiNotesEvent, CalEvent, ChatMessage, Meeting, MeetingLine, MeetingLive, MeetingSummary, MeetingVideo, VocabTerm } from "./api";
 import { confirmDialog, promptDialog } from "./confirm";
 import { highlighted, searchWords } from "./highlight";
 import type { Backend } from "./backend";
@@ -116,7 +116,7 @@ function fileName(title: string): string {
 }
 
 /** `refreshExport`: the meeting's note-app buttons follow a change in Settings → Connections → Note apps. */
-export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(): void; showList(): void; openAt(id: string, at: number | null): Promise<void> } {
+export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(): void; refreshAgenda(): void; showList(): void; openAt(id: string, at: number | null): Promise<void> } {
   const api = backend.meetings;
   const home = $<HTMLDivElement>("meetings-home");
   const startBtn = $<HTMLButtonElement>("meeting-start");
@@ -615,6 +615,8 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
     const names = new Set<string>();
     for (const l of m.lines) if (l.speaker === "them") names.add(speakerLabel(m, "them", l.person ?? 0));
     const list = [...names].filter((n) => n !== "Them");
+    // No names from the voices: the people invited to its calendar event.
+    if (!list.length) list.push(...(m.attendees ?? []).map((p) => p.name || p.email || "").filter(Boolean));
     if (!list.length) return names.size ? "You and the others" : "";
     return list.length > 2 ? `${list.slice(0, 2).join(", ")} + ${list.length - 2}` : list.join(", ");
   }
@@ -1624,6 +1626,7 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
     unloadVideo();
     view.hidden = true;
     home.hidden = false;
+    void renderAgenda();
     await renderList();
   }
 
@@ -2006,10 +2009,76 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
     } else renderView();
   });
 
+  // ---------------------------------------------------------------- coming up (the calendar)
+  const agenda = $<HTMLElement>("agenda");
+  const agendaList = $<HTMLDivElement>("agenda-list");
+  /** Recorded for an event: its uid (Record on its row starts the meeting for it). */
+  async function startFor(e: CalEvent): Promise<void> {
+    showError(null);
+    try {
+      live = await api.start(e.title, e.id);
+      liveAt = performance.now();
+      ui.onRecording(true);
+      ui.announce(`Recording ${e.title}.`);
+      open({ ...live.meeting });
+      stopBtn.focus();
+    } catch (err) {
+      showError(String(err));
+    }
+  }
+
+  /** The next events: what is on now, the rest of today and tomorrow (at most four). */
+  async function renderAgenda(): Promise<void> {
+    let events: CalEvent[] = [];
+    try {
+      events = await backend.calendar.events();
+    } catch {
+      events = []; // the calendar's problem shows in Settings
+    }
+    const now = Date.now() / 1000;
+    const soon = events.filter((e) => !e.all_day && e.end > now).slice(0, 4);
+    agenda.hidden = !soon.length || !!search.value.trim();
+    const recording = !!live && live.state !== "done";
+    agendaList.replaceChildren(
+      ...soon.map((e) => {
+        const row = document.createElement("div");
+        row.className = "agenda-item";
+        row.setAttribute("role", "listitem");
+        const on = e.start - 10 * 60 <= now;
+        if (on) row.dataset.now = "";
+        const whenBox = span("agenda-when", "");
+        const startDay = dayLabel(e.start);
+        whenBox.append(on && e.start <= now ? "Now" : timeFmt.format(new Date(e.start * 1000)));
+        const small = document.createElement("small");
+        small.textContent = startDay === "Today" ? `until ${timeFmt.format(new Date(e.end * 1000))}` : startDay;
+        whenBox.append(small);
+        const main = span("agenda-main", "");
+        main.append(span("agenda-title", e.title || "Untitled event"));
+        const names = e.attendees.map((p) => p.name || p.email || "").filter(Boolean);
+        if (names.length) main.append(span("agenda-who", names.length > 3 ? `${names.slice(0, 3).join(", ")} + ${names.length - 3}` : names.join(", ")));
+        row.append(whenBox, main);
+        if (on && !recording) {
+          const rec = document.createElement("button");
+          rec.type = "button";
+          rec.className = "btn btn-outline btn-sm";
+          rec.append(span("rec-dot", ""), "Record");
+          rec.setAttribute("aria-label", `Record ${e.title}`);
+          rec.addEventListener("click", () => void startFor(e));
+          row.append(rec);
+        } else row.append(span("", ""));
+        return row;
+      }),
+    );
+  }
+  window.setInterval(() => {
+    if (!home.hidden) void renderAgenda();
+  }, 60_000);
+
   // ---------------------------------------------------------------- search
   search.addEventListener("input", () => {
     clearTimeout(searchTimer);
     searchTimer = window.setTimeout(() => void renderList(), 200);
+    agenda.hidden = !!search.value.trim() || !agendaList.children.length;
   });
   search.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && search.value) {
@@ -2026,6 +2095,7 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
       ui.onRecording(true);
     }
     void renderList();
+    void renderAgenda();
   });
 
   /** Open a meeting; `at`: a moment of its transcript to show (seconds), or null: its summary. */
@@ -2037,5 +2107,5 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
     if (i >= 0) showInTranscript(i);
   }
 
-  return { refreshExport: renderFolderButtons, showList: () => void showHome(), openAt };
+  return { refreshExport: renderFolderButtons, refreshAgenda: () => void renderAgenda(), showList: () => void showHome(), openAt };
 }

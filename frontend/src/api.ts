@@ -43,6 +43,9 @@ export interface Status {
   calls?: { detect: boolean; auto_stop: boolean; available: boolean; apps: { key: string; label: string; policy: "ask" | "always" | "never" }[] };
   /** A meeting is being recorded. */
   recording?: boolean;
+  /** Settings → Meetings → Calendar: a private iCal address is linked (the address itself never
+   * comes to the page), the calendar's name, and the last problem reading it. */
+  calendar?: { linked: boolean; name: string; error: string };
   /** An automated test runs (OPENWHISPER_TEST_LOG): the page reports its player's events. */
   test?: boolean;
   /** Settings → Connections → AI agents: agents may start and stop recordings; the program they start. */
@@ -193,6 +196,27 @@ export interface Meeting {
   people?: string[];
   /** The screen videos (Record screen during the meeting), in the order they were recorded. */
   videos?: MeetingVideo[];
+  /** The calendar event it was recorded for: the people invited. */
+  attendees?: Person[];
+}
+
+export interface Person {
+  name: string;
+  email: string | null;
+}
+
+/** An event of the linked calendar (desktop/src-tauri/src/calendar.rs). Times: unix seconds. */
+export interface CalEvent {
+  /** One occurrence: the event's uid and its start. */
+  id: string;
+  uid: string;
+  title: string;
+  start: number;
+  end: number;
+  all_day: boolean;
+  attendees: Person[];
+  organizer: Person | null;
+  link: string | null;
 }
 
 export interface MeetingVideo {

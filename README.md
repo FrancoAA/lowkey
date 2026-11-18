@@ -297,6 +297,16 @@ Record a call or a talk, as text next to your notes (Linux for now). No bot join
   conversation stays until **New conversation** (it is not saved). English and Spanish date
   words. (Idea and rules from [Yogurt](https://github.com/FrigadeHQ/yogurt), MIT; it also
   searches by meaning with an embedding model, which Lowkey does not do yet.)
+- **Calendar** (Settings → Meetings → Calendar): paste your calendar's private iCal address
+  (Google: "Secret address in iCal format"; Outlook: a published calendar's ICS link). The app
+  checks it, then reads it every 5 minutes (a failed read keeps the last events). The Meetings
+  page shows **Coming up**: what is on now, the rest of today and tomorrow, with **Record** on an
+  event that starts within 10 minutes. A meeting started at an event's time (with the key, the
+  button, or a call offer) gets the event's title, unless you gave it one, and the people
+  invited: the chips show them, and the notes get an "Invited:" line (with one other person,
+  "Them" is that person). Repeating events, moved or cancelled ones and time zones work. The
+  address stays in config.toml (0600) and never goes to the page or the log. (Idea from
+  [Yogurt](https://github.com/FrigadeHQ/yogurt), MIT.)
 - **Calls are detected** (Linux; Settings → Meetings → Offer to record calls, on by default): when Zoom,
   Teams, Slack, Discord, Signal… or a browser on Google Meet, Teams, Jitsi… uses the
   microphone for 2 s (an unknown browser page: 20 s), the strip says "Zoom call detected ·

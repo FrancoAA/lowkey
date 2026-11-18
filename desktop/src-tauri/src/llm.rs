@@ -522,8 +522,9 @@ const CLOUD_MAX_TOKENS: u32 = 32_000;
 /// copy the transcript line by line; the task rule before the time rule keeps the owners right.
 pub const NOTES_PROMPT: &str = "You write meeting notes from a transcript. \"Me\" is the person who recorded the meeting; \
 the others are \"Them\", or one label for each person told apart by voice (\"Speaker 2\", or a \
-name). For a label that is not a name, use the person's name when the transcript says it. The \
-notes written by \"Me\" during the meeting show what mattered to them.
+name). For a label that is not a name, use the person's name when the transcript says it. An \
+\"Invited:\" line lists the people invited to the meeting: when it has only one name besides Me, \
+\"Them\" is that person. The notes written by \"Me\" during the meeting show what mattered to them.
 
 Write in {language}. Use only facts from the transcript; never invent names, dates or numbers.
 

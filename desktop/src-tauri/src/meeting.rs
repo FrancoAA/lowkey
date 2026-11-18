@@ -103,6 +103,9 @@ pub struct Meeting {
     /// transcript, kept here and never deleted.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub echoes: Vec<Line>,
+    /// The people invited to the calendar event it was recorded for (src/calendar.rs).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub attendees: Vec<crate::calendar::Person>,
 }
 
 /// A meeting's screen video (src/screen.rs), a file next to the meeting's JSON.
@@ -741,6 +744,10 @@ pub fn to_markdown_utc(m: &Meeting, parts: Parts) -> String {
 
 fn markdown(m: &Meeting, when: &str, parts: Parts) -> String {
     let mut s = format!("# {}\n\n{when}\n\n", m.title);
+    let invited: Vec<&str> = m.attendees.iter().map(|p| if p.name.trim().is_empty() { p.email.as_deref().unwrap_or("") } else { p.name.trim() }).filter(|n| !n.is_empty()).collect();
+    if !invited.is_empty() {
+        s += &format!("Invited: {}\n\n", invited.join(", "));
+    }
     if parts.ai_notes && !m.ai_notes.trim().is_empty() {
         // The model's own "## …" headings go one level down, under this one.
         let body: String = m.ai_notes.trim().lines().map(|l| if l.starts_with('#') { format!("#{l}\n") } else { format!("{l}\n") }).collect();

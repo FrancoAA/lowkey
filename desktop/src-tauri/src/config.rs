@@ -91,6 +91,10 @@ pub struct Config {
     pub call_detection: bool,
     /// Stop a meeting by itself when the call it records ends (its app leaves the microphone).
     pub auto_stop: bool,
+    /// Settings → Meetings → Calendar: the private iCal address (a secret: never sent to the
+    /// page, never logged), and its name. "" = none.
+    pub calendar_url: String,
+    pub calendar_name: String,
     /// Per call ("zoom", "google-meet", "browser:firefox"): ask | always | never. Missing = ask.
     /// (A table: the toml writer puts it after the plain values.)
     pub call_policies: std::collections::BTreeMap<String, String>,
@@ -154,6 +158,8 @@ impl Default for Config {
             avoid_bluetooth_mic: true,
             call_detection: true,
             auto_stop: true,
+            calendar_url: String::new(),
+            calendar_name: String::new(),
             call_policies: Default::default(),
             ai_engine: "builtin".into(),
             ai_builtin_model: crate::llm::DEFAULT_MODEL.into(),

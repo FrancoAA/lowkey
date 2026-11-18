@@ -3,7 +3,7 @@
  * screenshots, the page tests): sample meetings and settings in memory, nothing saved.
  * The real app is desktop/src-tauri; see backend.ts for what each call does there.
  */
-import type { AiNotesEvent, HistoryEntry, Meeting, MeetingLive, MeetingSummary, Status } from "./api";
+import type { AiNotesEvent, CalEvent, HistoryEntry, Meeting, MeetingLive, MeetingSummary, Status } from "./api";
 import type { Backend, LibraryAnswerEvent } from "./backend";
 
 const now = Math.floor(Date.now() / 1000);
@@ -94,6 +94,7 @@ const status: Status = {
   paste_key_source: "app",
   history_keep: "week",
   calls: { detect: true, auto_stop: true, available: true, apps: [] },
+  calendar: { linked: true, name: "Work (demo)", error: "" },
   recording: false,
   agents: { recording: false, program: "/usr/bin/lowkey" },
   voices: { on: true, supported: true, present: true, download: { state: "", progress: 0, error: "" }, working: [] },
@@ -116,6 +117,11 @@ const status: Status = {
   options: { model: "parakeet-v3", language: "auto", idle_unload_minutes: 15, live_preview: true, preview_engine: "auto", microphone: "", vocabulary: [], theme: "system" },
   preview: { state: "ready", error: null, engine: "parakeet" },
 };
+
+const events: CalEvent[] = [
+  { id: "e-1@1", uid: "e-1", organizer: null, title: "Design review", start: now + 25 * 60, end: now + 55 * 60, all_day: false, attendees: [{ name: "Maya Lopez", email: "maya@example.com" }, { name: "Omar", email: "omar@example.com" }], link: "https://meet.google.com/abc-defg-hij" },
+  { id: "e-2@1", uid: "e-2", organizer: null, title: "Acme renewal", start: now + DAY + 3600, end: now + DAY + 5400, all_day: false, attendees: [{ name: "Ana", email: "ana@acme.example" }], link: null },
+];
 
 const history: HistoryEntry[] = [{ id: "h-1", at: now - 600, text: "Ship the new version on Friday.", source: "key", model: "parakeet-v3", seconds: 3 }];
 
@@ -156,6 +162,11 @@ export function demoBackend(): Backend {
     pickFile: async () => null,
     onFileDrop: noop,
     onOpenFiles: noop,
+    calendar: {
+      events: async () => events,
+      link: async () => "Work (demo)",
+      unlink: none,
+    },
     library: {
       ask: async (question) => {
         const text = `In **Launch planning**, the page goes live on Tuesday [1], and Kara shares the release notes by Friday [2]. (Demo answer to: ${question})`;

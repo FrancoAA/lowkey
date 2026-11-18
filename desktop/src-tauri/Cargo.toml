@@ -46,6 +46,10 @@ url = "2"
 # Vocabulary: whole-word, case-insensitive replacement of "sounds like" spellings.
 regex = "1"
 whatlang = "0.16"
+# Calendar links: recurring events (RRULE) and time zones of a pasted iCal address (src/calendar.rs).
+chrono = "0.4"
+chrono-tz = "0.10"
+rrule = "0.14"
 
 log = "0.4"
 

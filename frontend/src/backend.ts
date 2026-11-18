@@ -1,7 +1,7 @@
 /**
  * Everything the page needs from the app (Tauri commands and events) goes through here.
  */
-import type { AiNotesEvent, HistoryEntry, JobEvent, Meeting, MeetingLive, MeetingSummary, Status, VocabTerm } from "./api";
+import type { AiNotesEvent, CalEvent, HistoryEntry, JobEvent, Meeting, MeetingLive, MeetingSummary, Status, VocabTerm } from "./api";
 
 export interface FileRef {
   name: string;
@@ -107,6 +107,14 @@ export interface Backend {
   meetings: MeetingsBackend;
   /** Ask across all meetings (the Ask page). */
   library: LibraryBackend;
+  /** Settings → Meetings → Calendar, and the agenda on the Meetings page. */
+  calendar: {
+    /** The linked calendar's events from now to the end of tomorrow ([] when none is linked). */
+    events(): Promise<CalEvent[]>;
+    /** Link a private iCal address (checked first); returns the calendar's name. */
+    link(url: string): Promise<string>;
+    unlink(): Promise<void>;
+  };
 }
 
 /** A source an answer across meetings cites as [n]: a part of a meeting's transcript (`at`: its
@@ -136,7 +144,8 @@ export interface LibraryBackend {
 }
 
 export interface MeetingsBackend {
-  start(title: string): Promise<MeetingLive>;
+  /** `eventId`: the calendar event it records (its title and the people invited). */
+  start(title: string, eventId?: string): Promise<MeetingLive>;
   /** Stops, transcribes the last seconds and saves; returns the saved meeting. */
   stop(): Promise<Meeting>;
   live(): Promise<MeetingLive | null>;
@@ -279,7 +288,7 @@ async function desktopBackend(): Promise<Backend> {
       void invoke<string[]>("take_open_files").then((paths) => paths.length && cb(toRefs(paths)));
     },
     meetings: {
-      start: (title) => invoke<MeetingLive>("meeting_start", { title }),
+      start: (title, eventId) => invoke<MeetingLive>("meeting_start", { title, eventUid: eventId ?? null }),
       stop: () => invoke<Meeting>("meeting_stop"),
       live: () => invoke<MeetingLive | null>("meeting_live"),
       list: (query) => invoke<MeetingSummary[]>("meetings_list", { query: query || null }),
@@ -323,6 +332,11 @@ async function desktopBackend(): Promise<Backend> {
       onExport(cb) {
         void listen<{ id: string; state: string; file: string; detail: string }>("meeting-export", (e) => cb(e.payload));
       },
+    },
+    calendar: {
+      events: () => invoke<CalEvent[]>("calendar_events"),
+      link: (url) => invoke<string>("calendar_link", { url }),
+      unlink: () => invoke("calendar_unlink"),
     },
     library: {
       ask: (question, history) => invoke("library_ask", { question, history, utcOffsetMinutes: -new Date().getTimezoneOffset() }),

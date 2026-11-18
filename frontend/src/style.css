@@ -1008,3 +1008,22 @@ dialog.confirm p { margin: 8px 0 0; color: var(--muted-foreground); font-size: 1
 .ask-source-title { font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ask-source-when { font-size: 11.5px; color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
 .ask-source-text { grid-column: 2; font-size: 12.5px; line-height: 1.5; color: color-mix(in srgb, var(--foreground) 78%, var(--muted-foreground)); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+
+/* ───────────────────────────── Coming up (the calendar) ───────────────────────────── */
+.list-title { margin: 0 0 6px; padding: 0 12px; font-size: 12.5px; font-weight: 600; color: var(--muted-foreground); }
+.agenda-list { display: flex; flex-direction: column; gap: 2px; }
+.agenda-item {
+  display: grid; grid-template-columns: 92px minmax(0, 1fr) auto; align-items: center; gap: 14px;
+  min-height: 52px; padding: 8px 8px 8px 12px; border-radius: 10px;
+}
+.agenda-item:hover { background: var(--accent); }
+.agenda-when { display: flex; flex-direction: column; font-size: 13px; font-variant-numeric: tabular-nums; }
+.agenda-when small { font-size: 11.5px; color: var(--muted-foreground); }
+.agenda-main { display: flex; flex-direction: column; min-width: 0; }
+.agenda-title { font-size: 14.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agenda-who { font-size: 12.5px; color: var(--muted-foreground); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agenda-item[data-now] .agenda-when { color: var(--tint); font-weight: 600; }
+.calendar-input { flex: 1 1 260px; }
+.calendar-name { display: inline-flex; align-items: center; gap: 8px; font-weight: 500; }
+.calendar-name::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--success); }
+.calendar-name[data-error]::before { background: var(--destructive); }

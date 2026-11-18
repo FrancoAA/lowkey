@@ -131,6 +131,11 @@
               <button id="meeting-start" type="button" class="btn btn-default btn-rec" aria-describedby="meetings-key"><span class="rec-dot" aria-hidden="true"></span>Record</button>
               <span id="meetings-key" class="sr-only"></span>
             </header>
+            <!-- The linked calendar's next events (Settings → Meetings → Calendar). -->
+            <section id="agenda" class="agenda" aria-labelledby="agenda-title" hidden>
+              <h2 id="agenda-title" class="list-title">Coming up</h2>
+              <div id="agenda-list" class="agenda-list" role="list"></div>
+            </section>
             <div class="search-field">
               <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
               <input id="meetings-search" class="input" type="search" placeholder="Search titles, transcripts and notes" aria-label="Search meetings: titles, transcripts and notes" spellcheck="false" />
@@ -579,6 +584,21 @@
                 <p class="field-desc">A meeting that records a call stops by itself a few seconds after the call app leaves the microphone, and its notes are written.</p>
               </div>
               <input id="calls-auto-stop" type="checkbox" role="switch" class="switch" />
+            </div>
+          </div>
+          <div class="separator"></div>
+          <div class="field field-stacked">
+            <div class="field-text">
+              <label for="calendar-url" id="calendar-title">Calendar</label>
+              <p id="calendar-note" class="field-desc">Paste your calendar's private iCal address (Google Calendar: Settings → your calendar → "Secret address in iCal format"; Outlook: a published calendar's ICS link). The Meetings page shows what is coming up, and a meeting recorded at an event's time gets its title and the people invited, for better notes. The address stays on this computer; the app reads it every few minutes.</p>
+            </div>
+            <div class="key-line" id="calendar-add">
+              <input id="calendar-url" class="input calendar-input" type="password" autocomplete="off" spellcheck="false" placeholder="https://calendar.google.com/calendar/ical/…/basic.ics" />
+              <button id="calendar-link" type="button" class="btn btn-outline">Link</button>
+            </div>
+            <div class="key-line" id="calendar-linked" hidden>
+              <span id="calendar-name" class="calendar-name"></span>
+              <button id="calendar-unlink" type="button" class="btn btn-ghost">Remove</button>
             </div>
           </div>
           <div id="screen-card" class="settings-group" hidden>
