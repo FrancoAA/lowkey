@@ -308,6 +308,25 @@ quitButton.addEventListener("click", async () => {
   await backend.quit();
 });
 
+/** Automated tests (OPENWHISPER_TEST_LOG): each control that gets the keyboard focus goes to
+ * the test log ("page-focus"), so a test can move with Tab until the control it wants. */
+let focusReported = false;
+function reportFocus(): void {
+  if (focusReported || !backend) return;
+  focusReported = true;
+  const b = backend;
+  document.addEventListener("focusin", (e) => {
+    const el = e.target as HTMLElement;
+    void b.testEvent("page-focus", {
+      id: el.id || "",
+      section: el.dataset.section ?? "",
+      cls: el.className && typeof el.className === "string" ? el.className : "",
+      label: (el.getAttribute("aria-label") ?? el.textContent ?? "").trim().slice(0, 80),
+      page: section,
+    });
+  });
+}
+
 function applyStatus(next: Status): void {
   status = next;
   // Desktop: model download progress arrives as status events, not job events.
@@ -352,6 +371,7 @@ function applyStatus(next: Status): void {
   renderPreview();
   renderKey();
   if (backend) renderCalls(backend, status, showError);
+  if (status.test) reportFocus();
   if (backend) renderCalendar(backend, status, showError, () => {
     void refreshStatus();
     meetingsView?.refreshAgenda();
@@ -490,6 +510,8 @@ function handleRef(file: FileRef): void {
     return;
   }
   // The app checks the size and the content; this only catches an obviously wrong file early.
+  // A file dropped or opened from another page: its text shows on Transcribe.
+  if (section !== "transcribe") showSection("transcribe");
   if (!MEDIA_EXT.test(file.name)) {
     showError(`“${file.name}” is not an audio or video file. Try MP3, WAV, M4A, OGG, FLAC, WEBM or a video with sound.`);
     return;
@@ -1002,14 +1024,17 @@ function showSection(name: string, focus = false): void {
     if (on) n.setAttribute("aria-current", "page");
     else n.removeAttribute("aria-current");
   }
+  // Shown first: a hidden control cannot take the focus.
+  settingsPage.hidden = !inSettings();
+  for (const p of document.querySelectorAll<HTMLElement>(".content .section")) p.hidden = p.dataset.section !== name;
   for (const t of tabs) {
     const on = t.dataset.section === name;
     t.setAttribute("aria-selected", String(on));
     t.tabIndex = on ? 0 : -1; // one tab stop for the list; arrows move inside it
     if (on && focus) t.focus();
   }
-  settingsPage.hidden = !inSettings();
-  for (const p of document.querySelectorAll<HTMLElement>(".content .section")) p.hidden = p.dataset.section !== name;
+  // Back on a page from the keyboard (Esc or Ctrl+, in Settings): the focus on its sidebar item.
+  if (focus && !inSettings()) navItems.find((n) => n.dataset.section === name)?.focus();
   $<HTMLElement>("app").querySelector(".content")!.scrollTop = 0;
   if (name === "history") history?.refresh();
   if (name === "speech") microphone?.refresh();
@@ -1045,6 +1070,12 @@ document.addEventListener("keydown", (e) => {
   } else if (e.key.toLowerCase() === "k" && ctrl) {
     e.preventDefault();
     openSearch();
+  } else if (ctrl && ["1", "2", "3", "4"].includes(e.key) && !capturing) {
+    // Ctrl+1…4: the sidebar's pages, in its order.
+    e.preventDefault();
+    const page = PAGES[Number(e.key) - 1];
+    showSection(page, false);
+    document.querySelector<HTMLButtonElement>(`.sidebar .nav-item[data-section="${page}"]`)?.focus();
   } else if (e.key.toLowerCase() === "f" && ctrl && (section === "meetings" || section === "history")) {
     // Ctrl+F: the page's search field (Meetings: on the list, not inside a meeting).
     const field = $<HTMLInputElement>(section === "meetings" ? "meetings-search" : "history-search");

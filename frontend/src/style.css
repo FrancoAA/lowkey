@@ -434,7 +434,9 @@ h1 { font-size: 20px; font-weight: 600; }
   .content { padding: 0 16px; }
   .section-page, .settings-page { padding-top: 22px; }
   .page-title, h1.page-title { font-size: 24px; }
-  .field { flex-direction: column; align-items: stretch; gap: 10px; }
+  /* A select or a key goes under its text; a switch stays on the right of it. */
+  .field:not(:has(> .switch)) { flex-direction: column; align-items: stretch; gap: 10px; }
+  .field:not(:has(> .switch)) > .field-text { flex: none; }
 }
 @media (max-width: 460px) {
   .nav-item .nav-text { display: none; }

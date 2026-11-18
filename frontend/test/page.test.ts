@@ -82,6 +82,7 @@ describe("the window", () => {
   it("Settings is one page with tabs; Esc goes back", () => {
     key(",", { ctrlKey: true });
     expect(visible($("settings-page"))).toBe(true);
+    expect(document.activeElement?.getAttribute("data-section")).toBe("general"); // the focus on its first tab
     expect(visible($("section-general"))).toBe(true);
     document.querySelector<HTMLButtonElement>('#settings-tabs .tab[data-section="meeting-settings"]')!.click();
     expect(visible($("section-meeting-settings"))).toBe(true);
