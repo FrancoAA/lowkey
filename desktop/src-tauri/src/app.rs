@@ -72,6 +72,8 @@ pub struct App {
     call_offer: Mutex<Option<(crate::calls::Call, Instant)>>,
     /// The meeting recording a detected call: its id, the call, started automatically.
     call_session: Mutex<Option<(String, crate::calls::Call, bool)>>,
+    /// The known call apps and pages on the microphone at the last look (Linux).
+    calls_now: Mutex<Vec<crate::calls::Call>>,
     /// Calls seen while the app runs (Settings lists them with their policy).
     calls_seen: Mutex<Vec<crate::calls::Call>>,
     /// Hyprland: the strip's drag while the mouse button is down.
@@ -318,6 +320,7 @@ impl App {
             "history_keep": cfg.history_keep,
             "calls": {
                 "detect": cfg.call_detection,
+                "auto_stop": cfg.auto_stop,
                 "available": cfg!(target_os = "linux"),
                 "apps": self.call_apps(&cfg),
             },
@@ -763,9 +766,12 @@ impl App {
                 // A call is offered: the recording is that call (its name, and "ended" later).
                 let offered = self.call_offer.lock().take().map(|(c, _)| c);
                 let title = offered.as_ref().map(|c| format!("{} call", c.label)).unwrap_or_else(|| title.to_string());
+                // Not offered (refused before, or "never"), but a call is on the microphone now:
+                // the recording is that call too, for its end.
+                let bound = offered.clone().or_else(|| self.calls_now.lock().first().cloned());
                 match meeting_start_inner(self, &title) {
                 Ok(live) => {
-                    if let Some(c) = offered {
+                    if let Some(c) = bound {
                         *self.call_session.lock() = Some((live.meeting.id.clone(), c, false));
                     }
                     emit_logged(&self.handle, "meeting-start", json!({"result": {"Ok": live.meeting.id}}));
@@ -826,6 +832,7 @@ impl App {
                     let Some(json) = crate::microphones::mic_users_json() else { continue };
                     let users = crate::calls::parse_users(&json);
                     if users.is_empty() && detector_idle(&app) {
+                        app.calls_now.lock().clear();
                         let _ = detector.step(Instant::now(), vec![]);
                         continue;
                     }
@@ -833,6 +840,7 @@ impl App {
                     let titles = std::cell::OnceCell::new();
                     let calls: Vec<crate::calls::Call> =
                         users.iter().filter_map(|u| crate::calls::classify(u, &|pid| titles.get_or_init(window_titles).get(&pid).cloned())).collect();
+                    *app.calls_now.lock() = calls.iter().filter(|c| c.known).cloned().collect();
                     for action in detector.step(Instant::now(), calls) {
                         app.on_call(action);
                     }
@@ -852,8 +860,18 @@ impl App {
                         seen.push(call.clone());
                     }
                 }
-                if self.meeting.lock().is_some() || self.meeting_starting.load(Ordering::SeqCst) {
+                if self.meeting_starting.load(Ordering::SeqCst) {
                     return; // already recording
+                }
+                let live_id = self.meeting.lock().as_ref().map(|s| s.id());
+                if let Some(id) = live_id {
+                    // A meeting started by hand, then the call began: the meeting records that
+                    // call, so it can stop when the call ends.
+                    let mut session = self.call_session.lock();
+                    if session.is_none() {
+                        *session = Some((id, call.clone(), false));
+                    }
+                    return;
                 }
                 let policy = self.config.lock().call_policies.get(&call.key).cloned().unwrap_or_else(|| "ask".into());
                 emit_logged(&self.handle, "call", json!({"state": "detected", "key": call.key, "label": call.label, "policy": policy}));
@@ -910,8 +928,10 @@ impl App {
                 let live_id = self.meeting.lock().as_ref().map(|s| s.id());
                 if let Some((id, c, auto)) = session {
                     if c.key == call.key && live_id.as_deref() == Some(id.as_str()) {
-                        if auto {
-                            // Started by itself: it stops by itself.
+                        // Started by itself, or "Stop when the call ends" (on by default): it
+                        // stops by itself. The call was off the microphone for 3 s already, so a
+                        // new headset or a short mute does not stop it.
+                        if auto || self.config.lock().auto_stop {
                             emit_logged(&self.handle, "call", json!({"state": "ended", "key": call.key, "label": call.label, "auto": true}));
                             let me = self.clone();
                             std::thread::spawn(move || {
@@ -1319,6 +1339,7 @@ struct OptionsIn {
     microphone: Option<String>,
     avoid_bluetooth_mic: Option<bool>,
     call_detection: Option<bool>,
+    auto_stop: Option<bool>,
     /// One call's policy: { key, policy }.
     call_policy: Option<CallPolicyIn>,
 }
@@ -1496,6 +1517,9 @@ fn apply_options(app: &AppRef, options: OptionsIn) -> Result<Value, String> {
         }
         if let Some(on) = options.call_detection {
             cfg.call_detection = on;
+        }
+        if let Some(on) = options.auto_stop {
+            cfg.auto_stop = on;
         }
         if let Some(cp) = options.call_policy {
             if !crate::calls::POLICIES.contains(&cp.policy.as_str()) || cp.key.is_empty() || cp.key.len() > 64 {
@@ -3103,6 +3127,7 @@ pub fn run() {
                 pasting: AtomicBool::new(false),
                 call_offer: Mutex::new(None),
                 call_session: Mutex::new(None),
+                calls_now: Mutex::new(Vec::new()),
                 calls_seen: Mutex::new(Vec::new()),
                 overlay_wants: [AtomicBool::new(false), AtomicBool::new(false)],
                 overlay_capsule: AtomicBool::new(false),

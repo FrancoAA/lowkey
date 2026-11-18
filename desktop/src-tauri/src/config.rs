@@ -89,6 +89,8 @@ pub struct Config {
     pub avoid_bluetooth_mic: bool,
     /// Offer to record when a call app uses the microphone (Linux).
     pub call_detection: bool,
+    /// Stop a meeting by itself when the call it records ends (its app leaves the microphone).
+    pub auto_stop: bool,
     /// Per call ("zoom", "google-meet", "browser:firefox"): ask | always | never. Missing = ask.
     /// (A table: the toml writer puts it after the plain values.)
     pub call_policies: std::collections::BTreeMap<String, String>,
@@ -151,6 +153,7 @@ impl Default for Config {
             microphone: String::new(),
             avoid_bluetooth_mic: true,
             call_detection: true,
+            auto_stop: true,
             call_policies: Default::default(),
             ai_engine: "builtin".into(),
             ai_builtin_model: crate::llm::DEFAULT_MODEL.into(),

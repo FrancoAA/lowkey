@@ -40,7 +40,7 @@ export interface Status {
   /** off | day | week | month | forever */
   history_keep?: string;
   /** Call detection: on/off, built here (Linux), and each call with its policy. */
-  calls?: { detect: boolean; available: boolean; apps: { key: string; label: string; policy: "ask" | "always" | "never" }[] };
+  calls?: { detect: boolean; auto_stop: boolean; available: boolean; apps: { key: string; label: string; policy: "ask" | "always" | "never" }[] };
   /** A meeting is being recorded. */
   recording?: boolean;
   /** An automated test runs (OPENWHISPER_TEST_LOG): the page reports its player's events. */
