@@ -91,6 +91,9 @@ pub struct Config {
     pub call_detection: bool,
     /// Stop a meeting by itself when the call it records ends (its app leaves the microphone).
     pub auto_stop: bool,
+    /// Name the others from the call app's window (Zoom, Teams, Meet), read through the
+    /// accessibility bus while a meeting records (Linux; src/callnames.rs).
+    pub call_names: bool,
     /// Settings → Meetings → Calendar: the private iCal address (a secret: never sent to the
     /// page, never logged), and its name. "" = none.
     pub calendar_url: String,
@@ -158,6 +161,7 @@ impl Default for Config {
             avoid_bluetooth_mic: true,
             call_detection: true,
             auto_stop: true,
+            call_names: true,
             calendar_url: String::new(),
             calendar_name: String::new(),
             call_policies: Default::default(),

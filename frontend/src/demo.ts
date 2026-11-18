@@ -93,7 +93,7 @@ const status: Status = {
   paste_key: "SUPER + ALT + V",
   paste_key_source: "app",
   history_keep: "week",
-  calls: { detect: true, auto_stop: true, available: true, apps: [] },
+  calls: { detect: true, auto_stop: true, names: true, available: true, apps: [] },
   calendar: { linked: true, name: "Work (demo)", error: "" },
   recording: false,
   agents: { recording: false, program: "/usr/bin/lowkey" },

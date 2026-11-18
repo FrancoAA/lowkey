@@ -46,6 +46,7 @@ export interface Options {
   avoid_bluetooth_mic?: boolean;
   call_detection?: boolean;
   auto_stop?: boolean;
+  call_names?: boolean;
   call_policy?: { key: string; policy: string };
 }
 

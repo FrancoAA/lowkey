@@ -4,6 +4,7 @@ pub mod app;
 pub mod audio;
 pub mod autostart;
 pub mod calendar;
+pub mod callnames;
 pub mod calls;
 pub mod cloud_stt;
 pub mod config;

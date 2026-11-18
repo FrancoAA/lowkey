@@ -253,6 +253,7 @@ pub fn load_in(dir: &Path, id: &str) -> anyhow::Result<Meeting> {
 pub fn delete_in(dir: &Path, id: &str) -> anyhow::Result<()> {
     let _one = ONE_EDIT.lock();
     std::fs::remove_file(file_in(dir, id)?).map_err(|e| anyhow::anyhow!("meeting {id}: {e}"))?;
+    let _ = std::fs::remove_file(call_samples_path(dir, id));
     crate::screen::delete_files(dir, id); // its screen video
     Ok(())
 }
@@ -700,6 +701,49 @@ pub fn set_people(m: &mut Meeting, turns: &[crate::voices::Turn]) {
     m.transcript_version += 1;
 }
 
+/// Names from the call app (src/callnames.rs) for the others. With voices told apart: each
+/// person gets the name the app showed for most of their speech (an empty name only: a name you
+/// typed stays). Without: each "Them" line the app clearly names gets a person of that name.
+/// Never a name that another person has already. True when something changed.
+pub fn apply_call_names(m: &mut Meeting, samples: &[crate::callnames::Sample]) -> bool {
+    if samples.iter().all(|s| !s.ok || (s.speaking.is_empty() && s.participants.is_empty())) {
+        return false;
+    }
+    let taken = |people: &[String], name: &str| people.iter().any(|p| p.trim().eq_ignore_ascii_case(name.trim()));
+    let mut changed = false;
+    if m.lines.iter().any(|l| l.speaker == Speaker::Them && l.person > 0) {
+        let lines: Vec<(f64, f64, u32)> = m.lines.iter().filter(|l| l.speaker == Speaker::Them).map(|l| (l.start, l.end, l.person)).collect();
+        for (person, name) in crate::callnames::name_people(&lines, samples, &[]) {
+            let i = person as usize - 1;
+            if i < m.people.len() && m.people[i].trim().is_empty() && !taken(&m.people, &name) {
+                m.people[i] = name.chars().take(MAX_NAME).collect();
+                changed = true;
+            }
+        }
+        return changed;
+    }
+    for l in m.lines.iter_mut().filter(|l| l.speaker == Speaker::Them && l.person == 0) {
+        let Some(name) = crate::callnames::name_for(l.start, l.end, samples, &[]) else { continue };
+        let name: String = name.chars().take(MAX_NAME).collect();
+        let n = match m.people.iter().position(|p| p.trim().eq_ignore_ascii_case(name.trim())) {
+            Some(i) => i + 1,
+            None => {
+                m.people.push(name);
+                m.people.len()
+            }
+        };
+        l.person = n as u32;
+        changed = true;
+    }
+    changed
+}
+
+/// The call app's readings of a meeting whose voices are told apart later: kept next to it
+/// until then (`<id>.callnames.json`, in the private meetings folder).
+pub fn call_samples_path(dir: &Path, id: &str) -> PathBuf {
+    dir.join(format!("{id}.callnames.json"))
+}
+
 /// What the language model reads: the title, your notes and the transcript (no AI notes).
 /// No date: the app may not know the time zone here, and a wrong date would end up in the notes.
 pub fn model_input(m: &Meeting) -> String {
@@ -990,6 +1034,9 @@ pub struct Session {
     video_stop: Mutex<()>,
     /// Screen videos started in this meeting: the next one's number (never the same twice).
     videos_started: AtomicUsize,
+    /// Names from the call app (src/callnames.rs): its readings while it records, and after Stop.
+    call_watch: Mutex<Option<crate::callnames::Watcher>>,
+    call_samples: Mutex<Vec<crate::callnames::Sample>>,
 }
 
 impl Session {
@@ -1039,11 +1086,24 @@ impl Session {
             video: Mutex::new(None),
             video_stop: Mutex::new(()),
             videos_started: AtomicUsize::new(0),
+            call_watch: Mutex::new(None),
+            call_samples: Mutex::new(Vec::new()),
         }))
     }
 
     pub fn id(&self) -> String {
         self.inner.doc.lock().id.clone()
+    }
+
+    /// Read the call app's window while it records, for the others' names (call before
+    /// `open_sources`, or right after). `hint`: the call's key (calls.rs), None: any call app.
+    pub fn watch_call(&self, hint: Option<&str>) {
+        *self.call_watch.lock() = Some(crate::callnames::Watcher::start(self.inner.clock, hint));
+    }
+
+    /// After `finish`: what the call app showed (empty when it was not read).
+    pub fn call_samples(&self) -> Vec<crate::callnames::Sample> {
+        std::mem::take(&mut *self.call_samples.lock())
     }
 
     /// Keep the computer's sound in `path` until Stop, to tell the voices apart (call before
@@ -1290,6 +1350,9 @@ impl Session {
 
     fn stop_sources(&self) {
         *self.inner.ended.lock() = Some(self.inner.clock.elapsed().as_secs_f64());
+        if let Some(w) = self.call_watch.lock().take() {
+            *self.call_samples.lock() = w.stop();
+        }
         // The mic's stop sends its last block to the tap; then the rest of each source goes out.
         if let Some(mut m) = self.mic.lock().take() {
             m.stop();
@@ -1623,6 +1686,31 @@ mod tests {
         assert_eq!(out.len(), 1);
         assert_eq!((out[0].start, out[0].pcm.len()), (0, 2 * R));
         assert_eq!(c.flush().map(|p| p.start), Some(10 * R));
+    }
+
+    #[test]
+    fn names_from_the_call_app_fill_only_empty_places() {
+        use crate::callnames::Sample;
+        let talking = |at: f64, who: &str| Sample { at, speaking: vec![who.into()], participants: vec!["Kara".into(), "Omar".into(), "Me Myself".into()], me: Some("Me Myself".into()), ok: true };
+        let mut samples = Vec::new();
+        for i in 0..20 {
+            samples.push(talking(i as f64 * 0.5, "Kara"));
+            samples.push(talking(20.0 + i as f64 * 0.5, "Omar"));
+        }
+        samples.sort_by(|a, b| a.at.total_cmp(&b.at));
+        // No voices: each clearly named line gets a person of that name.
+        let mut m = Meeting { lines: vec![line(Speaker::Them, 1.0, 8.0, "hello"), line(Speaker::Them, 21.0, 28.0, "hi"), line(Speaker::Me, 10.0, 12.0, "yes")], ..Default::default() };
+        assert!(apply_call_names(&mut m, &samples));
+        assert_eq!(m.people, vec!["Kara".to_string(), "Omar".to_string()]);
+        assert_eq!((m.lines[0].person, m.lines[1].person, m.lines[2].person), (1, 2, 0));
+        // With voices: only an empty name is filled.
+        let mut m = Meeting { lines: vec![line(Speaker::Them, 1.0, 8.0, "hello"), line(Speaker::Them, 21.0, 28.0, "hi")], people: vec![String::new(), "Mine".into()], ..Default::default() };
+        m.lines[0].person = 1;
+        m.lines[1].person = 2;
+        assert!(apply_call_names(&mut m, &samples));
+        assert_eq!(m.people, vec!["Kara".to_string(), "Mine".to_string()]);
+        // Nothing read: nothing changes.
+        assert!(!apply_call_names(&mut m, &[Sample::unknown(1.0)]));
     }
 
     #[test]

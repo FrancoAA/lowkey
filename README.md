@@ -239,6 +239,16 @@ Record a call or a talk, as text next to your notes (Linux for now). No bot join
   time went to the right person (54% with one label for all). Voices that are alike, people
   who talk at the same time, and a person who says little are the usual errors.
   Details: [docs/voices.md](docs/voices.md).
+- **Names from the call app** (Linux; Settings → Meetings → Names from the call app, on by
+  default): while a meeting records, the app reads the window of Zoom, Teams or Google Meet in a
+  browser through the desktop's accessibility service (AT-SPI), read-only, about twice a second:
+  who is in the call and who it marks as talking. After Stop, a "Them" line gets the name the app
+  showed for most of it, or the only other person in the call; never a guess. With Who is
+  speaking on, each voice gets the name that covers most of its speech (at least 5 s), and a name
+  you typed is never replaced. Names stay on this computer; the log gets counts only. Meet in
+  Chrome or Firefox shows its page to the accessibility service only when the browser's
+  accessibility is on (`--force-renderer-accessibility`). (Port of
+  [Yogurt](https://github.com/FrigadeHQ/yogurt)'s call names, MIT.)
 - **Screen video** (Linux): during a meeting, **Record screen** (in the meeting's live panel,
   or the screen button on the strip) saves the screen, or one window, as a video with the
   meeting; **Stop screen** stops it, and the meeting goes on. Record it as often as you want:

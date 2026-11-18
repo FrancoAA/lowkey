@@ -327,6 +327,7 @@ impl App {
             "calls": {
                 "detect": cfg.call_detection,
                 "auto_stop": cfg.auto_stop,
+                "names": cfg.call_names,
                 "available": cfg!(target_os = "linux"),
                 "apps": self.call_apps(&cfg),
             },
@@ -1391,6 +1392,7 @@ struct OptionsIn {
     avoid_bluetooth_mic: Option<bool>,
     call_detection: Option<bool>,
     auto_stop: Option<bool>,
+    call_names: Option<bool>,
     /// One call's policy: { key, policy }.
     call_policy: Option<CallPolicyIn>,
 }
@@ -1571,6 +1573,9 @@ fn apply_options(app: &AppRef, options: OptionsIn) -> Result<Value, String> {
         }
         if let Some(on) = options.auto_stop {
             cfg.auto_stop = on;
+        }
+        if let Some(on) = options.call_names {
+            cfg.call_names = on;
         }
         if let Some(cp) = options.call_policy {
             if !crate::calls::POLICIES.contains(&cp.policy.as_str()) || cp.key.is_empty() || cp.key.len() > 64 {
@@ -1791,6 +1796,11 @@ fn meeting_open(app: &AppRef, title: &str) -> Result<meeting::Live, String> {
             session.notice(format!("The others' voices will not be told apart in this meeting: {e:#}."));
         }
     }
+    if cfg!(target_os = "linux") && app.config.lock().call_names {
+        // The call on the microphone now, when there is one: only its app is read.
+        let hint = app.calls_now.lock().first().map(|c| c.key.clone());
+        session.watch_call(hint.as_deref());
+    }
     if let Err(e) = session.open_sources() {
         session.abandon();
         let _ = meeting::delete_in(&meeting::dir(), &id);
@@ -1902,6 +1912,24 @@ fn stop_meeting(app: &AppRef) -> Result<meeting::Meeting, String> {
     if let Ok(m) = &r {
         let theirs = session.their_sound();
         let them = m.lines.iter().any(|l| l.speaker == meeting::Speaker::Them);
+        let samples = session.call_samples();
+        let voices_next = theirs.is_some() && them && app.config.lock().meeting_voices;
+        let mut m = m.clone();
+        if voices_next {
+            // Named once the voices are told apart (tell_voices_apart).
+            if !samples.is_empty() {
+                if let Ok(json) = serde_json::to_vec(&samples) {
+                    let _ = std::fs::write(meeting::call_samples_path(&meeting::dir(), &m.id), json);
+                }
+            }
+        } else if them && !samples.is_empty() {
+            if let Ok(named) = meeting::edit_in(&meeting::dir(), &m.id, |x| {
+                meeting::apply_call_names(x, &samples);
+            }) {
+                m = named;
+            }
+        }
+        let m = &m;
         match theirs {
             // The voices first (about 2 min for an hour); the note app and the AI notes then
             // get the speakers.
@@ -1953,11 +1981,28 @@ fn tell_voices_apart(app: &AppRef, id: &str, tape: &std::path::Path) {
     if r.is_err() {
         crate::voices::verify(); // a broken model downloads again when the setting is turned on
     }
-    let r = r.and_then(|turns| meeting::edit_in(&meeting::dir(), id, |m| meeting::set_people(m, &turns)));
+    // The call app's names for the voices found (kept next to the meeting since Stop).
+    let names_file = meeting::call_samples_path(&meeting::dir(), id);
+    let samples: Vec<crate::callnames::Sample> = std::fs::read(&names_file).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
+    let r = r.and_then(|turns| {
+        meeting::edit_in(&meeting::dir(), id, |m| {
+            meeting::set_people(m, &turns);
+            meeting::apply_call_names(m, &samples);
+        })
+    });
+    let _ = std::fs::remove_file(&names_file);
     drop(working);
     match r {
         Ok(m) => emit_logged(&app.handle, "meeting-voices", json!({"id": id, "state": "done", "detail": "", "meeting": m})),
-        Err(e) => emit_logged(&app.handle, "meeting-voices", json!({"id": id, "state": "error", "detail": format!("The voices could not be told apart: {e:#}")})),
+        Err(e) => {
+            // No voices: the call app's names still name the lines it clearly shows.
+            if !samples.is_empty() {
+                let _ = meeting::edit_in(&meeting::dir(), id, |m| {
+                    meeting::apply_call_names(m, &samples);
+                });
+            }
+            emit_logged(&app.handle, "meeting-voices", json!({"id": id, "state": "error", "detail": format!("The voices could not be told apart: {e:#}")}))
+        }
     }
 }
 
