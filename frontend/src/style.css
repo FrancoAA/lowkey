@@ -971,6 +971,7 @@ dialog.confirm p { margin: 8px 0 0; color: var(--muted-foreground); font-size: 1
 .splitter { position: relative; touch-action: none; outline: none; }
 .splitter-cols { cursor: col-resize; }
 .splitter-rows { cursor: row-resize; }
+.splitter-list { display: none; } /* a wide window only (below) */
 .splitter::before {
   content: ""; position: absolute; border-radius: 2px; background: transparent;
   transition: background-color 0.12s;
@@ -1067,12 +1068,13 @@ dialog.confirm p { margin: 8px 0 0; color: var(--muted-foreground); font-size: 1
   /* The part's name heads its column (the tab no longer sits above it). */
   .settings-page .section-head h2 { display: block; font-size: 20px; font-weight: 650; letter-spacing: -0.02em; margin-bottom: 6px; }
 }
-/* A wide window: the meetings are a column on the left (a fixed width, the whole height, as the
-   Settings parts), the open meeting beside it. The foot's line runs across both, to the sidebar's. */
+/* A wide window: the meetings are a column on the left (340 px, the whole height; its line can be
+   dragged: --list-w, splitter.ts), the open meeting beside it. The foot's line runs across both,
+   to the sidebar's. */
 @media (min-width: 1100px) {
   #section-meetings, #section-meetings:has(> .meeting-view:not([hidden])) {
     position: relative; width: auto; max-width: none; margin: 0 calc(-1 * var(--page-pad)); padding: 0; gap: 0;
-    display: grid; grid-template-columns: 300px minmax(0, 1fr); height: 100vh; min-height: 480px;
+    display: grid; grid-template-columns: var(--list-w, 340px) minmax(0, 1fr); height: 100vh; min-height: 480px;
   }
   #section-meetings::after {
     content: ""; position: absolute; left: 0; right: 0; bottom: calc(var(--foot-h) - 1px); height: 1px;
@@ -1126,6 +1128,15 @@ dialog.confirm p { margin: 8px 0 0; color: var(--muted-foreground); font-size: 1
     gap: 4px; padding: 0 24px calc(var(--foot-h) + 24px); text-align: center;
   }
   .meeting-none[hidden] { display: none; }
+  /* The list's line (its border) takes the pointer 6 px on each side; it shows on hover, on focus
+     and while it is dragged, as the meeting's own lines. */
+  .splitter-list {
+    display: block; position: absolute; top: 0; bottom: 0; left: calc(var(--list-w, 340px) - 6px); width: 12px;
+    z-index: 2; cursor: col-resize;
+  }
+  .splitter-list::before { top: 0; bottom: 0; left: 4px; width: 2px; }
+  #section-meetings[data-resizing] { user-select: none; cursor: col-resize; }
+  #section-meetings[data-resizing] > .splitter-list::before { background: var(--ring); }
 }
 /* The meeting key's line is read with Record; on a narrow window it is not on screen. */
 @media (max-width: 1099px) {

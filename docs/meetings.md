@@ -53,8 +53,11 @@ macOS and Windows, a prompt when a call starts, and questions over past meetings
   length, the first words, and marks for "Recording" and "Interrupted". With no
   meetings, it says how to start, and names the meeting key.
 - A window 1100 px or wider shows the list and the open meeting side by side: the list is a
-  300 px column on the left (the meeting key at its foot), the meeting on the right ("Choose a
-  meeting" when none is open; Esc closes it and puts the focus back on its row).
+  340 px column on the left (the meeting key at its foot), the meeting on the right ("Choose a
+  meeting" when none is open; Esc closes it and puts the focus back on its row). The list's
+  width can be changed from 260 to 560 px (the meeting keeps at least 560 px): drag its line, or
+  focus it with Tab and use the arrow keys; a double click puts 340 px back. The width is kept on
+  this computer.
 - One meeting is a page that reads like a note: **Meetings** (back, or Esc), the **Copy** menu
   (the summary, your notes, the transcript; Export as Markdown; Save to the notes folder; Open
   in Obsidian) and the **⋯** menu (Write the summary again… with an optional instruction;
