@@ -13,7 +13,7 @@ import type { Backend } from "./backend";
 import { renderMarkdown } from "./markdown";
 import { excerpt, SourceIndex } from "./crossref";
 import { DualWaveform } from "./waveform";
-import { resizablePanels } from "./splitter";
+import { resizableList, resizablePanels } from "./splitter";
 
 /** A small spinner (style.css "loading"): the app is at work, with no measure of how far. */
 function spinner(): HTMLElement {
@@ -864,6 +864,7 @@ export function initMeetings(backend: Backend, ui: MeetingsUi): { refreshExport(
   setCollapsed(videoCollapsed);
   videoToggle.addEventListener("click", () => setCollapsed(!videoCollapsed));
 
+  resizableList($<HTMLElement>("section-meetings"), $<HTMLElement>("split-list"));
   resizablePanels(body, {
     cols: $<HTMLElement>("split-cols"),
     rows: $<HTMLElement>("split-rows"),
