@@ -289,6 +289,13 @@ pub struct Cli {
     pub version: bool,
     pub print_snippet: Option<String>,
     pub remove_hotkey: bool,
+    /// Print a report for a bug: the version, the system, the processor, the last crash and the
+    /// end of the log (src/crash.rs).
+    pub crash_report: bool,
+    /// Crash on purpose (panic | segfault | illegal-instruction): checks the crash handlers.
+    pub crash_test: Option<String>,
+    /// Print what the speech engine can use here: the GPU, or the CPU (src/gpu.rs).
+    pub devices: bool,
 }
 
 pub const HELP: &str = "Lowkey — local speech to text
@@ -308,6 +315,9 @@ Usage: lowkey [options] [audio or video files…]
   --transcribe <file>     transcribe a file without a window and print JSON
   --print-snippet [lua|conf]  print the Hyprland config lines for the key
   --remove-hotkey         remove a key that the app added to the running Hyprland
+  --devices               print what the speech engine uses here: the GPU or the CPU
+  --crash-report          print a report for a bug (version, system, processor, the last
+                          crash, the end of the log); the log folder is in the report
   -h, --help / -V, --version
 ";
 
@@ -330,6 +340,9 @@ impl Cli {
                 "--background" => cli.background = true,
                 "--transcribe" => cli.transcribe = it.next().map(PathBuf::from),
                 "--remove-hotkey" => cli.remove_hotkey = true,
+                "--crash-report" => cli.crash_report = true,
+                "--devices" => cli.devices = true,
+                "--crash-test" => cli.crash_test = it.next(),
                 "--print-snippet" => {
                     let kind = match it.peek().map(String::as_str) {
                         Some("lua") | Some("conf") => it.next().unwrap(),

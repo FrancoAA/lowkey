@@ -26,5 +26,11 @@ fn main() {
     if env == "msvc" {
         println!("cargo:rustc-link-arg=/ignore:4099");
     }
+    // Windows with Vulkan: vulkan-1.dll comes with GPU drivers, not with Windows. Loaded when
+    // ggml first asks for it, so that a PC without it still starts (src/gpu.rs `delay_load`).
+    if os == "windows" && env == "msvc" && std::env::var_os("CARGO_FEATURE_WINDOWS_GPU").is_some() {
+        println!("cargo:rustc-link-arg=/DELAYLOAD:vulkan-1.dll");
+        println!("cargo:rustc-link-lib=delayimp");
+    }
     tauri_build::build()
 }

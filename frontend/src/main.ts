@@ -1416,8 +1416,47 @@ function renderAbout(): void {
   aboutKey("about-key-meeting", status.meeting_key, status.meeting_key_source);
 }
 
+/** Crash reports: the notice after a crash, and Settings → About → A problem? The report goes
+ * to the clipboard too: a GitHub address can only take the end of the log. */
+function initProblems(b: Backend): void {
+  const notice = $<HTMLDivElement>("crash-notice");
+  const note = $<HTMLParagraphElement>("problem-note");
+  const say = (text: string) => {
+    note.textContent = text;
+    note.hidden = !text;
+    announce(text);
+  };
+  const report = async (open: boolean) => {
+    try {
+      const r = await b.problems.report(open);
+      await b.copy(r.text);
+      notice.hidden = true;
+      say(r.error ?? (open ? "The report opened in your browser. It is on the clipboard too." : "The report is on the clipboard."));
+    } catch (e) {
+      say(`No report: ${e}`);
+    }
+  };
+  $<HTMLButtonElement>("crash-report").addEventListener("click", () => void report(true));
+  $<HTMLButtonElement>("crash-copy").addEventListener("click", () => void report(false));
+  $<HTMLButtonElement>("crash-close").addEventListener("click", () => {
+    notice.hidden = true;
+    void b.problems.dismiss();
+  });
+  $<HTMLButtonElement>("problem-report").addEventListener("click", () => void report(true));
+  $<HTMLButtonElement>("problem-copy").addEventListener("click", () => void report(false));
+  $<HTMLButtonElement>("logs-open").addEventListener("click", () => {
+    b.problems.openLogs().catch((e) => say(String(e)));
+  });
+  void b.problems.previousCrash().then((reason) => {
+    if (!reason) return;
+    $<HTMLSpanElement>("crash-reason").textContent = reason;
+    notice.hidden = false;
+  });
+}
+
 void getBackend().then((b) => {
   backend = b;
+  initProblems(b);
   b.onStatus(applyStatus);
   b.onFileDrop(
     (over) => dropzone.classList.toggle("over", over),

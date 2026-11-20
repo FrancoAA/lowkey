@@ -2797,6 +2797,50 @@ fn calendar_events(app: State<'_, AppRef>) -> Vec<crate::calendar::Event> {
     app.calendar.lock().as_ref().map(|f| f.events.iter().filter(|e| e.end > now && e.start < until).cloned().collect()).unwrap_or_default()
 }
 
+// ------------------------------------------------------------------ Crash reports
+/// The speech engine, for a report (src/crash.rs).
+fn crash_facts(hw: &models::Hardware, cfg: &Config) -> crate::crash::Facts {
+    let device = hw.gpu.clone().map(|g| format!("GPU ({g})")).unwrap_or_else(|| "CPU".into());
+    let speech = if models::spec(&cfg.model).is_some() { format!("model {}", cfg.model) } else { format!("model {} (automatic)", models::auto_model(hw)) };
+    crate::crash::Facts { device, speech }
+}
+
+/// The crash of the run before, in a few words ("illegal instruction"), for the notice at the
+/// top of the window; null when there was none (or it was reported or closed).
+#[tauri::command]
+fn crash_previous() -> Option<String> {
+    crate::crash::previous_crash()
+}
+
+#[tauri::command]
+fn crash_dismiss() {
+    crate::crash::dismiss();
+}
+
+/// The report (its text, for the clipboard). `open`: a new GitHub issue with it opens in the
+/// browser too; "error" says when it did not. The app sends nothing itself.
+#[tauri::command]
+fn problem_report(app: State<'_, AppRef>, open: bool) -> Value {
+    let facts = crash_facts(&app.engines.hw, &app.config.lock());
+    let r = crate::crash::report(&facts);
+    let error = if open {
+        crate::crash::open(&r.url).err().map(|e| format!("The browser did not open ({e}). The report is on the clipboard: paste it at {}.", crate::crash::ISSUES_URL))
+    } else {
+        None
+    };
+    crate::crash::log_line(if open { "problem report: opened in the browser" } else { "problem report: copied" });
+    crate::crash::dismiss();
+    json!({"text": r.text, "error": error})
+}
+
+/// The folder of the logs, in the file manager.
+#[tauri::command]
+fn logs_open() -> Result<(), String> {
+    let dir = crate::crash::dir();
+    let _ = std::fs::create_dir_all(&dir);
+    crate::crash::open(&dir.to_string_lossy()).map_err(|e| format!("Could not open {}: {e}", dir.display()))
+}
+
 // ------------------------------------------------------------------ Ask across meetings
 #[derive(Deserialize)]
 struct Turn {
@@ -3206,6 +3250,30 @@ fn register_global_shortcut(app: &AppRef, key: &str, kind: KeyKind) -> String {
 /// Headless commands that need no window. Returns true when handled.
 pub fn headless(cli: &Cli) -> bool {
     let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("lowkey"));
+    if cli.help || cli.version || cli.print_snippet.is_some() || cli.remove_hotkey || cli.transcribe.is_some() || cli.crash_report || cli.devices {
+        crate::crash::attach_console(); // Windows: the text goes to the terminal that started it
+    }
+    if cli.crash_report {
+        crate::rename::migrate();
+        // No GPU check here: Vulkan can abort without a GPU driver, and the report must work
+        // even when the GPU is the problem. The log's first line names the device anyway.
+        let cfg = Config::load();
+        let speech = if models::spec(&cfg.model).is_some() { format!("model {}", cfg.model) } else { "model chosen automatically".into() };
+        let facts = crate::crash::Facts { device: "not checked (--crash-report)".into(), speech };
+        let r = crate::crash::report_from_files(&facts);
+        println!("{}\nThe logs: {}\nReport it (paste the text above): {}", r.text, crate::crash::dir().display(), crate::crash::ISSUES_URL);
+        return true;
+    }
+    if cli.devices {
+        println!("{}", crate::gpu::describe());
+        return true;
+    }
+    if let Some(kind) = &cli.crash_test {
+        crate::rename::migrate();
+        crate::crash::install();
+        crate::crash::test(kind);
+        return true;
+    }
     if cli.help {
         print!("{HELP}");
         return true;
@@ -3388,6 +3456,10 @@ pub fn run() {
             calendar_link,
             calendar_unlink,
             calendar_events,
+            crash_previous,
+            crash_dismiss,
+            problem_report,
+            logs_open,
             meeting_chat_clear,
             app_quit
         ])
@@ -3408,6 +3480,9 @@ pub fn run() {
                 }
                 std::process::exit(0);
             }
+            // This run's log and the crash handlers. Not earlier: a second launch that hands its
+            // arguments over ends before this, and must not move the running app's log.
+            crate::crash::install();
             let handle = tauri_app.handle().clone();
             // The others' sound of meetings whose voices were not told apart (the app quit or
             // crashed first): listed now, before a meeting can record; told apart below.

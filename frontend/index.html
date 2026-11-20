@@ -66,6 +66,21 @@
       </aside>
 
       <main class="content">
+        <!-- The app stopped the last time (src/crash.rs): offer a report. Nothing is sent by the app. -->
+        <div id="crash-notice" class="crash-notice" role="alert" hidden>
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3" /><path d="M12 9v4M12 17h.01" /></svg>
+          <div class="crash-text">
+            <p><strong>Lowkey stopped unexpectedly the last time</strong> (<span id="crash-reason"></span>).</p>
+            <p>A report helps to fix it. It opens as a GitHub issue in your browser, and you read it before you send it. It has the app's version, the system, the processor and the end of the app's log: no audio, and no text of your meetings or dictations.</p>
+          </div>
+          <div class="crash-actions">
+            <button id="crash-report" type="button" class="btn btn-default btn-sm">Report it</button>
+            <button id="crash-copy" type="button" class="btn btn-outline btn-sm">Copy the report</button>
+            <button id="crash-close" type="button" class="btn btn-ghost btn-sm btn-icon" aria-label="Close" title="Close">
+              <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+            </button>
+          </div>
+        </div>
         <!-- Transcribe: files, dictation in this window, the result -->
         <section id="section-transcribe" class="section section-page" data-section="transcribe" aria-label="Transcribe" hidden>
           <header class="section-head">
@@ -806,6 +821,16 @@
             </dd>
             <dt>Keys in this window</dt>
             <dd><kbd>Space</kbd> dictate (in Transcribe) · <kbd>Esc</kbd> cancel · <kbd>Ctrl</kbd> <kbd>,</kbd> settings</dd>
+            <dt>A problem?</dt>
+            <dd>
+              <div class="about-actions">
+                <button id="problem-report" type="button" class="btn btn-outline btn-sm">Report a problem</button>
+                <button id="problem-copy" type="button" class="btn btn-ghost btn-sm">Copy the report</button>
+                <button id="logs-open" type="button" class="btn btn-ghost btn-sm">Open the logs</button>
+              </div>
+              <p class="about-keys-note">The report opens as a GitHub issue in your browser: you read it before you send it. It has the version, the system, the processor, the last crash and the end of the app's log; no audio and no text of your meetings or dictations. From a terminal: <code>lowkey --crash-report</code>.</p>
+              <p id="problem-note" class="about-keys-note" role="status" hidden></p>
+            </dd>
           </dl>
         </section>
         </div>
