@@ -2686,6 +2686,7 @@ dependencies = [
  "webkit2gtk",
  "whatlang",
  "whisper-rs",
+ "windows-sys 0.61.2",
  "zbus",
 ]
 

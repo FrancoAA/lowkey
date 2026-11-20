@@ -8,6 +8,7 @@ pub mod callnames;
 pub mod calls;
 pub mod cloud_stt;
 pub mod config;
+pub mod crash;
 pub mod dictation;
 pub mod echo;
 pub mod engine;

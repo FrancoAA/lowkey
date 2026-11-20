@@ -373,7 +373,23 @@ h1 { font-size: 20px; font-weight: 600; }
 .about dt { color: var(--muted-foreground); }
 .about dd { margin: 0; }
 .about-keys { margin: 0 0 4px; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; }
-.about-keys-note { color: var(--muted-foreground); font-size: 13px; }
+.about-keys-note { color: var(--muted-foreground); font-size: 13px; margin: 6px 0 0; }
+.about-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+
+/* After a crash: one notice at the top of the window, until it is reported or closed. */
+.crash-notice { display: flex; align-items: flex-start; gap: 12px; max-width: 1120px; margin: 16px auto 0; padding: 12px 14px;
+  border-radius: var(--radius); font-size: 13px; border: 1px solid color-mix(in srgb, var(--warning) 45%, transparent);
+  background: color-mix(in srgb, var(--warning) 8%, var(--background)); }
+.crash-notice[hidden] { display: none; }
+.crash-notice > .icon { flex: none; width: 18px; height: 18px; margin-top: 1px; color: var(--warning); }
+.crash-text { flex: 1; min-width: 0; }
+.crash-text p { margin: 0; }
+.crash-text p + p { margin-top: 4px; color: var(--muted-foreground); }
+.crash-actions { flex: none; display: flex; align-items: center; gap: 6px; }
+@media (max-width: 720px) {
+  .crash-notice { flex-wrap: wrap; }
+  .crash-actions { width: 100%; padding-left: 30px; }
+}
 
 /* ───────────────────────────── loading ─────────────────────────────
    One look for "at work" everywhere: a spinner when there is no measure, a bar when there is

@@ -162,6 +162,13 @@ export function demoBackend(): Backend {
     pickFile: async () => null,
     onFileDrop: noop,
     onOpenFiles: noop,
+    // "?crash" in the address: the run before stopped (the notice at the top).
+    problems: {
+      previousCrash: async () => (new URLSearchParams(location.search).has("crash") ? "illegal instruction" : null),
+      dismiss: none,
+      report: async () => ({ text: "**What happened**\n\n**Lowkey** demo", error: null }),
+      openLogs: none,
+    },
     calendar: {
       events: async () => events,
       link: async () => "Work (demo)",

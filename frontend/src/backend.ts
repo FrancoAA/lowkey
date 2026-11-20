@@ -109,6 +109,19 @@ export interface Backend {
   meetings: MeetingsBackend;
   /** Ask across all meetings (the Ask page). */
   library: LibraryBackend;
+  /** Crash reports (desktop/src-tauri/src/crash.rs). The app sends nothing: the report opens as
+   * a new GitHub issue in the browser, where the person reads it first, or goes to the clipboard. */
+  problems: {
+    /** The crash of the run before in a few words ("illegal instruction"); null when none. */
+    previousCrash(): Promise<string | null>;
+    /** Close the notice of that crash. */
+    dismiss(): Promise<void>;
+    /** The report's text. `open`: a GitHub issue with it opens in the browser too ("error": why
+     * it did not). Either way the crash notice is done. */
+    report(open: boolean): Promise<{ text: string; error: string | null }>;
+    /** The folder of the logs, in the file manager. */
+    openLogs(): Promise<void>;
+  };
   /** Settings → Meetings → Calendar, and the agenda on the Meetings page. */
   calendar: {
     /** The linked calendar's events from now to the end of tomorrow ([] when none is linked). */
@@ -345,6 +358,12 @@ async function desktopBackend(): Promise<Backend> {
       onExport(cb) {
         void listen<{ id: string; state: string; file: string; detail: string }>("meeting-export", (e) => cb(e.payload));
       },
+    },
+    problems: {
+      previousCrash: () => invoke<string | null>("crash_previous"),
+      dismiss: () => invoke("crash_dismiss"),
+      report: (open) => invoke<{ text: string; error: string | null }>("problem_report", { open }),
+      openLogs: () => invoke("logs_open"),
     },
     calendar: {
       events: () => invoke<CalEvent[]>("calendar_events"),

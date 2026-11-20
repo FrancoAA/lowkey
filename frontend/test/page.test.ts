@@ -23,6 +23,7 @@ beforeAll(async () => {
   document.body.innerHTML = html.slice(html.indexOf("<body>") + 6, html.indexOf('<script type="module"'));
   // happy-dom has no canvas drawing: the waveforms get a stand-in context.
   HTMLCanvasElement.prototype.getContext = (() => new Proxy({}, { get: () => () => {} })) as never;
+  window.history.replaceState(null, "", "/?crash"); // the demo's run before stopped
   await import("../src/main");
   await until(() => document.querySelectorAll(".meeting-item").length === 3);
 });
@@ -90,6 +91,15 @@ describe("the window", () => {
     key("Escape");
     expect(visible($("settings-page"))).toBe(false);
     expect(visible($("section-meetings"))).toBe(true);
+  });
+
+  it("after a crash, a notice offers a report, which also goes to the clipboard", async () => {
+    await until(() => !$("crash-notice").hidden);
+    expect($("crash-reason").textContent).toBe("illegal instruction");
+    $("crash-copy").click();
+    await until(() => $("crash-notice").hidden);
+    expect($("problem-note").textContent).toBe("The report is on the clipboard.");
+    expect($("problem-note").hidden).toBe(false);
   });
 
   it("Ask answers with links to its sources", async () => {

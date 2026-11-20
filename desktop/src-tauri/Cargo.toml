@@ -88,6 +88,22 @@ zbus = { version = "5.19", default-features = false, features = ["async-io", "bl
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+# Crash reports (src/crash.rs): the exception filter, the log as stderr, the system's name, and
+# the browser for a report. Already in the lock file (through tauri).
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_Storage_FileSystem",
+  "Win32_System_Console",
+  "Win32_System_Diagnostics_Debug",
+  "Win32_System_IO",
+  "Win32_System_Kernel",
+  "Win32_System_LibraryLoader",
+  "Win32_System_Registry",
+  "Win32_UI_Shell",
+  "Win32_UI_WindowsAndMessaging",
+] }
+
 [target.'cfg(not(target_os = "linux"))'.dependencies]
 # Start at login on macOS/Windows (Linux writes its XDG autostart entry itself: src/autostart.rs).
 tauri-plugin-autostart = "2"

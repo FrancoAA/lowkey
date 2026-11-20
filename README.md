@@ -570,6 +570,27 @@ segmentation 3.0 and NVIDIA TitaNet-S, run by sherpa-onnx on the CPU.
 `frontend/` (Vite + TypeScript) has the window's page (`index.html`, `src/main.ts`) and the
 overlay (`overlay.html`, `src/overlay.ts`).
 
+## Report a problem
+
+Each run of the app writes a log: `logs/lowkey.log` in the data folder
+(`~/.local/share/lowkey`, `%APPDATA%\lowkey`, `~/Library/Application Support/lowkey`). The run
+before is `lowkey.previous.log`. A crash leaves one line in it: an illegal instruction, a
+segmentation fault (an access violation on Windows), an abort or a panic, with the place in the
+program.
+
+- **After a crash**, the next start shows a notice at the top of the window. **Report it** opens
+  a new GitHub issue in your browser with the report (you read it before you send it) and puts
+  the report on the clipboard. **Copy the report** only copies it.
+- **At any time**: Settings → About → **Report a problem**, **Copy the report**, **Open the logs**.
+- **From a terminal**: `lowkey --crash-report` prints the report.
+
+The report has the app's version, the system, the processor (and if it has AVX2 and AVX-512),
+the speech engine and model, the crash line and the end of the log, with your home folder written
+as `~`. It has no audio and no text of meetings or dictations. The app sends nothing itself.
+
+The releases' speech engine needs a processor with AVX2 (Intel 2013 and newer, all AMD Ryzen).
+On an older one the built-in models say so; a speech provider in the cloud still works.
+
 ## Develop
 
 ```sh
@@ -593,6 +614,8 @@ stand-in in a simulated browser (happy-dom): the pure parts (notes → transcrip
 search marks, citations) and the whole page (Meetings, a meeting's tabs and menus, My notes,
 Ctrl+K, Settings, Ask).
 
+The crash handlers: `lowkey --crash-test <panic | segfault | illegal-instruction>` crashes on
+purpose, and `lowkey --crash-report` must then show that crash (CI does this on each system).
 The real preview engine test: `cd desktop/src-tauri && cargo test --lib real_whistle -- --ignored`.
 The real screen portal test (it opens your desktop's screen picker):
 `cd desktop/src-tauri && cargo test --lib real_portal -- --ignored --nocapture`.

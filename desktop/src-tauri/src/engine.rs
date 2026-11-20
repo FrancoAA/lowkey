@@ -230,6 +230,13 @@ impl Engines {
                 return Ok(model.clone());
             }
         }
+        // A release's whisper.cpp needs AVX2: without it, a clear error, not an illegal
+        // instruction (src/crash.rs). Before the download: it would not help.
+        if matches!(spec.engine, EngineKind::WhisperCpp) {
+            if let Some(why) = crate::crash::cpu_problem() {
+                anyhow::bail!(why);
+            }
+        }
         if !models::present(spec) {
             self.set_state(spec.id, |s| {
                 *s = ModelState::new("downloading");

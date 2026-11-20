@@ -114,6 +114,21 @@ jobs:
           GGML_NATIVE: ${{ matrix.ggml_native }}
         run: node ../frontend/node_modules/@tauri-apps/cli/tauri.js build --bundles ${{ matrix.bundles }}
 
+      # The crash handlers on each system (src/crash.rs): the built app stops on an illegal
+      # instruction on purpose (as on a CPU without an instruction set that whisper.cpp uses),
+      # and --crash-report must find that crash in the log.
+      - name: Crash report
+        working-directory: desktop/src-tauri/target/release
+        run: |
+          exe=./lowkey
+          [ -f lowkey.exe ] && exe=./lowkey.exe
+          if "$exe" --crash-test illegal-instruction; then
+            echo "::error::--crash-test did not stop the app"; exit 1
+          fi
+          "$exe" --crash-report > report.md
+          cat report.md
+          grep -q '\*\*Crash\*\* `CRASH: .*(illegal instruction) at 0x' report.md
+
       - uses: actions/upload-artifact@v7
         with:
           name: lowkey-${{ runner.os }}-${{ runner.arch }}
