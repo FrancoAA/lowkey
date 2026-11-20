@@ -157,8 +157,8 @@ jobs:
         working-directory: frontend
         run: npm test
 
-      # Windows: not stripped, and with debug info (/Z7 for whisper.cpp's C and C++, line tables
-      # for Rust), so the linker also writes lowkey.pdb; the exe does not change. A crash report
+      # Windows: not stripped, and with debug info (-Z7 for whisper.cpp's C and C++, line tables
+      # for Rust; not /Z7: Git Bash turns that into a path), so the linker also writes lowkey.pdb; the exe does not change. A crash report
       # gives addresses as lowkey.exe+0x…, and the release's debug symbols file turns them into
       # function names and lines.
       - name: App and installers
@@ -167,8 +167,8 @@ jobs:
           GGML_NATIVE: ${{ matrix.ggml_native }}
           CARGO_PROFILE_RELEASE_STRIP: ${{ runner.os == 'Windows' && 'false' || 'true' }}
           CARGO_PROFILE_RELEASE_DEBUG: ${{ runner.os == 'Windows' && 'line-tables-only' || 'false' }}
-          CFLAGS: ${{ runner.os == 'Windows' && '/Z7' || '' }}
-          CXXFLAGS: ${{ runner.os == 'Windows' && '/Z7' || '' }}
+          CFLAGS: ${{ runner.os == 'Windows' && '-Z7' || '' }}
+          CXXFLAGS: ${{ runner.os == 'Windows' && '-Z7' || '' }}
         run: node ../frontend/node_modules/@tauri-apps/cli/tauri.js build --bundles ${{ matrix.bundles }} ${{ matrix.features && format('--features {0}', matrix.features) || '' }}
 
       - name: Debug symbols (Windows)
