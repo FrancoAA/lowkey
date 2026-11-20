@@ -82,9 +82,14 @@ pub mod delay_load {
     //! DLL loads (`__pfnDliNotifyHook2`: with OPENWHISPER_NO_GPU set, vulkan-1.dll is not loaded
     //! at all; a way around a broken GPU driver, and the CI's test of this path). Only
     //! vulkan-1.dll is handled; for any other DLL the hooks return null, and nothing changes.
+    //!
+    //! With vulkan-1.dll there, ggml gets `vkGetInstanceProcAddr` through
+    //! `checked_get_instance_proc_addr`: ggml calls the matrix-core queries that it asks for
+    //! there without a check for null, and a driver or a Vulkan layer (an overlay) that does not
+    //! have one stopped the app with a call to address 0.
 
     use std::ffi::{c_char, c_void, CStr};
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
     static MISSING: AtomicBool = AtomicBool::new(false);
     static SKIPPED: AtomicBool = AtomicBool::new(false);
@@ -100,6 +105,7 @@ pub mod delay_load {
     }
 
     const DLI_NOTE_PRE_LOAD_LIBRARY: u32 = 1;
+    const DLI_NOTE_PRE_GET_PROC_ADDRESS: u32 = 2;
 
     const DLI_FAIL_LOAD_LIB: u32 = 3;
     const DLI_FAIL_GET_PROC: u32 = 4;
@@ -151,12 +157,69 @@ pub mod delay_load {
         unsafe { windows_sys::Win32::System::LibraryLoader::GetModuleHandleW(std::ptr::null()) as *const c_void }
     }
 
+    /// The function that the helper asks for, when it is asked for by name.
+    fn proc_name<'a>(info: *const DelayLoadInfo) -> &'a [u8] {
+        let by_name = unsafe { (*info).dlp.import_by_name } != 0;
+        if by_name && !unsafe { (*info).dlp.name }.is_null() { unsafe { CStr::from_ptr((*info).dlp.name) }.to_bytes() } else { b"" }
+    }
+
     unsafe extern "system" fn on_notify(notify: u32, info: *const DelayLoadInfo) -> *const c_void {
-        if notify == DLI_NOTE_PRE_LOAD_LIBRARY && is_vulkan(info) && std::env::var_os("OPENWHISPER_NO_GPU").is_some() {
+        if !is_vulkan(info) {
+            return std::ptr::null();
+        }
+        if notify == DLI_NOTE_PRE_LOAD_LIBRARY && std::env::var_os("OPENWHISPER_NO_GPU").is_some() {
             SKIPPED.store(true, Ordering::Relaxed);
             return this_program();
         }
+        if notify == DLI_NOTE_PRE_GET_PROC_ADDRESS && proc_name(info) == b"vkGetInstanceProcAddr" {
+            let hmod = unsafe { (*info).hmod };
+            if let Some(real) = unsafe { windows_sys::Win32::System::LibraryLoader::GetProcAddress(hmod, c"vkGetInstanceProcAddr".as_ptr().cast()) } {
+                REAL_GET_INSTANCE_PROC_ADDR.store(real as usize, Ordering::SeqCst);
+                return checked_get_instance_proc_addr as *const c_void;
+            }
+        }
         std::ptr::null()
+    }
+
+    type GetProcAddr = unsafe extern "system" fn(*mut c_void, *const c_char) -> *const c_void;
+
+    /// vulkan-1.dll's own vkGetInstanceProcAddr.
+    static REAL_GET_INSTANCE_PROC_ADDR: AtomicUsize = AtomicUsize::new(0);
+
+    /// The queries that ggml calls without a check: each one gives the number of matrix shapes
+    /// first, and ggml uses that number.
+    const MATRIX_QUERIES: [&[u8]; 2] = [b"vkGetPhysicalDeviceCooperativeMatrixPropertiesKHR", b"vkGetPhysicalDeviceCooperativeMatrixFlexibleDimensionsPropertiesNV"];
+
+    /// vulkan-1.dll's vkGetInstanceProcAddr, but a matrix-core query that the driver does not have
+    /// gives `no_matrix_shapes` (ggml then runs without matrix cores), not null. It gives itself
+    /// for "vkGetInstanceProcAddr", so vulkan.hpp's dispatcher keeps it after its start.
+    unsafe extern "system" fn checked_get_instance_proc_addr(instance: *mut c_void, name: *const c_char) -> *const c_void {
+        let real = REAL_GET_INSTANCE_PROC_ADDR.load(Ordering::SeqCst);
+        if real == 0 {
+            return std::ptr::null();
+        }
+        let real: GetProcAddr = unsafe { std::mem::transmute(real) };
+        if name.is_null() {
+            return unsafe { real(instance, name) };
+        }
+        let wanted = unsafe { CStr::from_ptr(name) }.to_bytes();
+        if wanted == b"vkGetInstanceProcAddr" {
+            return checked_get_instance_proc_addr as *const c_void;
+        }
+        let f = unsafe { real(instance, name) };
+        if f.is_null() && !instance.is_null() && MATRIX_QUERIES.contains(&wanted) {
+            crate::crash::log_line(&format!("Vulkan: the driver gives no {}; the speech engine runs without these matrix cores", String::from_utf8_lossy(wanted)));
+            return no_matrix_shapes as *const c_void;
+        }
+        f
+    }
+
+    /// A matrix-core query without the function: no shapes.
+    unsafe extern "system" fn no_matrix_shapes(_: *mut c_void, count: *mut u32, _: *mut c_void) -> i32 {
+        if !count.is_null() {
+            unsafe { *count = 0 };
+        }
+        0 // VK_SUCCESS
     }
 
     unsafe extern "system" fn on_failure(notify: u32, info: *const DelayLoadInfo) -> *const c_void {
@@ -170,9 +233,7 @@ pub mod delay_load {
                 this_program()
             }
             DLI_FAIL_GET_PROC => {
-                let by_name = unsafe { (*info).dlp.import_by_name } != 0;
-                let name = if by_name && !unsafe { (*info).dlp.name }.is_null() { unsafe { CStr::from_ptr((*info).dlp.name) }.to_bytes() } else { b"" };
-                if name.ends_with(b"ProcAddr") {
+                if proc_name(info).ends_with(b"ProcAddr") {
                     vk_get_proc_addr as *const c_void
                 } else {
                     vk_unavailable as *const c_void
