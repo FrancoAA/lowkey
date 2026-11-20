@@ -32,15 +32,23 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # ggml_native: whisper.cpp's GGML_NATIVE. ON builds it for the runner's own CPU. The x64
+          # runners can have AVX-512, and then the app stops with an illegal instruction on a
+          # PC without it (most Intel desktop CPUs, AMD before Zen 4) when it first transcribes.
+          # OFF builds for AVX2 (Intel 2013+, all AMD Ryzen). macOS keeps ON: the runners are
+          # Apple M1, the oldest Apple Silicon.
           - name: Linux x64
             os: ubuntu-24.04
             bundles: appimage,deb,rpm
+            ggml_native: "OFF"
           - name: Windows x64
             os: windows-latest
             bundles: nsis,msi
+            ggml_native: "OFF"
           - name: macOS (Apple Silicon)
             os: macos-latest
             bundles: app,dmg
+            ggml_native: "ON"
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -73,6 +81,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: desktop/src-tauri
+          # Part of the cache's name. Change it when a whisper.cpp build setting changes:
+          # whisper-rs-sys does not build again when a GGML_* variable changes, and an old
+          # CMakeCache.txt keeps paths of an older Visual Studio (a failed build on 2026-11-19).
+          key: ggml-native-${{ matrix.ggml_native }}
 
       - name: Linux packages (WebKitGTK, tray, Vulkan for whisper.cpp)
         if: runner.os == 'Linux'
@@ -98,6 +110,8 @@ jobs:
 
       - name: App and installers
         working-directory: desktop
+        env:
+          GGML_NATIVE: ${{ matrix.ggml_native }}
         run: node ../frontend/node_modules/@tauri-apps/cli/tauri.js build --bundles ${{ matrix.bundles }}
 
       - uses: actions/upload-artifact@v7
