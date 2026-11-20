@@ -87,13 +87,26 @@ jobs:
       # The runner image (with its Visual Studio version) is part of the cache's name: a cached
       # CMakeCache.txt of whisper.cpp keeps the compiler paths of the image that made it, and
       # fails on a newer one ("CMAKE_ASM_COMPILER … is not a full path": 2026-11-19 and -20).
-      - name: Runner image
+      # Windows: the build folder is C:\t. whisper.cpp's Vulkan build makes a tool in a folder
+      # deep inside cargo's, and MSBuild's file tracker cannot write a path longer than 259
+      # characters (FTK1011: 274 under desktop\src-tauri\target).
+      - name: Runner image and build folder
         id: image
-        run: echo "version=${ImageOS:-unknown}-${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "version=${ImageOS:-unknown}-${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
+          if [ "$RUNNER_OS" = Windows ]; then
+            echo 'CARGO_TARGET_DIR=C:\t' >> "$GITHUB_ENV"
+            echo "target=C:/t" >> "$GITHUB_OUTPUT"
+          else
+            echo "target=desktop/src-tauri/target" >> "$GITHUB_OUTPUT"
+          fi
 
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: desktop/src-tauri
+          # Windows: the build folder is outside the workspace (above).
+          cache-targets: ${{ runner.os != 'Windows' }}
+          cache-directories: ${{ runner.os == 'Windows' && 'C:\t' || '' }}
           # Part of the cache's name. Also change it when a whisper.cpp build setting changes:
           # whisper-rs-sys does not build again when a GGML_* variable changes.
           key: ggml-native-${{ matrix.ggml_native }}-${{ steps.image.outputs.version }}
@@ -154,7 +167,7 @@ jobs:
       # abort (Linux: the Vulkan loader without a driver). Windows also without vulkan-1.dll (as
       # on a PC with no GPU driver): it must still start, and say so.
       - name: Devices
-        working-directory: desktop/src-tauri/target/release
+        working-directory: ${{ steps.image.outputs.target }}/release
         run: |
           exe=./lowkey
           [ -f lowkey.exe ] && exe=./lowkey.exe
@@ -170,7 +183,7 @@ jobs:
       # instruction on purpose (as on a CPU without an instruction set that whisper.cpp uses),
       # and --crash-report must find that crash in the log.
       - name: Crash report
-        working-directory: desktop/src-tauri/target/release
+        working-directory: ${{ steps.image.outputs.target }}/release
         run: |
           exe=./lowkey
           [ -f lowkey.exe ] && exe=./lowkey.exe
@@ -186,12 +199,12 @@ jobs:
           name: lowkey-${{ runner.os }}-${{ runner.arch }}
           if-no-files-found: error
           path: |
-            desktop/src-tauri/target/release/bundle/appimage/*.AppImage
-            desktop/src-tauri/target/release/bundle/deb/*.deb
-            desktop/src-tauri/target/release/bundle/rpm/*.rpm
-            desktop/src-tauri/target/release/bundle/nsis/*.exe
-            desktop/src-tauri/target/release/bundle/msi/*.msi
-            desktop/src-tauri/target/release/bundle/dmg/*.dmg
+            ${{ steps.image.outputs.target }}/release/bundle/appimage/*.AppImage
+            ${{ steps.image.outputs.target }}/release/bundle/deb/*.deb
+            ${{ steps.image.outputs.target }}/release/bundle/rpm/*.rpm
+            ${{ steps.image.outputs.target }}/release/bundle/nsis/*.exe
+            ${{ steps.image.outputs.target }}/release/bundle/msi/*.msi
+            ${{ steps.image.outputs.target }}/release/bundle/dmg/*.dmg
 
   # A version tag: one release with the installers (Linux and Windows always, macOS when it built).
   release:
