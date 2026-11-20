@@ -3250,7 +3250,7 @@ fn register_global_shortcut(app: &AppRef, key: &str, kind: KeyKind) -> String {
 /// Headless commands that need no window. Returns true when handled.
 pub fn headless(cli: &Cli) -> bool {
     let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("lowkey"));
-    if cli.help || cli.version || cli.print_snippet.is_some() || cli.remove_hotkey || cli.transcribe.is_some() || cli.crash_report {
+    if cli.help || cli.version || cli.print_snippet.is_some() || cli.remove_hotkey || cli.transcribe.is_some() || cli.crash_report || cli.devices {
         crate::crash::attach_console(); // Windows: the text goes to the terminal that started it
     }
     if cli.crash_report {
@@ -3262,6 +3262,10 @@ pub fn headless(cli: &Cli) -> bool {
         let facts = crate::crash::Facts { device: "not checked (--crash-report)".into(), speech };
         let r = crate::crash::report_from_files(&facts);
         println!("{}\nThe logs: {}\nReport it (paste the text above): {}", r.text, crate::crash::dir().display(), crate::crash::ISSUES_URL);
+        return true;
+    }
+    if cli.devices {
+        println!("{}", crate::gpu::describe());
         return true;
     }
     if let Some(kind) = &cli.crash_test {

@@ -58,10 +58,12 @@ ogg = "=0.9.2"
 
 log = "0.4"
 
-# GPU backend per OS: Vulkan (AMD/Intel/NVIDIA) on Linux, Metal on macOS. Windows: the CPU for
-# now (its Vulkan build needs the Vulkan SDK's Windows import library; not wired yet).
+# raw-api: ggml's device registry (src/gpu.rs).
+# GPU backend per OS: Vulkan (AMD/Intel/NVIDIA) on Linux, Metal on macOS. Windows: Vulkan with
+# the `windows-gpu` feature (the releases: it needs the Vulkan SDK, see .github/workflows), else
+# the CPU (`make desktop-windows`).
 [target.'cfg(target_os = "windows")'.dependencies]
-whisper-rs = { version = "0.16" }
+whisper-rs = { version = "0.16", features = ["raw-api"] }
 
 # Parakeet (NVIDIA, CC-BY-4.0 weights) through sherpa-onnx (Apache-2.0), linked statically with
 # onnxruntime. Exact version: desktop/scripts/sherpa-onnx.sh pins the archive of this release.
@@ -69,10 +71,10 @@ whisper-rs = { version = "0.16" }
 sherpa-onnx = "=2.0.1"
 
 [target.'cfg(target_os = "macos")'.dependencies]
-whisper-rs = { version = "0.16", features = ["metal"] }
+whisper-rs = { version = "0.16", features = ["metal", "raw-api"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-whisper-rs = { version = "0.16", features = ["vulkan", "openmp"] }
+whisper-rs = { version = "0.16", features = ["vulkan", "openmp", "raw-api"] }
 # Same versions as wry/tauri use: only to set the overlay webview's GTK size request.
 gtk = "0.18"
 webkit2gtk = "2.0"
@@ -115,6 +117,9 @@ default = []
 # Embed the built UI (frontend/dist). `tauri build` turns it on; for a plain cargo build use
 # `cargo build --release --features custom-protocol` (see Makefile: make desktop).
 custom-protocol = ["tauri/custom-protocol"]
+# Windows: whisper.cpp on the GPU through Vulkan. Needs VULKAN_SDK (headers, glslc, vulkan-1.lib)
+# at build time; vulkan-1.dll is loaded only when it is there (src/gpu.rs, build.rs).
+windows-gpu = ["whisper-rs/vulkan"]
 
 [profile.release]
 lto = "thin"

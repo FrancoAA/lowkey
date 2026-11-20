@@ -96,26 +96,9 @@ pub fn detect_hardware() -> Hardware {
     let gpu = if std::env::var_os("OPENWHISPER_NO_GPU").is_some() {
         None
     } else {
-        gpu_name()
+        crate::gpu::name()
     };
     Hardware { gpu }
-}
-
-#[cfg(target_os = "linux")]
-fn gpu_name() -> Option<String> {
-    whisper_rs::vulkan::list_devices().into_iter().map(|d| d.name).find(|n| !models::is_software_gpu(n))
-}
-
-/// Windows: whisper.cpp is built for the CPU for now (see Cargo.toml).
-#[cfg(target_os = "windows")]
-fn gpu_name() -> Option<String> {
-    None
-}
-
-/// Apple Silicon always has a Metal GPU; Intel Macs run on the CPU.
-#[cfg(target_os = "macos")]
-fn gpu_name() -> Option<String> {
-    cfg!(target_arch = "aarch64").then(|| "Apple GPU (Metal)".to_string())
 }
 
 impl Engines {

@@ -14,6 +14,7 @@ pub mod echo;
 pub mod engine;
 pub mod export;
 pub mod formats;
+pub mod gpu;
 pub mod hallucination;
 pub mod history;
 pub mod hyprland;

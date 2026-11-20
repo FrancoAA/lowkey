@@ -37,18 +37,22 @@ jobs:
           # PC without it (most Intel desktop CPUs, AMD before Zen 4) when it first transcribes.
           # OFF builds for AVX2 (Intel 2013+, all AMD Ryzen). macOS keeps ON: the runners are
           # Apple M1, the oldest Apple Silicon.
+          # features: Windows builds whisper.cpp with Vulkan (the GPU; src/gpu.rs).
           - name: Linux x64
             os: ubuntu-24.04
             bundles: appimage,deb,rpm
             ggml_native: "OFF"
+            features: ""
           - name: Windows x64
             os: windows-latest
             bundles: nsis,msi
             ggml_native: "OFF"
+            features: windows-gpu
           - name: macOS (Apple Silicon)
             os: macos-latest
             bundles: app,dmg
             ggml_native: "ON"
+            features: ""
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -58,6 +62,8 @@ jobs:
       APPIMAGE_EXTRACT_AND_RUN: "1"
       # macOS: whisper.cpp uses std::filesystem (macOS 10.15+); Apple Silicon starts at 11.
       MACOSX_DEPLOYMENT_TARGET: "11.0"
+      # Windows: the Vulkan SDK for whisper.cpp's GPU build (headers, glslc, vulkan-1.lib).
+      VULKAN_SDK_VERSION: "1.4.341.1"
     steps:
       - uses: actions/checkout@v7
 
@@ -105,6 +111,30 @@ jobs:
           ./desktop/scripts/vulkan-sdk.sh
           ./desktop/scripts/sherpa-onnx.sh
 
+      # The SDK installer is 300 MB: the installed SDK is kept in a cache by its version.
+      - name: Vulkan SDK cache (Windows)
+        if: runner.os == 'Windows'
+        id: vulkan
+        uses: actions/cache@v6
+        with:
+          path: C:\VulkanSDK
+          key: vulkan-sdk-${{ env.VULKAN_SDK_VERSION }}
+
+      - name: Vulkan SDK (Windows)
+        if: runner.os == 'Windows' && steps.vulkan.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $exe = "$env:RUNNER_TEMP\vulkan-sdk.exe"
+          curl.exe -fsSL -o $exe "https://sdk.lunarg.com/sdk/download/$env:VULKAN_SDK_VERSION/windows/vulkansdk-windows-X64-$env:VULKAN_SDK_VERSION.exe"
+          Start-Process -Wait -NoNewWindow -FilePath $exe -ArgumentList "--root", "C:\VulkanSDK\$env:VULKAN_SDK_VERSION", "--accept-licenses", "--default-answer", "--confirm-command", "install"
+
+      - name: Vulkan SDK path (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          ls "/c/VulkanSDK/${VULKAN_SDK_VERSION}/Lib/vulkan-1.lib" "/c/VulkanSDK/${VULKAN_SDK_VERSION}/Bin/glslc.exe"
+          echo "VULKAN_SDK=$(cygpath -w "/c/VulkanSDK/${VULKAN_SDK_VERSION}")" >> "$GITHUB_ENV"
+          echo "$(cygpath -w "/c/VulkanSDK/${VULKAN_SDK_VERSION}/Bin")" >> "$GITHUB_PATH"
+
       - name: Page (Vite)
         working-directory: frontend
         run: npm ci
@@ -118,7 +148,23 @@ jobs:
         working-directory: desktop
         env:
           GGML_NATIVE: ${{ matrix.ggml_native }}
-        run: node ../frontend/node_modules/@tauri-apps/cli/tauri.js build --bundles ${{ matrix.bundles }}
+        run: node ../frontend/node_modules/@tauri-apps/cli/tauri.js build --bundles ${{ matrix.bundles }} ${{ matrix.features && format('--features {0}', matrix.features) || '' }}
+
+      # The speech engine's device check (src/gpu.rs) on a runner without a GPU: the CPU, and no
+      # abort (Linux: the Vulkan loader without a driver). Windows also without vulkan-1.dll (as
+      # on a PC with no GPU driver): it must still start, and say so.
+      - name: Devices
+        working-directory: desktop/src-tauri/target/release
+        run: |
+          exe=./lowkey
+          [ -f lowkey.exe ] && exe=./lowkey.exe
+          "$exe" --devices | tee devices.txt
+          grep -q '^Speech engine: ' devices.txt
+          if [ "$RUNNER_OS" = Windows ]; then
+            OPENWHISPER_NO_GPU=1 "$exe" --devices | tee devices.txt
+            grep -q '^Speech engine: CPU' devices.txt
+            grep -q 'vulkan-1.dll (the Vulkan loader) not loaded' devices.txt
+          fi
 
       # The crash handlers on each system (src/crash.rs): the built app stops on an illegal
       # instruction on purpose (as on a CPU without an instruction set that whisper.cpp uses),
