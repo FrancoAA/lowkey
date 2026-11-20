@@ -109,7 +109,7 @@ jobs:
           cache-directories: ${{ runner.os == 'Windows' && 'C:\t' || '' }}
           # Part of the cache's name. Also change it when a whisper.cpp build setting changes:
           # whisper-rs-sys does not build again when a GGML_* variable changes.
-          key: ggml-native-${{ matrix.ggml_native }}-${{ steps.image.outputs.version }}
+          key: ggml-native-${{ matrix.ggml_native }}-${{ steps.image.outputs.version }}-z7
 
       - name: Linux packages (WebKitGTK, tray, Vulkan for whisper.cpp)
         if: runner.os == 'Linux'
@@ -157,14 +157,18 @@ jobs:
         working-directory: frontend
         run: npm test
 
-      # Windows: not stripped, so the linker also writes lowkey.pdb (the function names; the exe
-      # does not change). A crash report gives addresses as lowkey.exe+0x…, and the release's
-      # debug symbols file turns them into names.
+      # Windows: not stripped, and with debug info (/Z7 for whisper.cpp's C and C++, line tables
+      # for Rust), so the linker also writes lowkey.pdb; the exe does not change. A crash report
+      # gives addresses as lowkey.exe+0x…, and the release's debug symbols file turns them into
+      # function names and lines.
       - name: App and installers
         working-directory: desktop
         env:
           GGML_NATIVE: ${{ matrix.ggml_native }}
           CARGO_PROFILE_RELEASE_STRIP: ${{ runner.os == 'Windows' && 'false' || 'true' }}
+          CARGO_PROFILE_RELEASE_DEBUG: ${{ runner.os == 'Windows' && 'line-tables-only' || 'false' }}
+          CFLAGS: ${{ runner.os == 'Windows' && '/Z7' || '' }}
+          CXXFLAGS: ${{ runner.os == 'Windows' && '/Z7' || '' }}
         run: node ../frontend/node_modules/@tauri-apps/cli/tauri.js build --bundles ${{ matrix.bundles }} ${{ matrix.features && format('--features {0}', matrix.features) || '' }}
 
       - name: Debug symbols (Windows)
