@@ -3255,7 +3255,11 @@ pub fn headless(cli: &Cli) -> bool {
     }
     if cli.crash_report {
         crate::rename::migrate();
-        let facts = crash_facts(&crate::engine::detect_hardware(), &Config::load());
+        // No GPU check here: Vulkan can abort without a GPU driver, and the report must work
+        // even when the GPU is the problem. The log's first line names the device anyway.
+        let cfg = Config::load();
+        let speech = if models::spec(&cfg.model).is_some() { format!("model {}", cfg.model) } else { "model chosen automatically".into() };
+        let facts = crate::crash::Facts { device: "not checked (--crash-report)".into(), speech };
         let r = crate::crash::report_from_files(&facts);
         println!("{}\nThe logs: {}\nReport it (paste the text above): {}", r.text, crate::crash::dir().display(), crate::crash::ISSUES_URL);
         return true;
