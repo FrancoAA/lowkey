@@ -61,7 +61,12 @@ The first time, it downloads the Microsoft C runtime and Windows SDK (~1.2 GB, i
 `ninja` and `lld-link`, or else puts ninja (from PyPI) and Rust's `rust-lld` into
 `desktop/.deps`. It makes the program only, with no installer, and the speech model runs on
 the CPU. Windows must have the Visual C++ runtime (`MSVCP140.dll`). The installers come from CI
-(see Download).
+(see Download): they run the speech model on the GPU through Vulkan (the `windows-gpu` feature,
+built with the Vulkan SDK). A PC without a Vulkan driver still starts them and uses the CPU.
+
+`lowkey --devices` prints what the speech engine uses: the GPU (and its name) or the CPU.
+`OPENWHISPER_NO_GPU=1` keeps it on the CPU; on Windows it then does not load Vulkan at all (a
+way around a GPU driver that crashes).
 
 ## Use
 
@@ -554,6 +559,8 @@ segmentation 3.0 and NVIDIA TitaNet-S, run by sherpa-onnx on the CPU.
 
 `desktop/src-tauri/src/` (Rust):
 
+- `gpu.rs` finds the GPU through ggml's device registry (Vulkan, Metal); on Windows it also
+  makes `vulkan-1.dll` optional.
 - `engine.rs` loads one model at a time (download with progress, idle unload) and runs
   whisper.cpp with VAD (threshold 0.3) and beam size 5. A `cloud:<provider>/<model>` id goes to
   `cloud_stt.rs` instead; `providers.rs` lists the providers, their APIs and default models. `jobs.rs` is a queue with one worker;
