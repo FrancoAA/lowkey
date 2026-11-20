@@ -157,10 +157,10 @@ jobs:
         working-directory: frontend
         run: npm test
 
-      # Windows: not stripped, and with debug info (-Z7 for whisper.cpp's C and C++, line tables
-      # for Rust; not /Z7: Git Bash turns that into a path), so the linker also writes lowkey.pdb; the exe does not change. A crash report
-      # gives addresses as lowkey.exe+0x…, and the release's debug symbols file turns them into
-      # function names and lines.
+      # Windows: not stripped, and with debug info (-Z7 for whisper.cpp's C and C++; not /Z7: Git
+      # Bash turns that into a path. Line tables for Rust), so the linker also writes lowkey.pdb;
+      # the exe does not change. A crash report gives addresses as lowkey.exe+0x…, and the
+      # release's debug symbols file turns them into function names and lines.
       - name: App and installers
         working-directory: desktop
         env:
