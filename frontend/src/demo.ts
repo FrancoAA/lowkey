@@ -81,8 +81,10 @@ const summary = (m: Meeting): MeetingSummary => ({
   excerpt: (m.notes || m.lines.map((l) => l.text).join(" ")).slice(0, 160),
 });
 
+const gpuOff = new URLSearchParams(location.search).has("gpuoff");
 const status: Status = {
-  device: "Demo (in a browser)",
+  device: gpuOff ? "CPU (safe mode)" : "Demo (in a browser)",
+  gpu_off: gpuOff ? "The GPU check stopped (access violation)." : null,
   default_model: "parakeet-v3",
   models: [],
   version: "demo",
@@ -162,12 +164,16 @@ export function demoBackend(): Backend {
     pickFile: async () => null,
     onFileDrop: noop,
     onOpenFiles: noop,
-    // "?crash" in the address: the run before stopped (the notice at the top).
+    // "?crash" in the address: the run before stopped (the notice at the top). "?gpuoff": safe mode.
     problems: {
       previousCrash: async () => (new URLSearchParams(location.search).has("crash") ? "illegal instruction" : null),
       dismiss: none,
       report: async () => ({ text: "**What happened**\n\n**Lowkey** demo", error: null }),
       openLogs: none,
+      retryGpu: async () => {
+        status.gpu_off = null;
+        status.device = "Demo (in a browser)";
+      },
     },
     calendar: {
       events: async () => events,

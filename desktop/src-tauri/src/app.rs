@@ -193,7 +193,7 @@ impl App {
         if models::spec(&cfg.model).is_some() {
             return cfg.model;
         }
-        models::auto_model(&self.engines.hw).to_string()
+        models::auto_model(&self.engines.hw()).to_string()
     }
 
     /// CLI --language > config.toml; None = detect.
@@ -304,10 +304,12 @@ impl App {
             })
             .collect();
         json!({
-            "device": self.engines.hw.gpu.clone().map(|g| format!("GPU ({g})")).unwrap_or_else(|| "CPU".into()),
-            "gpu": self.engines.hw.gpu.is_some(),
+            "device": self.engines.hw().gpu.clone().map(|g| format!("GPU ({g})")).unwrap_or_else(|| if self.engines.gpu_off().is_some() { "CPU (safe mode)".into() } else { "CPU".into() }),
+            "gpu": self.engines.hw().gpu.is_some(),
+            // Safe mode: why the speech engine uses the CPU (the page offers "Try the GPU again").
+            "gpu_off": self.engines.gpu_off(),
             "default_model": current,
-            "auto_model": models::auto_model(&self.engines.hw),
+            "auto_model": models::auto_model(&self.engines.hw()),
             "models": list,
             "options": { "model": cfg.model, "language": cfg.language, "idle_unload_minutes": cfg.idle_unload_minutes, "live_preview": cfg.live_preview, "preview_engine": cfg.preview_engine, "vocabulary": cfg.vocabulary, "microphone": cfg.microphone, "theme": cfg.theme },
             "preview": self.preview.status(),
@@ -396,7 +398,7 @@ impl App {
         } else {
             Meeting::Idle
         };
-        let auto = models::auto_model(&self.engines.hw);
+        let auto = models::auto_model(&self.engines.hw());
         View {
             dictation: self.tray_dictation.lock().clone(),
             meeting,
@@ -2511,7 +2513,7 @@ fn ai_engine(app: &AppRef) -> anyhow::Result<llm::Engine> {
         llm::Engine::Server { access: crate::providers::chat_access(&cfg)? }
     } else {
         // Vulkan / Metal when the app found a GPU; the CPU else (slower, but it works).
-        llm::Engine::Builtin { gpu: app.engines.hw.gpu.is_some(), model: cfg.ai_builtin_model }
+        llm::Engine::Builtin { gpu: app.engines.hw().gpu.is_some(), model: cfg.ai_builtin_model }
     })
 }
 
@@ -2817,11 +2819,20 @@ fn crash_dismiss() {
     crate::crash::dismiss();
 }
 
+/// "Try the GPU again" (safe mode): the GPU's record goes, and the app starts again, so the GPU
+/// is checked again (on Windows, its driver was not even loaded in this run).
+#[tauri::command]
+fn gpu_retry(handle: tauri::AppHandle) {
+    crate::gpu::safe::retry();
+    crate::crash::log_line("Safe mode: try the GPU again (the app starts again)");
+    handle.restart();
+}
+
 /// The report (its text, for the clipboard). `open`: a new GitHub issue with it opens in the
 /// browser too; "error" says when it did not. The app sends nothing itself.
 #[tauri::command]
 fn problem_report(app: State<'_, AppRef>, open: bool) -> Value {
-    let facts = crash_facts(&app.engines.hw, &app.config.lock());
+    let facts = crash_facts(&app.engines.hw(), &app.config.lock());
     let r = crate::crash::report(&facts);
     let error = if open {
         crate::crash::open(&r.url).err().map(|e| format!("The browser did not open ({e}). The report is on the clipboard: paste it at {}.", crate::crash::ISSUES_URL))
@@ -3268,6 +3279,23 @@ pub fn headless(cli: &Cli) -> bool {
         println!("{}", crate::gpu::describe());
         return true;
     }
+    // The app runs this itself, before it first uses a GPU: a crash here ends only this run, and
+    // its crash line (with the stack) goes to the app through stderr.
+    if let Some(model) = &cli.gpu_check {
+        crate::crash::install_to_stderr();
+        // A test switch: the check's run stops as a broken driver would (segfault, illegal-instruction).
+        if let Ok(kind) = std::env::var("OPENWHISPER_GPU_CHECK_CRASH") {
+            crate::crash::test(&kind);
+        }
+        match crate::engine::gpu_check(model) {
+            Ok(gpu) => println!("{} ({gpu})", crate::gpu::safe::PASSED),
+            Err(e) => {
+                eprintln!("GPU check: {e:#}");
+                std::process::exit(2);
+            }
+        }
+        return true;
+    }
     if let Some(kind) = &cli.crash_test {
         crate::rename::migrate();
         crate::crash::install();
@@ -3324,7 +3352,7 @@ pub fn transcribe_json(engines: &Engines, cfg: &Config, path: &std::path::Path, 
         .filter(|m| models::spec(m).is_some())
         .map(String::from)
         .or_else(|| models::spec(&cfg.model).map(|m| m.id.to_string()))
-        .unwrap_or_else(|| models::auto_model(&engines.hw).to_string());
+        .unwrap_or_else(|| models::auto_model(&engines.hw()).to_string());
     if !download && !models::spec(&model).is_some_and(models::present) {
         return (model.clone(), Err(anyhow::anyhow!("The model {model} is not on this computer. Download it in Lowkey (Settings → Speech), or name a downloaded one.")));
     }
@@ -3334,7 +3362,7 @@ pub fn transcribe_json(engines: &Engines, cfg: &Config, path: &std::path::Path, 
     let t0 = Instant::now();
     let input = Input { path: Some(path.to_path_buf()), pcm: None, language };
     let out = engines.transcribe(&model, input, Arc::new(|_| {})).map(|o| {
-        json!({"model": model, "device": engines.hw.gpu, "load_seconds": load_seconds, "seconds": t0.elapsed().as_secs_f64(), "language": o.language,
+        json!({"model": model, "device": engines.hw().gpu, "load_seconds": load_seconds, "seconds": t0.elapsed().as_secs_f64(), "language": o.language,
                "duration": o.duration, "text": crate::formats::to_txt(&o.segments).trim(), "segments": o.segments})
     });
     (model, out)
@@ -3458,6 +3486,7 @@ pub fn run() {
             calendar_events,
             crash_previous,
             crash_dismiss,
+            gpu_retry,
             problem_report,
             logs_open,
             meeting_chat_clear,
@@ -3483,6 +3512,8 @@ pub fn run() {
             // This run's log and the crash handlers. Not earlier: a second launch that hands its
             // arguments over ends before this, and must not move the running app's log.
             crate::crash::install();
+            // Safe mode: a crash while the speech model was on the GPU turns the GPU off.
+            crate::gpu::safe::startup();
             let handle = tauri_app.handle().clone();
             // The others' sound of meetings whose voices were not told apart (the app quit or
             // crashed first): listed now, before a meeting can record; told apart below.
@@ -3735,7 +3766,7 @@ pub fn run() {
                 *app.hotkey.lock() = Some(hk);
                 t
             };
-            println!("  Lowkey {}: {}, model {}", env!("CARGO_PKG_VERSION"), app.engines.hw.gpu.clone().map(|g| format!("GPU {g}")).unwrap_or("CPU".into()), app.current_model());
+            println!("  Lowkey {}: {}, model {}", env!("CARGO_PKG_VERSION"), app.engines.hw().gpu.clone().map(|g| format!("GPU {g}")).unwrap_or("CPU".into()), app.current_model());
             println!("  Global dictation key: {text}");
             *app.hotkey_text.lock() = text;
 

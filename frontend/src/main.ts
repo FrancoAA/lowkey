@@ -327,8 +327,18 @@ function reportFocus(): void {
   });
 }
 
+/** Closed in this window: the safe-mode notice does not come back until the next start. */
+let gpuNoticeClosed = false;
+
+function renderGpuNotice(): void {
+  const off = status?.gpu_off;
+  $<HTMLSpanElement>("gpu-reason").textContent = off ?? "";
+  $<HTMLDivElement>("gpu-notice").hidden = !off || gpuNoticeClosed;
+}
+
 function applyStatus(next: Status): void {
   status = next;
+  renderGpuNotice();
   // Desktop: model download progress arrives as status events, not job events.
   if (jobState === "preparing" && busy) {
     const m = selectedModel();
@@ -1446,6 +1456,14 @@ function initProblems(b: Backend): void {
   $<HTMLButtonElement>("problem-copy").addEventListener("click", () => void report(false));
   $<HTMLButtonElement>("logs-open").addEventListener("click", () => {
     b.problems.openLogs().catch((e) => say(String(e)));
+  });
+  $<HTMLButtonElement>("gpu-retry").addEventListener("click", () => {
+    announce("Lowkey starts again and checks the GPU.");
+    b.problems.retryGpu().catch((e) => announce(`The GPU was not tried again: ${e}`));
+  });
+  $<HTMLButtonElement>("gpu-close").addEventListener("click", () => {
+    gpuNoticeClosed = true;
+    renderGpuNotice();
   });
   void b.problems.previousCrash().then((reason) => {
     if (!reason) return;

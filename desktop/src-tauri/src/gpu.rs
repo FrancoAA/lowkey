@@ -11,6 +11,12 @@
 //! first asks for it (/DELAYLOAD in build.rs), and when it is missing, `delay_load` gives ggml a
 //! Vulkan that says "not available" (VK_ERROR_INITIALIZATION_FAILED). ggml catches that, as on a
 //! computer without a GPU, and the app runs on the CPU.
+//!
+//! Safe mode (`safe`): a GPU driver can still stop the app. So before the app first uses a GPU
+//! (each app version), a second run of the app (`lowkey --gpu-check`) loads the speech model
+//! on it and transcribes two seconds; when that run stops or hangs, only it is lost, and the
+//! app uses the CPU. And when the app stops while the speech model runs on the GPU, the next
+//! start uses the CPU. The page shows why, with "Try the GPU again".
 
 use crate::models;
 
@@ -56,6 +62,13 @@ pub fn registry_gpus() -> Vec<String> {
     out
 }
 
+/// Safe mode for this run: the GPU is not used. On Windows vulkan-1.dll is not even loaded (a
+/// broken driver can stop the app when Vulkan starts). Before the first call into ggml.
+pub fn disable() {
+    #[cfg(all(windows, feature = "windows-gpu"))]
+    delay_load::DISABLED.store(true, std::sync::atomic::Ordering::SeqCst);
+}
+
 /// `lowkey --devices`: what the speech engine can use here.
 pub fn describe() -> String {
     let all = registry_gpus();
@@ -68,7 +81,11 @@ pub fn describe() -> String {
     }
     #[cfg(all(windows, feature = "windows-gpu"))]
     if delay_load::skipped() {
-        s += "\nvulkan-1.dll (the Vulkan loader) not loaded: OPENWHISPER_NO_GPU is set.";
+        s += if std::env::var_os("OPENWHISPER_NO_GPU").is_some() {
+            "\nvulkan-1.dll (the Vulkan loader) not loaded: OPENWHISPER_NO_GPU is set."
+        } else {
+            "\nvulkan-1.dll (the Vulkan loader) not loaded: safe mode (the GPU failed before)."
+        };
     } else if delay_load::loader_missing() {
         s += "\nvulkan-1.dll (the Vulkan loader) is not on this PC: a GPU driver installs it.";
     }
@@ -93,6 +110,8 @@ pub mod delay_load {
 
     static MISSING: AtomicBool = AtomicBool::new(false);
     static SKIPPED: AtomicBool = AtomicBool::new(false);
+    /// Safe mode (`super::disable`).
+    pub(super) static DISABLED: AtomicBool = AtomicBool::new(false);
 
     /// vulkan-1.dll could not be loaded in this run.
     pub fn loader_missing() -> bool {
@@ -167,7 +186,7 @@ pub mod delay_load {
         if !is_vulkan(info) {
             return std::ptr::null();
         }
-        if notify == DLI_NOTE_PRE_LOAD_LIBRARY && std::env::var_os("OPENWHISPER_NO_GPU").is_some() {
+        if notify == DLI_NOTE_PRE_LOAD_LIBRARY && (DISABLED.load(Ordering::SeqCst) || std::env::var_os("OPENWHISPER_NO_GPU").is_some()) {
             SKIPPED.store(true, Ordering::Relaxed);
             return this_program();
         }
@@ -262,6 +281,259 @@ pub mod delay_load {
     /// vkEnumerateInstanceVersion, and this result ends its Vulkan start there.
     unsafe extern "system" fn vk_unavailable() -> i32 {
         VK_ERROR_INITIALIZATION_FAILED
+    }
+}
+
+pub mod safe {
+    //! The GPU's record (gpu-check.json in the data folder): the check passed for this GPU in
+    //! this version, or the GPU failed ("ok": false, and why). A failed GPU stays off in this
+    //! version until "Try the GPU again"; a new version checks again (it can have the fix).
+
+    use std::path::{Path, PathBuf};
+    use std::process::{Command, Stdio};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::{Duration, Instant};
+
+    use serde::{Deserialize, Serialize};
+
+    const VERSION: &str = env!("CARGO_PKG_VERSION");
+    /// The check's run prints this when the GPU worked.
+    pub const PASSED: &str = "GPU check: ok";
+    /// The first run on a GPU compiles its shaders: seconds, a minute on a slow driver.
+    const TIMEOUT: Duration = Duration::from_secs(180);
+
+    #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+    pub struct Record {
+        pub app: String,
+        pub gpu: String,
+        pub ok: bool,
+        #[serde(default)]
+        pub reason: String,
+    }
+
+    fn path() -> PathBuf {
+        crate::config::data_dir().join("gpu-check.json")
+    }
+
+    /// There while the speech model loads or runs on the GPU; it has the GPU's name.
+    fn busy_path() -> PathBuf {
+        crate::crash::dir().join("gpu-busy")
+    }
+
+    fn read() -> Option<Record> {
+        serde_json::from_str(&std::fs::read_to_string(path()).ok()?).ok()
+    }
+
+    fn save(r: &Record) {
+        let p = path();
+        if let Some(dir) = p.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let _ = std::fs::write(&p, serde_json::to_string_pretty(r).unwrap_or_default());
+    }
+
+    /// Why the GPU is off in this version; None: it can be used.
+    pub fn off_reason() -> Option<String> {
+        off_reason_in(read(), VERSION)
+    }
+
+    fn off_reason_in(r: Option<Record>, version: &str) -> Option<String> {
+        r.filter(|r| !r.ok && r.app == version).map(|r| r.reason)
+    }
+
+    fn passed_in(r: Option<Record>, version: &str, gpu: &str) -> bool {
+        r.is_some_and(|r| r.ok && r.app == version && r.gpu == gpu)
+    }
+
+    /// "Try the GPU again": the record goes; the next start checks again.
+    pub fn retry() {
+        let _ = std::fs::remove_file(path());
+    }
+
+    fn failed(gpu: &str, reason: &str) {
+        crate::crash::log_line(&format!("Safe mode: the speech engine uses the CPU from now on. {reason}"));
+        save(&Record { app: VERSION.into(), gpu: gpu.into(), ok: false, reason: reason.into() });
+    }
+
+    /// At the start, after `crash::install`: the last run stopped while the speech model was on
+    /// the GPU, so the GPU is off now.
+    pub fn startup() {
+        if let Some((gpu, why)) = crashed_on_gpu(&busy_path(), crate::crash::previous_crash()) {
+            failed(&gpu, &why);
+        }
+    }
+
+    /// The mark of the run before (it goes), and that run's crash: the GPU and why it is off.
+    fn crashed_on_gpu(busy: &Path, crash: Option<String>) -> Option<(String, String)> {
+        let gpu = std::fs::read_to_string(busy).ok()?;
+        let _ = std::fs::remove_file(busy);
+        let gpu = gpu.trim().to_string();
+        let crash = crash?;
+        let why = format!("Lowkey stopped ({crash}) while the speech model ran on the GPU ({gpu}).");
+        Some((gpu, why))
+    }
+
+    static BUSY: AtomicUsize = AtomicUsize::new(0);
+
+    /// While this lives, the speech model is in use on the GPU (`startup` reads the mark).
+    pub struct Busy;
+
+    pub fn busy(gpu: &str) -> Busy {
+        if BUSY.fetch_add(1, Ordering::SeqCst) == 0 {
+            let _ = std::fs::write(busy_path(), gpu);
+        }
+        Busy
+    }
+
+    impl Drop for Busy {
+        fn drop(&mut self) {
+            if BUSY.fetch_sub(1, Ordering::SeqCst) == 1 {
+                let _ = std::fs::remove_file(busy_path());
+            }
+        }
+    }
+
+    /// Before the first use of this GPU in this version: `lowkey --gpu-check <model>`, a second
+    /// run of the app, loads the model on the GPU and transcribes two seconds. Its stop or hang
+    /// does not stop the app. Err: why the GPU is off now (also in the record and the log).
+    pub fn check(gpu: &str, model: &Path) -> Result<(), String> {
+        static ONE: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+        let _one = ONE.lock();
+        if passed_in(read(), VERSION, gpu) {
+            return Ok(());
+        }
+        if let Some(why) = off_reason() {
+            return Err(why);
+        }
+        crate::crash::log_line(&format!("GPU check: {gpu}, with {}", model.file_name().unwrap_or_default().to_string_lossy()));
+        let started = Instant::now();
+        let result = run_check(model);
+        match &result {
+            Ok(()) => {
+                crate::crash::log_line(&format!("GPU check: passed in {:.1} s", started.elapsed().as_secs_f64()));
+                save(&Record { app: VERSION.into(), gpu: gpu.into(), ok: true, reason: String::new() });
+            }
+            Err(why) => failed(gpu, why),
+        }
+        result
+    }
+
+    fn run_check(model: &Path) -> Result<(), String> {
+        let exe = std::env::current_exe().map_err(|e| format!("The GPU check did not start: {e}"))?;
+        let mut cmd = Command::new(exe);
+        cmd.arg("--gpu-check").arg(model).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
+        let mut child = cmd.spawn().map_err(|e| format!("The GPU check did not start: {e}"))?;
+        let read_all = |r: Option<Box<dyn std::io::Read + Send>>| {
+            std::thread::spawn(move || {
+                let mut text = String::new();
+                if let Some(mut r) = r {
+                    let mut bytes = Vec::new();
+                    let _ = r.read_to_end(&mut bytes);
+                    text = String::from_utf8_lossy(&bytes).into_owned();
+                }
+                text
+            })
+        };
+        let out = read_all(child.stdout.take().map(|r| Box::new(r) as Box<dyn std::io::Read + Send>));
+        let err = read_all(child.stderr.take().map(|r| Box::new(r) as Box<dyn std::io::Read + Send>));
+        let started = Instant::now();
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(s)) => break Some(s),
+                Ok(None) if started.elapsed() < TIMEOUT => std::thread::sleep(Duration::from_millis(100)),
+                _ => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    break None;
+                }
+            }
+        };
+        let (out, err) = (out.join().unwrap_or_default(), err.join().unwrap_or_default());
+        // Its messages go into this run's log: whisper.cpp's, and a crash line with its stack.
+        let lines: Vec<&str> = err.lines().filter(|l| !l.trim().is_empty()).collect();
+        for line in &lines[lines.len().saturating_sub(40)..] {
+            crate::crash::log_line(&format!("  gpu-check: {line}"));
+        }
+        verdict(status.map(|s| s.code()), &out, &err)
+    }
+
+    /// The check's result from its exit (None: it hung; Some(None): a signal ended it), stdout
+    /// and stderr.
+    fn verdict(exit: Option<Option<i32>>, out: &str, err: &str) -> Result<(), String> {
+        match exit {
+            Some(Some(0)) if out.contains(PASSED) => Ok(()),
+            None => Err(format!("The GPU check did not finish in {} minutes.", TIMEOUT.as_secs() / 60)),
+            Some(code) => {
+                if let Some(line) = err.lines().find(|l| l.contains("CRASH:")) {
+                    return Err(format!("The GPU check stopped ({}).", crate::crash::reason(line)));
+                }
+                if let Some(line) = err.lines().rev().find(|l| l.starts_with("GPU check: ")) {
+                    return Err(format!("The GPU check failed: {}", line.trim_start_matches("GPU check: ")));
+                }
+                Err(match code {
+                    Some(c) => format!("The GPU check stopped (exit code 0x{:08X}).", c as u32),
+                    None => "The GPU check stopped (a signal).".into(),
+                })
+            }
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        fn rec(app: &str, gpu: &str, ok: bool) -> Option<Record> {
+            Some(Record { app: app.into(), gpu: gpu.into(), ok, reason: "why".into() })
+        }
+
+        #[test]
+        fn a_failed_gpu_is_off_until_a_new_version() {
+            assert_eq!(off_reason_in(rec("1.0", "G", false), "1.0").as_deref(), Some("why"));
+            assert_eq!(off_reason_in(rec("1.0", "G", false), "1.1"), None);
+            assert_eq!(off_reason_in(rec("1.0", "G", true), "1.0"), None);
+            assert_eq!(off_reason_in(None, "1.0"), None);
+        }
+
+        #[test]
+        fn a_pass_counts_for_that_gpu_and_version_only() {
+            assert!(passed_in(rec("1.0", "G", true), "1.0", "G"));
+            assert!(!passed_in(rec("1.0", "G", true), "1.0", "H"));
+            assert!(!passed_in(rec("1.0", "G", true), "1.1", "G"));
+            assert!(!passed_in(rec("1.0", "G", false), "1.0", "G"));
+        }
+
+        #[test]
+        fn a_crash_while_the_gpu_was_busy_turns_it_off() {
+            let dir = std::env::temp_dir().join(format!("lowkey-gpu-busy-{}", std::process::id()));
+            std::fs::create_dir_all(&dir).unwrap();
+            let busy = dir.join("gpu-busy");
+            assert_eq!(crashed_on_gpu(&busy, Some("access violation".into())), None, "no mark: not the GPU");
+            std::fs::write(&busy, "RTX\n").unwrap();
+            assert_eq!(crashed_on_gpu(&busy, None), None, "the mark, but no crash (the app was ended)");
+            assert!(!busy.exists(), "the mark goes");
+            std::fs::write(&busy, "RTX\n").unwrap();
+            let (gpu, why) = crashed_on_gpu(&busy, Some("access violation".into())).unwrap();
+            assert_eq!(gpu, "RTX");
+            assert_eq!(why, "Lowkey stopped (access violation) while the speech model ran on the GPU (RTX).");
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+
+        #[test]
+        fn the_verdict_names_the_crash() {
+            assert_eq!(verdict(Some(Some(0)), "GPU check: ok (X)\n", ""), Ok(()));
+            assert!(verdict(Some(Some(0)), "", "").is_err(), "no ok line: not passed");
+            let crash = "CRASH: exception 0xC0000005 (access violation) at 0x0\n  called from 0x1 = lowkey.exe+0x1\n";
+            assert_eq!(verdict(Some(Some(-1073741819)), "", crash), Err("The GPU check stopped (access violation).".into()));
+            assert_eq!(verdict(Some(Some(-1073741819)), "", ""), Err("The GPU check stopped (exit code 0xC0000005).".into()));
+            assert_eq!(verdict(Some(Some(2)), "", "GPU check: the model did not load\n"), Err("The GPU check failed: the model did not load".into()));
+            assert!(verdict(None, "", "").unwrap_err().contains("did not finish"));
+        }
     }
 }
 

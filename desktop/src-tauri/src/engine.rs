@@ -73,7 +73,10 @@ enum Loaded {
 }
 
 pub struct Engines {
-    pub hw: Hardware,
+    /// The GPU goes off during a run when its check fails (`gpu::safe`).
+    hw: Mutex<Hardware>,
+    /// Why the GPU is off (safe mode), for the page.
+    gpu_off: Mutex<Option<String>>,
     states: Mutex<HashMap<String, ModelState>>,
     loaded: Mutex<Option<(String, Loaded)>>,
     last_used: Mutex<Instant>,
@@ -95,6 +98,11 @@ pub struct Engines {
 pub fn detect_hardware() -> Hardware {
     let gpu = if std::env::var_os("OPENWHISPER_NO_GPU").is_some() {
         None
+    } else if let Some(why) = crate::gpu::safe::off_reason() {
+        // Safe mode: the GPU failed in this version. Not even its driver is started.
+        crate::gpu::disable();
+        crate::crash::log_line(&format!("Safe mode: the speech engine uses the CPU. {why}"));
+        None
     } else {
         crate::gpu::name()
     };
@@ -108,7 +116,8 @@ impl Engines {
             .map(|m| (m.id.to_string(), ModelState::new(if models::present(m) { "downloaded" } else { "missing" })))
             .collect();
         let me = Arc::new(Self {
-            hw,
+            hw: Mutex::new(hw),
+            gpu_off: Mutex::new(crate::gpu::safe::off_reason()),
             states: Mutex::new(states),
             loaded: Mutex::new(None),
             last_used: Mutex::new(Instant::now()),
@@ -151,6 +160,31 @@ impl Engines {
     /// Settings: the providers' keys and your own speech server's address (or the app started).
     pub fn set_cloud(&self, keys: &std::collections::BTreeMap<String, String>, own_url: &str) {
         *self.cloud.lock() = (keys.clone(), own_url.to_string());
+    }
+
+    /// The device that the speech engine uses now.
+    pub fn hw(&self) -> Hardware {
+        self.hw.lock().clone()
+    }
+
+    /// Why the GPU is off (safe mode), if it is.
+    pub fn gpu_off(&self) -> Option<String> {
+        self.gpu_off.lock().clone()
+    }
+
+    /// The GPU for a whisper.cpp model, after its check (`gpu::safe::check`; once per GPU and
+    /// version). A failed check turns the GPU off for this run and the next ones.
+    fn gpu_for(&self, model: &Path) -> Option<String> {
+        let gpu = self.hw.lock().gpu.clone()?;
+        match crate::gpu::safe::check(&gpu, model) {
+            Ok(()) => Some(gpu),
+            Err(why) => {
+                self.hw.lock().gpu = None;
+                *self.gpu_off.lock() = Some(why);
+                self.changed();
+                None
+            }
+        }
     }
 
     pub fn on_change(&self, f: Arc<dyn Fn() + Send + Sync>) {
@@ -256,10 +290,12 @@ impl Engines {
         }
         let model = match spec.engine {
             EngineKind::WhisperCpp => {
-                let mut params = WhisperContextParameters::default();
-                params.use_gpu(self.hw.gpu.is_some());
-                params.flash_attn(self.hw.gpu.is_some());
                 let path = models::local_path(spec.source);
+                let gpu = self.gpu_for(&path);
+                let mut params = WhisperContextParameters::default();
+                params.use_gpu(gpu.is_some());
+                params.flash_attn(gpu.is_some());
+                let _busy = gpu.as_deref().map(crate::gpu::safe::busy);
                 Loaded::Whisper(Arc::new(
                     WhisperContext::new_with_params(&path, params).map_err(|e| anyhow::anyhow!("Model failed to load: {e}"))?,
                 ))
@@ -339,6 +375,8 @@ impl Engines {
                     Some(p) => self.whisper_tokens(&ctx).tokenize(p, 220),
                     None => Vec::new(),
                 };
+                let gpu = self.hw().gpu;
+                let _busy = gpu.as_deref().map(crate::gpu::safe::busy);
                 run_whisper_cpp(&ctx, &pcm, input.language.as_deref(), &prompt, &fixed_sink)
             }
             // Parakeet finds the language itself (25 European languages); it has no setting.
@@ -626,6 +664,27 @@ pub(crate) fn has_speech(vad_model: &Path, pcm: &[f32]) -> bool {
         Ok(segs) => segs.num_segments() > 0,
         Err(_) => true, // when unsure, transcribe
     }
+}
+
+/// `lowkey --gpu-check <model>` (gpu::safe::check runs it as a second process): the model on the
+/// GPU, and two seconds of a quiet tone through it, so the encoder and the decoder run there.
+pub fn gpu_check(model: &Path) -> anyhow::Result<String> {
+    let gpu = crate::gpu::name().ok_or_else(|| anyhow::anyhow!("no GPU that whisper.cpp can use"))?;
+    let mut params = WhisperContextParameters::default();
+    params.use_gpu(true);
+    params.flash_attn(true);
+    let ctx = WhisperContext::new_with_params(model, params).map_err(|e| anyhow::anyhow!("the model did not load: {e}"))?;
+    let mut state = ctx.create_state().map_err(|e| anyhow::anyhow!("{e}"))?;
+    let mut fp = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
+    fp.set_n_threads(physical_threads());
+    fp.set_language(Some("en"));
+    fp.set_print_progress(false);
+    fp.set_print_realtime(false);
+    fp.set_print_timestamps(false);
+    fp.set_print_special(false);
+    let pcm: Vec<f32> = (0..2 * audio::RATE as usize).map(|i| (i as f32 * 0.07).sin() * 0.05).collect();
+    state.full(fp, &pcm).map_err(|e| anyhow::anyhow!("the transcription failed: {e}"))?;
+    Ok(gpu)
 }
 
 /// `prompt`: the vocabulary as Whisper tokens (crate::whisper_tokens; never whisper.cpp's own

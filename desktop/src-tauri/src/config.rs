@@ -296,6 +296,8 @@ pub struct Cli {
     pub crash_test: Option<String>,
     /// Print what the speech engine can use here: the GPU, or the CPU (src/gpu.rs).
     pub devices: bool,
+    /// `--gpu-check <model>`: the app's GPU check (src/gpu.rs, safe mode), run by the app itself.
+    pub gpu_check: Option<PathBuf>,
 }
 
 pub const HELP: &str = "Lowkey — local speech to text
@@ -342,6 +344,7 @@ impl Cli {
                 "--remove-hotkey" => cli.remove_hotkey = true,
                 "--crash-report" => cli.crash_report = true,
                 "--devices" => cli.devices = true,
+                "--gpu-check" => cli.gpu_check = it.next().map(PathBuf::from),
                 "--crash-test" => cli.crash_test = it.next(),
                 "--print-snippet" => {
                     let kind = match it.peek().map(String::as_str) {

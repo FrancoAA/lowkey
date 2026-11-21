@@ -66,6 +66,20 @@
       </aside>
 
       <main class="content">
+        <!-- Safe mode (src/gpu.rs): the GPU failed, and the speech engine uses the CPU. -->
+        <div id="gpu-notice" class="crash-notice" role="status" hidden>
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2" /><rect x="9" y="9" width="6" height="6" /><path d="M15 2v2M15 20v2M2 15h2M2 9h2M20 15h2M20 9h2M9 2v2M9 20v2" /></svg>
+          <div class="crash-text">
+            <p><strong>The speech engine uses the CPU (safe mode).</strong> <span id="gpu-reason"></span></p>
+            <p>Transcription is slower on the CPU. After an update of Lowkey or of the graphics driver, try the GPU again: Lowkey starts again and checks the GPU first.</p>
+          </div>
+          <div class="crash-actions">
+            <button id="gpu-retry" type="button" class="btn btn-outline btn-sm">Try the GPU again</button>
+            <button id="gpu-close" type="button" class="btn btn-ghost btn-sm btn-icon" aria-label="Close" title="Close">
+              <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+            </button>
+          </div>
+        </div>
         <!-- The app stopped the last time (src/crash.rs): offer a report. Nothing is sent by the app. -->
         <div id="crash-notice" class="crash-notice" role="alert" hidden>
           <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3" /><path d="M12 9v4M12 17h.01" /></svg>
