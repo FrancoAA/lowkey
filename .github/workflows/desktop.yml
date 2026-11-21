@@ -111,6 +111,12 @@ jobs:
           # whisper-rs-sys does not build again when a GGML_* variable changes.
           key: ggml-native-${{ matrix.ggml_native }}-${{ steps.image.outputs.version }}-z7
 
+      # Windows: the cache keeps all of C:\t, with the installers of the run that saved it. A release
+      # must not get an old version's installer, so the bundle folder starts empty.
+      - name: No old installers (Windows)
+        if: runner.os == 'Windows'
+        run: rm -rf "${{ steps.image.outputs.target }}/release/bundle"
+
       - name: Linux packages (WebKitGTK, tray, Vulkan for whisper.cpp)
         if: runner.os == 'Linux'
         run: |
@@ -177,7 +183,6 @@ jobs:
         shell: pwsh
         run: |
           $version = (Get-Content "$env:GITHUB_WORKSPACE\desktop\src-tauri\tauri.conf.json" | ConvertFrom-Json).version
-          Remove-Item -Recurse -Force bundle/symbols -ErrorAction SilentlyContinue  # the cache keeps the folder
           New-Item -ItemType Directory -Force bundle/symbols | Out-Null
           Compress-Archive -Force -Path lowkey.pdb, lowkey.exe -DestinationPath "bundle/symbols/Lowkey_${version}_x64-debug-symbols.zip"
           Get-Item bundle/symbols/*.zip | Format-Table Name, Length
