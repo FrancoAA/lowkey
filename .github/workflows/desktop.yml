@@ -177,8 +177,9 @@ jobs:
         shell: pwsh
         run: |
           $version = (Get-Content "$env:GITHUB_WORKSPACE\desktop\src-tauri\tauri.conf.json" | ConvertFrom-Json).version
+          Remove-Item -Recurse -Force bundle/symbols -ErrorAction SilentlyContinue  # the cache keeps the folder
           New-Item -ItemType Directory -Force bundle/symbols | Out-Null
-          Compress-Archive -Path lowkey.pdb, lowkey.exe -DestinationPath "bundle/symbols/Lowkey_${version}_x64-debug-symbols.zip"
+          Compress-Archive -Force -Path lowkey.pdb, lowkey.exe -DestinationPath "bundle/symbols/Lowkey_${version}_x64-debug-symbols.zip"
           Get-Item bundle/symbols/*.zip | Format-Table Name, Length
 
       # The speech engine's device check (src/gpu.rs) on a runner without a GPU: the CPU, and no
