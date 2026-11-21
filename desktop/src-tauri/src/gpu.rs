@@ -208,7 +208,8 @@ pub mod delay_load {
         }
         let f = if hidden(wanted) { std::ptr::null() } else { unsafe { real(instance, name) } };
         if f.is_null() && !instance.is_null() && MATRIX_QUERIES.contains(&wanted) {
-            crate::crash::log_line(&format!("Vulkan: the driver gives no {}; the speech engine runs without these matrix cores", String::from_utf8_lossy(wanted)));
+            // stderr: the app's log (src/crash.rs), or the terminal of a command-line run.
+            eprintln!("Vulkan: the driver gives no {}; the speech engine runs without these matrix cores", String::from_utf8_lossy(wanted));
             return no_matrix_shapes as *const c_void;
         }
         f
