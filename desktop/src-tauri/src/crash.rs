@@ -652,6 +652,12 @@ mod native {
     /// An exception that nothing handled: one line, then the functions that called the one that
     /// stopped (a line each), then Windows ends the program as before.
     unsafe extern "system" fn on_exception(info: *const EXCEPTION_POINTERS) -> i32 {
+        // Once: Wine calls the filter twice, and a fault in the stack walk below would come back
+        // here.
+        static DONE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        if DONE.swap(true, Ordering::SeqCst) {
+            return EXCEPTION_CONTINUE_SEARCH;
+        }
         let mut w = Buf::new();
         let rec = if info.is_null() { std::ptr::null_mut() } else { unsafe { (*info).ExceptionRecord } };
         let mut code = 0;
