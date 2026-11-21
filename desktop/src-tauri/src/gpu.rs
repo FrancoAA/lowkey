@@ -206,12 +206,20 @@ pub mod delay_load {
         if wanted == b"vkGetInstanceProcAddr" {
             return checked_get_instance_proc_addr as *const c_void;
         }
-        let f = unsafe { real(instance, name) };
+        let f = if hidden(wanted) { std::ptr::null() } else { unsafe { real(instance, name) } };
         if f.is_null() && !instance.is_null() && MATRIX_QUERIES.contains(&wanted) {
             crate::crash::log_line(&format!("Vulkan: the driver gives no {}; the speech engine runs without these matrix cores", String::from_utf8_lossy(wanted)));
             return no_matrix_shapes as *const c_void;
         }
         f
+    }
+
+    /// A test switch: OPENWHISPER_VK_HIDE=vkName,vkOther acts as a driver without those
+    /// functions (vkGetInstanceProcAddr gives null). With Wine on Linux, this tests the path of
+    /// a PC whose driver or layer does not give one.
+    fn hidden(name: &[u8]) -> bool {
+        static HIDE: std::sync::OnceLock<Vec<Vec<u8>>> = std::sync::OnceLock::new();
+        HIDE.get_or_init(|| std::env::var("OPENWHISPER_VK_HIDE").unwrap_or_default().split(',').map(|s| s.trim().as_bytes().to_vec()).filter(|s| !s.is_empty()).collect()).iter().any(|h| h == name)
     }
 
     /// A matrix-core query without the function: no shapes.
