@@ -79,6 +79,9 @@ pub fn describe() -> String {
     for g in all.iter().filter(|g| models::is_software_gpu(g)) {
         s += &format!("\nNot used (software): {g}");
     }
+    if let Some(why) = safe::off_reason() {
+        s += &format!("\nSafe mode: the app uses the CPU. {why}");
+    }
     #[cfg(all(windows, feature = "windows-gpu"))]
     if delay_load::skipped() {
         s += if std::env::var_os("OPENWHISPER_NO_GPU").is_some() {
