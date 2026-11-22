@@ -68,6 +68,13 @@ built with the Vulkan SDK). A PC without a Vulkan driver still starts them and u
 `OPENWHISPER_NO_GPU=1` keeps it on the CPU; on Windows it then does not load Vulkan at all (a
 way around a GPU driver that crashes).
 
+Safe mode: before the app first uses a GPU (once per app version), a second run of the app
+(`lowkey --gpu-check`) loads the speech model on it and transcribes two seconds (about a second).
+If that run stops or hangs, the app uses the CPU, and only the check is lost. If the app stops
+while the speech model runs on the GPU, the next start uses the CPU. Both times the window says
+why and offers "Try the GPU again"; a new version of the app checks the GPU again by itself.
+The record is `gpu-check.json` in the app's data folder.
+
 ## Use
 
 - **File:** drop a file on the window, or click to choose one. It starts at once. MP3, WAV,
@@ -560,7 +567,7 @@ segmentation 3.0 and NVIDIA TitaNet-S, run by sherpa-onnx on the CPU.
 `desktop/src-tauri/src/` (Rust):
 
 - `gpu.rs` finds the GPU through ggml's device registry (Vulkan, Metal); on Windows it also
-  makes `vulkan-1.dll` optional.
+  makes `vulkan-1.dll` optional. Its `safe` module is the GPU check and safe mode.
 - `engine.rs` loads one model at a time (download with progress, idle unload) and runs
   whisper.cpp with VAD (threshold 0.3) and beam size 5. A `cloud:<provider>/<model>` id goes to
   `cloud_stt.rs` instead; `providers.rs` lists the providers, their APIs and default models. `jobs.rs` is a queue with one worker;

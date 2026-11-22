@@ -119,6 +119,8 @@ export interface Backend {
     /** The report's text. `open`: a GitHub issue with it opens in the browser too ("error": why
      * it did not). Either way the crash notice is done. */
     report(open: boolean): Promise<{ text: string; error: string | null }>;
+    /** Safe mode: forget that the GPU failed, and start the app again (it checks the GPU first). */
+    retryGpu(): Promise<void>;
     /** The folder of the logs, in the file manager. */
     openLogs(): Promise<void>;
   };
@@ -364,6 +366,7 @@ async function desktopBackend(): Promise<Backend> {
       dismiss: () => invoke("crash_dismiss"),
       report: (open) => invoke<{ text: string; error: string | null }>("problem_report", { open }),
       openLogs: () => invoke("logs_open"),
+      retryGpu: () => invoke("gpu_retry"),
     },
     calendar: {
       events: () => invoke<CalEvent[]>("calendar_events"),

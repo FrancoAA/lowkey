@@ -81,6 +81,23 @@ pub fn install() {
     }));
 }
 
+/// Only the native crash handlers, writing to stderr (no log, no panic hook): for a helper run
+/// such as `--gpu-check`, whose stderr the app reads.
+pub fn install_to_stderr() {
+    #[cfg(unix)]
+    let file = std::mem::ManuallyDrop::new(unsafe { <File as std::os::fd::FromRawFd>::from_raw_fd(2) });
+    #[cfg(windows)]
+    let file = {
+        use windows_sys::Win32::System::Console::{GetStdHandle, STD_ERROR_HANDLE};
+        let h = unsafe { GetStdHandle(STD_ERROR_HANDLE) };
+        if h.is_null() || h as isize == -1 {
+            return;
+        }
+        std::mem::ManuallyDrop::new(unsafe { <File as std::os::windows::io::FromRawHandle>::from_raw_handle(h as _) })
+    };
+    native::install(&file);
+}
+
 /// One line in this run's log, with the time.
 pub fn log_line(text: &str) {
     if let Some(mut f) = LOG_FILE.get() {
@@ -99,7 +116,7 @@ pub fn dismiss() {
 }
 
 /// "CRASH: exception 0xC000001D (illegal instruction) at …" → "illegal instruction".
-fn reason(line: &str) -> String {
+pub(crate) fn reason(line: &str) -> String {
     if line.contains(OVERFLOW) {
         return "stack overflow".into();
     }

@@ -20,6 +20,8 @@ export interface Status {
   default_model: string;
   models: ModelInfo[];
   gpu?: boolean;
+  /** Safe mode (src/gpu.rs): why the speech engine uses the CPU; null when it does not. */
+  gpu_off?: string | null;
   auto_model?: string;
   hotkey?: string;
   version?: string;

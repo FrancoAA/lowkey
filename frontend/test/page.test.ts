@@ -23,7 +23,7 @@ beforeAll(async () => {
   document.body.innerHTML = html.slice(html.indexOf("<body>") + 6, html.indexOf('<script type="module"'));
   // happy-dom has no canvas drawing: the waveforms get a stand-in context.
   HTMLCanvasElement.prototype.getContext = (() => new Proxy({}, { get: () => () => {} })) as never;
-  window.history.replaceState(null, "", "/?crash"); // the demo's run before stopped
+  window.history.replaceState(null, "", "/?crash&gpuoff"); // the demo's run before stopped; safe mode
   await import("../src/main");
   await until(() => document.querySelectorAll(".meeting-item").length === 3);
 });
@@ -100,6 +100,13 @@ describe("the window", () => {
     await until(() => $("crash-notice").hidden);
     expect($("problem-note").textContent).toBe("The report is on the clipboard.");
     expect($("problem-note").hidden).toBe(false);
+  });
+
+  it("in safe mode, a notice says why the CPU is used, and closes", async () => {
+    await until(() => !$("gpu-notice").hidden);
+    expect($("gpu-reason").textContent).toBe("The GPU check stopped (access violation).");
+    $("gpu-close").click();
+    expect($("gpu-notice").hidden).toBe(true);
   });
 
   it("Ask answers with links to its sources", async () => {
