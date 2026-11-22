@@ -54,11 +54,16 @@ pub fn install() {
     let (log, previous) = (dir.join(LOG), dir.join(PREVIOUS));
     let _ = std::fs::rename(&log, &previous);
     *PREVIOUS_CRASH.lock() = crash_line(&read_tail(&previous));
-    let Ok(mut file) = OpenOptions::new().create(true).write(true).truncate(true).open(&log) else {
+    // An empty log, then opened to append: on Windows the C runtime's stderr (whisper.cpp's
+    // messages) is a second handle on the same file, and each write must go to its end.
+    if File::create(&log).is_err() {
+        return;
+    }
+    let Ok(mut file) = OpenOptions::new().append(true).open(&log) else {
         return;
     };
     let _ = writeln!(file, "Lowkey {} ({}) started {} · {} · {}", env!("CARGO_PKG_VERSION"), build(), now(), system(), processor());
-    redirect_stderr(&file);
+    redirect_stderr(&file, &log);
     native::install(&file);
     let _ = LOG_FILE.set(file);
     let previous_hook = std::panic::take_hook();
@@ -465,7 +470,7 @@ impl Buf {
 }
 
 #[cfg(unix)]
-fn redirect_stderr(file: &File) {
+fn redirect_stderr(file: &File, _path: &Path) {
     use std::io::IsTerminal;
     use std::os::fd::AsRawFd;
     if !std::io::stderr().is_terminal() {
@@ -474,13 +479,33 @@ fn redirect_stderr(file: &File) {
 }
 
 #[cfg(windows)]
-fn redirect_stderr(file: &File) {
+fn redirect_stderr(file: &File, path: &Path) {
+    use std::ffi::c_void;
     use std::io::IsTerminal;
+    use std::os::windows::ffi::OsStrExt;
     use std::os::windows::io::AsRawHandle;
     use windows_sys::Win32::System::Console::{SetStdHandle, STD_ERROR_HANDLE};
+    unsafe extern "C" {
+        fn __acrt_iob_func(index: u32) -> *mut c_void;
+        fn _wfreopen(path: *const u16, mode: *const u16, stream: *mut c_void) -> *mut c_void;
+        fn setvbuf(stream: *mut c_void, buf: *mut std::ffi::c_char, mode: i32, size: usize) -> i32;
+    }
+    const IONBF: i32 = 4;
+    if std::io::stderr().is_terminal() {
+        return;
+    }
     // Rust asks Windows for the handle at each write; a GUI program has none.
-    if !std::io::stderr().is_terminal() {
-        unsafe { SetStdHandle(STD_ERROR_HANDLE, file.as_raw_handle() as _) };
+    unsafe { SetStdHandle(STD_ERROR_HANDLE, file.as_raw_handle() as _) };
+    // C and C++ code (whisper.cpp, ggml: "ggml_vulkan: Found 1 Vulkan devices") writes to the C
+    // runtime's stderr, which SetStdHandle does not change. Without this, Windows logs had no
+    // line from the speech engine.
+    let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+    let mode = [b'a' as u16, 0];
+    unsafe {
+        let err = __acrt_iob_func(2);
+        if !_wfreopen(wide.as_ptr(), mode.as_ptr(), err).is_null() {
+            setvbuf(err, std::ptr::null_mut(), IONBF, 0);
+        }
     }
 }
 
@@ -624,44 +649,112 @@ mod native {
         unsafe { SetUnhandledExceptionFilter(Some(on_exception)) };
     }
 
-    /// An exception that nothing handled: one line, then Windows ends the program as before.
+    /// An exception that nothing handled: one line, then the functions that called the one that
+    /// stopped (a line each), then Windows ends the program as before.
     unsafe extern "system" fn on_exception(info: *const EXCEPTION_POINTERS) -> i32 {
+        // Once: Wine calls the filter twice, and a fault in the stack walk below would come back
+        // here.
+        static DONE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        if DONE.swap(true, Ordering::SeqCst) {
+            return EXCEPTION_CONTINUE_SEARCH;
+        }
         let mut w = Buf::new();
         let rec = if info.is_null() { std::ptr::null_mut() } else { unsafe { (*info).ExceptionRecord } };
+        let mut code = 0;
         if rec.is_null() {
             w.push(b"CRASH: exception (no record)");
         } else {
-            let (code, addr) = unsafe { ((*rec).ExceptionCode as u32, (*rec).ExceptionAddress as usize) };
+            let addr;
+            (code, addr) = unsafe { ((*rec).ExceptionCode as u32, (*rec).ExceptionAddress as usize) };
             w.push(b"CRASH: exception 0x");
             w.hex_width(code as usize, 8);
             w.push(b" (");
             w.push(name(code));
             w.push(b") at 0x");
             w.hex(addr);
-            // The module and the address in it: "lowkey.exe+0x2F1A3B" (`objdump -d` of the
-            // release's lowkey.exe, at its image base + that offset).
-            let mut module = std::ptr::null_mut();
-            let flags = GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT;
-            if unsafe { GetModuleHandleExW(flags, addr as *const u16, &mut module) } != 0 && !module.is_null() {
-                let mut path = [0u16; 260];
-                let n = (unsafe { GetModuleFileNameW(module, path.as_mut_ptr(), path.len() as u32) } as usize).min(path.len());
-                let start = path[..n].iter().rposition(|&c| c == b'\\' as u16).map_or(0, |i| i + 1);
-                w.push(b" = ");
-                for &c in &path[start..n] {
-                    w.push(&[if c < 128 { c as u8 } else { b'?' }]);
-                }
-                w.push(b"+0x");
-                w.hex(addr.wrapping_sub(module as usize));
-            }
+            module_offset(&mut w, addr);
         }
         w.push(b"\r\n");
+        // The crash line first: the stack below reads memory that may be broken.
+        write(&w);
+        #[cfg(target_arch = "x86_64")]
+        if code != 0xC000_00FD && !info.is_null() {
+            unsafe { stack(info) };
+        }
+        EXCEPTION_CONTINUE_SEARCH
+    }
+
+    fn write(w: &Buf) {
         let h = HANDLE.load(Ordering::SeqCst);
         if h != 0 {
             let b = w.as_bytes();
             let mut written = 0u32;
             unsafe { WriteFile(h as _, b.as_ptr(), b.len() as u32, &mut written, std::ptr::null_mut()) };
         }
-        EXCEPTION_CONTINUE_SEARCH
+    }
+
+    /// The module and the address in it: " = lowkey.exe+0x2F1A3B". With the release's
+    /// lowkey.pdb (the "debug symbols" file of each Windows release):
+    /// `llvm-symbolizer --obj=lowkey.exe 0x140000000+offset`. Nothing for an address in no module
+    /// (0: a call through a missing function pointer).
+    fn module_offset(w: &mut Buf, addr: usize) {
+        let mut module = std::ptr::null_mut();
+        let flags = GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT;
+        if addr != 0 && unsafe { GetModuleHandleExW(flags, addr as *const u16, &mut module) } != 0 && !module.is_null() {
+            let mut path = [0u16; 260];
+            let n = (unsafe { GetModuleFileNameW(module, path.as_mut_ptr(), path.len() as u32) } as usize).min(path.len());
+            let start = path[..n].iter().rposition(|&c| c == b'\\' as u16).map_or(0, |i| i + 1);
+            w.push(b" = ");
+            for &c in &path[start..n] {
+                w.push(&[if c < 128 { c as u8 } else { b'?' }]);
+            }
+            w.push(b"+0x");
+            w.hex(addr.wrapping_sub(module as usize));
+        }
+    }
+
+    /// The return addresses on the crashed thread's stack, from the unwind data of each module
+    /// (what a debugger shows as the call stack). No memory is taken; a stack that cannot be read
+    /// ends the list.
+    #[cfg(target_arch = "x86_64")]
+    unsafe fn stack(info: *const EXCEPTION_POINTERS) {
+        use windows_sys::Win32::System::Diagnostics::Debug::{ReadProcessMemory, RtlLookupFunctionEntry, RtlVirtualUnwind, CONTEXT, UNW_FLAG_NHANDLER};
+        const FRAMES: usize = 24;
+        let rec = unsafe { (*info).ContextRecord };
+        if rec.is_null() {
+            return;
+        }
+        let mut ctx: CONTEXT = unsafe { *rec };
+        for _ in 0..FRAMES {
+            let pc = ctx.Rip;
+            let mut base = 0u64;
+            let entry = unsafe { RtlLookupFunctionEntry(pc, &mut base, std::ptr::null_mut()) };
+            if entry.is_null() {
+                // A function without unwind data (a leaf), or no function at all (address 0): the
+                // return address is on top of the stack.
+                let mut ret = 0u64;
+                let mut read = 0usize;
+                let ok = unsafe { ReadProcessMemory(-1isize as _, ctx.Rsp as *const _, &mut ret as *mut u64 as *mut _, 8, &mut read) };
+                if ok == 0 || read != 8 {
+                    return;
+                }
+                ctx.Rip = ret;
+                ctx.Rsp += 8;
+            } else {
+                let mut data = std::ptr::null_mut();
+                let mut frame = 0u64;
+                unsafe { RtlVirtualUnwind(UNW_FLAG_NHANDLER, base, pc, entry, &mut ctx, &mut data, &mut frame, std::ptr::null_mut()) };
+            }
+            if ctx.Rip == 0 {
+                return;
+            }
+            let mut w = Buf::new();
+            w.push(b"  called from 0x");
+            w.hex(ctx.Rip as usize);
+            module_offset(&mut w, ctx.Rip as usize);
+            w.push(b"\r\n");
+            write(&w);
+        }
     }
 
     fn name(code: u32) -> &'static [u8] {
